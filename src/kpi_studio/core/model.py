@@ -141,7 +141,9 @@ class EventDef(_Strict):
 
     @model_validator(mode="after")
     def _start_or_preset(self):
-        if bool(self.start) == bool(self.preset):
+        if not self.start and not self.preset:
+            raise ValueError("no trigger yet: fill in 'Start when' (a condition) or choose a preset")
+        if self.start and self.preset:
             raise ValueError("an event needs exactly one of 'start' (a condition) or 'preset'")
         if self.preset and self.end:
             raise ValueError("'end' cannot be combined with 'preset'; the preset decides the end")

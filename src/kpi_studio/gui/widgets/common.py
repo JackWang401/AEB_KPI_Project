@@ -92,15 +92,18 @@ class ToolPalette(QWidget):
 
     insert_requested = Signal(str)
 
-    def __init__(self, kinds=("signal", "condition", "moment", "reducer", "event"), parent=None):
+    def __init__(self, kinds=("signal", "condition", "moment", "reducer", "event"), parent=None,
+                 names_fn: Optional[Callable[[], list[str]]] = None):
         super().__init__(parent)
         self.kinds = kinds
+        self.names_fn = names_fn
+        self._names: list[str] = []
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         title = QLabel("Toolbox")
         title.setObjectName("sectionTitle")
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search tools…")
+        self.search.setPlaceholderText("Search signals and tools…")
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.doc = QTextBrowser()
@@ -114,9 +117,28 @@ class ToolPalette(QWidget):
         self.tree.itemDoubleClicked.connect(self._insert)
         self.populate()
 
+    def refresh_names(self):
+        """Re-list the profile's signals when they changed (keeps the tree's expansion otherwise)."""
+        names = list(self.names_fn()) if self.names_fn else []
+        if names != self._names:
+            self.populate()
+
     def populate(self):
         needle = self.search.text().strip().lower()
         self.tree.clear()
+        self._names = list(self.names_fn()) if self.names_fn else []
+        shown = [n for n in self._names if not needle or needle in n.lower()]
+        if self.names_fn is not None:
+            top = QTreeWidgetItem([f"Signals ({len(self._names)}, from tab 2)"])
+            top.setToolTip(0, "Double-click a signal to insert its name into the field you are editing")
+            self.tree.addTopLevelItem(top)
+            for n in shown:
+                item = QTreeWidgetItem([n])
+                item.setData(0, Qt.UserRole + 1, n)
+                top.addChild(item)
+            if not self._names:
+                top.addChild(QTreeWidgetItem(["(add signals on the Signals tab)"]))
+            top.setExpanded(True)
         labels = {"signal": "Signal tools", "condition": "Conditions", "moment": "Moments (rules)",
                   "reducer": "Reducers", "event": "Event presets"}
         for kind in self.kinds:
@@ -142,6 +164,10 @@ class ToolPalette(QWidget):
 
     def _show_doc(self, item, _prev=None):
         spec = item.data(0, Qt.UserRole) if item else None
+        name = item.data(0, Qt.UserRole + 1) if item else None
+        if name:
+            self.doc.setHtml(f"<b>{name}</b><br>Signal defined on the Signals tab. Double-click to insert it.")
+            return
         if spec is None:
             self.doc.clear()
             return
@@ -153,6 +179,10 @@ class ToolPalette(QWidget):
                          + f"<i>{spec.kind} · {spec.category}</i>")
 
     def _insert(self, item, _col=0):
+        name = item.data(0, Qt.UserRole + 1)
+        if name:
+            self.insert_requested.emit(name)
+            return
         spec = item.data(0, Qt.UserRole)
         if spec is None:
             return

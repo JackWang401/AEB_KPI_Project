@@ -123,6 +123,12 @@ class AppState(QObject):
         except Exception as exc:  # noqa: BLE001
             self.compiled = None
             self.issues = [Issue("error", "profile", f"{type(exc).__name__}: {exc}")]
+        if self.compiled is None:
+            # an unfinished event or KPI must not hide new signals from the other tabs:
+            # resolve the signals (and imported libraries) on their own
+            resolved, _ = self._signals_only()
+            if resolved is not None:
+                self.resolved = resolved
         self.validated.emit()
 
     def signals_only_compiled(self):
@@ -131,14 +137,17 @@ class AppState(QObject):
         Lets the signal viewer work while an event or KPI is still incomplete.
         Returns the compiled profile, or None if the signals themselves have errors.
         """
+        return self._signals_only()[1]
+
+    def _signals_only(self):
         data = self.clean_data()
         for key in ("events", "kpis", "plots"):
             data.pop(key, None)
         try:
             profile = profile_store.parse_profile(data, "profile")
-            return profile_store.load_compiled(profile, base_dir=self.base_dir)[1]
+            return profile_store.load_compiled(profile, base_dir=self.base_dir)
         except Exception:  # noqa: BLE001
-            return None
+            return None, None
 
     # names usable in expressions (after resolving imports when possible)
     def signal_names(self) -> list[str]:

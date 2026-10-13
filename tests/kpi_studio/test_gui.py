@@ -139,3 +139,24 @@ def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
     assert {"egoSpeed", "aebTargetDecel"} <= set(viewer.data["values"])
     window.files_page.combine.setChecked(False)
     assert len(window.state.recordings()) == 2
+
+
+def test_new_signals_reach_tab3_while_an_event_is_unfinished(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.new_event()  # no trigger yet -> profile has an error
+    window.state.validate_now()
+    assert window.state.compiled is None
+    window.state.data["signals"]["myNewSignal"] = {"channels": ["speedESC"]}
+    window.state.edited(structure=True)
+    window.state.validate_now()
+    assert "myNewSignal" in window.state.signal_names()
+    pv = [page.pv_signals.item(i).text() for i in range(page.pv_signals.count())]
+    assert "myNewSignal" in pv
+    top = page.palette.tree.topLevelItem(0)
+    assert top.text(0).startswith("Signals")
+    assert "myNewSignal" in [top.child(i).text(0) for i in range(top.childCount())]
+    # double-clicking a signal in the toolbox fills the event's start field
+    item = next(top.child(i) for i in range(top.childCount()) if top.child(i).text(0) == "myNewSignal")
+    page.palette._insert(item)
+    assert "myNewSignal" in page.event_form.start.text()

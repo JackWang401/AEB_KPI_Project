@@ -670,7 +670,7 @@ class KpiPage(QWidget):
             self.stack.addWidget(w)
         top.addWidget(self.stack)
 
-        self.palette = ToolPalette()
+        self.palette = ToolPalette(names_fn=state.signal_names)
         self.palette.insert_requested.connect(self.insert_tool)
         top.addWidget(self.palette)
         top.setSizes([260, 700, 300])
@@ -738,6 +738,7 @@ class KpiPage(QWidget):
         state.profile_changed.connect(self.refresh)
         state.files_changed.connect(self.refresh_preview_choices)
         state.validated.connect(self.on_validated)
+        state.validated.connect(self.palette.refresh_names)
         self.refresh()
 
     # ------------------------------------------------------------------ lists
@@ -861,8 +862,17 @@ class KpiPage(QWidget):
         self.target = edit
 
     def insert_tool(self, snippet):
-        if self.target is not None:
-            self.target.insert_text(snippet)
+        target = self.target
+        if target is None or not self.stack.currentWidget().isAncestorOf(target):
+            # nothing focused yet: use the main expression field of the form on screen
+            if self.stack.currentWidget() is self.event_form:
+                target = self.event_form.start
+            elif self.stack.currentWidget() is self.kpi_form:
+                target = self.kpi_form.expr
+        if target is not None:
+            target.insert_text(snippet)
+            target.setFocus()
+            target.editingFinished.emit()
 
     # ------------------------------------------------------------------ libraries
     def add_from_library(self):
