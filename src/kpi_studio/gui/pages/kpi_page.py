@@ -161,8 +161,12 @@ class EventForm(QWidget):
         bl.addWidget(hint)
         mrow = QHBoxLayout()
         add_m, del_m = QPushButton("Add moment"), QPushButton("Delete moment")
+        build_m = QPushButton("Build condition…")
+        build_m.setToolTip("Build the condition of the selected moment (e.g. 'signal changes to 3'); "
+                           "with no moment selected a new one is added")
         mrow.addWidget(add_m)
         mrow.addWidget(del_m)
+        mrow.addWidget(build_m)
         mrow.addStretch(1)
         bl.addLayout(mrow)
         lay.addWidget(box, 1)
@@ -183,6 +187,7 @@ class EventForm(QWidget):
         self.post.valueChanged.connect(lambda v: self.set_window("post", v))
         add_m.clicked.connect(self.add_moment)
         del_m.clicked.connect(self.delete_moment)
+        build_m.clicked.connect(self.build_moment)
         self.moments.itemChanged.connect(self.moment_renamed)
         for w in (self.start, self.end):
             w.focused.connect(page.set_target)
@@ -362,6 +367,32 @@ class EventForm(QWidget):
         moments[f"moment{i}"] = {"first": "", "after": "start"}
         self.state.edited(structure=True)
         self.load_moments()
+
+    CONDITION_RULES = ("first", "last", "last_segment_start")
+
+    def build_moment(self):
+        if self.name is None:
+            return
+        rows = sorted({i.row() for i in self.moments.selectedIndexes()})
+        row = rows[0] if rows else (self.moments.currentRow() if self.moments.currentRow() >= 0 else None)
+        initial = self.moments.cellWidget(row, 2).text() if row is not None else ""
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=initial)
+        if dlg.exec() != QDialog.Accepted or not dlg.expression():
+            return
+        self.apply_moment_condition(row, dlg.expression())
+
+    def apply_moment_condition(self, row, expression: str):
+        """Put `expression` in moment `row` (a new moment when None), using a condition rule."""
+        if row is None:
+            self.add_moment()
+            row = self.moments.rowCount() - 1
+        combo = self.moments.cellWidget(row, 1)
+        if combo.currentText() not in self.CONDITION_RULES:
+            combo.blockSignals(True)
+            combo.setCurrentText("first")
+            combo.blockSignals(False)
+        self.moments.cellWidget(row, 2).setText(expression)
+        self.save_moment(row)
 
     def delete_moment(self):
         rows = sorted({i.row() for i in self.moments.selectedIndexes()}, reverse=True)

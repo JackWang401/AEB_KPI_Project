@@ -211,7 +211,9 @@ class ToolPalette(QWidget):
 class ConditionBuilder(QDialog):
     """Build `a > 1 and b == FULL` from rows, without typing syntax."""
 
-    OPS = ["==", "!=", ">", ">=", "<", "<=", "in"]
+    OPS = ["==", "!=", ">", ">=", "<", "<=", "in", "changes to", "changes from", "changes from → to"]
+    HINTS = {"in": "list, e.g. 1, 2", "changes to": "value, e.g. 3", "changes from": "value, e.g. 3",
+             "changes from → to": "from, to   e.g. 0, 3"}
 
     def __init__(self, names: list[str], parent=None, initial: str = ""):
         super().__init__(parent)
@@ -219,7 +221,10 @@ class ConditionBuilder(QDialog):
         self.names = names
         self.rows: list[tuple] = []
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL."))
+        info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL.\n"
+                      "'changes to / from' are true only at the sample where the signal switches to or away "
+                      "from the value;\n'changes from → to' takes two values, e.g. 0, 3.")
+        lay.addWidget(info)
         self.rows_box = QVBoxLayout()
         lay.addLayout(self.rows_box)
         bar = QHBoxLayout()
@@ -252,6 +257,7 @@ class ConditionBuilder(QDialog):
         op.addItems(self.OPS)
         val = QLineEdit()
         val.setPlaceholderText("value")
+        op.currentTextChanged.connect(lambda o, v=val: v.setPlaceholderText(self.HINTS.get(o, "value")))
         row = QHBoxLayout()
         for w in (sig, op, val):
             row.addWidget(w)
@@ -263,15 +269,36 @@ class ConditionBuilder(QDialog):
         self.rows.append((sig, op, val))
         self.update_preview()
 
+    @staticmethod
+    def _is(s: str, v: str) -> str:
+        """`s == v`, or `s in (a, b)` when v lists several values."""
+        items = [x.strip() for x in v.strip("()[] ").split(",") if x.strip()]
+        return f"{s} == {items[0]}" if len(items) == 1 else f"{s} in ({', '.join(items)})"
+
+    @classmethod
+    def row_expression(cls, s: str, o: str, v: str) -> str:
+        if o == "in":
+            return f"{s} in (" + v.strip("()[] ") + ("," if "," not in v else "") + ")"
+        if o == "changes to":
+            return f"rising({cls._is(s, v)})"
+        if o == "changes from":
+            return f"falling({cls._is(s, v)})"
+        if o == "changes from → to":
+            parts = [x.strip() for x in v.replace("->", ",").replace("→", ",").split(",") if x.strip()]
+            if len(parts) != 2:
+                return ""
+            return f"(falling({s} == {parts[0]}) and rising({s} == {parts[1]}))"
+        return f"{s} {o} {v}"
+
     def expression(self) -> str:
         parts = []
         for sig, op, val in self.rows:
             s, o, v = sig.currentText().strip(), op.currentText(), val.text().strip()
             if not s or not v:
                 continue
-            if o == "in":
-                v = "(" + v.strip("()[] ") + ("," if "," not in v else "") + ")"
-            parts.append(f"{s} {o} {v}")
+            e = self.row_expression(s, o, v)
+            if e:
+                parts.append(e)
         return f" {self.join.currentText()} ".join(parts)
 
     def update_preview(self, *_):

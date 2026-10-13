@@ -215,3 +215,38 @@ def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     viewer._on_press(SimpleNamespace(inaxes=viewer.fig.axes[0], xdata=t[5], button=3, key=None))
     assert viewer.cursors == [None, None]
     assert viewer.value_at(t, y, t[-1] + 100) is None
+
+
+def test_condition_builder_value_changes_and_moment(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+
+    rx = ConditionBuilder.row_expression
+    assert rx("sig", "changes to", "3") == "rising(sig == 3)"
+    assert rx("sig", "changes from", "FULL") == "falling(sig == FULL)"
+    assert rx("sig", "changes to", "1, 2") == "rising(sig in (1, 2))"
+    assert rx("sig", "changes from → to", "0 -> 3") == "(falling(sig == 0) and rising(sig == 3))"
+    assert rx("sig", "changes from → to", "0") == ""
+    dlg = ConditionBuilder(["sig", "other"])
+    qtbot.addWidget(dlg)
+    sig, op, val = dlg.rows[0]
+    sig.setCurrentText("sig")
+    op.setCurrentText("changes from → to")
+    assert "from, to" in val.placeholderText()
+    val.setText("0, 3")
+    dlg.add_row()
+    dlg.rows[1][0].setCurrentText("other")
+    dlg.rows[1][1].setCurrentText(">")
+    dlg.rows[1][2].setText("5")
+    assert dlg.expression() == "(falling(sig == 0) and rising(sig == 3)) and other > 5"
+
+    _load(qtbot, window, mf4_dir)
+    window.state.data.setdefault("events", {})["changes"] = {"start": "egoSpeed > 1"}
+    form = window.kpi_page.event_form
+    form.load("changes")
+    assert form.name is not None
+    n = form.moments.rowCount()
+    form.apply_moment_condition(None, "rising(egoSpeed > 5)")
+    assert form.moments.rowCount() == n + 1
+    moments = form.ev["moments"]
+    new = list(moments)[-1]
+    assert moments[new]["first"] == "rising(egoSpeed > 5)"

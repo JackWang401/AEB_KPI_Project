@@ -56,3 +56,12 @@ def test_missing_signal_raised_at_runtime():
     with pytest.raises(MissingSignal):
         c.evaluate(ENV)
     assert c.deps == {"w"}
+
+
+def test_value_change_conditions():
+    env = Env(time=T, values={"s": np.array([0, 3, 3, 1, 3.0])})
+    run = lambda src: compile_expr(src, names={"s"}, enums={}).evaluate(env).tolist()  # noqa: E731
+    assert run("rising(s == 3)") == [False, True, False, False, True]            # changes to 3
+    assert run("falling(s == 3)") == [False, False, False, True, False]          # changes from 3
+    assert run("(falling(s == 0) and rising(s == 3))") == [False, True, False, False, False]  # 0 -> 3
+    assert run("rising(s in (1, 3))") == [False, True, False, False, False]
