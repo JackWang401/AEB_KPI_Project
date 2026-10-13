@@ -21,6 +21,8 @@ class RawSignal:
     unit: str = ""
     channel: str = ""
     group: Optional[int] = None
+    raw_values: Optional[np.ndarray] = None  # numeric raw values behind text (enum) samples
+    labels: Optional[dict] = None            # raw value -> text, from the file's own conversion
 
 
 @dataclass
@@ -34,6 +36,9 @@ def _to_numeric(raw: RawSignal, sdef: SignalDef, enum_table: Optional[Mapping], 
     s = np.asarray(raw.samples)
     if s.dtype.kind in "biuf":
         return s.astype(float)
+    if enum_table is None and raw.raw_values is not None:
+        # enum channel without an 'enum:' table in the profile: use the file's raw values
+        return np.asarray(raw.raw_values, dtype=float)
     # text / bytes / object samples: decode through the enum table when there is one
     decoded = []
     unknown = set()

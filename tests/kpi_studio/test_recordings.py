@@ -86,3 +86,30 @@ def test_split_recording_gives_kpis_that_neither_file_gives_alone(tmp_path):
     assert len(report.recordings) == 1 and report.ok, report.text()
     res = svc.run()
     assert len(res.outcomes) == 1 and res.n_ok == 1
+
+
+def test_text_enum_channel_reads_raw_values_and_labels(tmp_path):
+    """A channel with a value-to-text conversion and no 'enum:' in the profile still plots."""
+    from asammdf import MDF, Signal
+
+    from src.kpi_studio.core.align import build_frame
+    from src.kpi_studio.core.model import SignalDef
+    from src.kpi_studio.io.mf4 import read_signals
+
+    t = np.arange(0.0, 2.0, 0.01)
+    vals = np.where(t < 1.0, 3, 1).astype("u1")
+    conv = {"val_0": 0, "text_0": b"NotAvailable", "val_1": 1, "text_1": b"FailureDetectedReducedAvl",
+            "val_2": 3, "text_2": b"Available", "default": b""}
+    path = tmp_path / "enum.mf4"
+    m = MDF(version="4.10")
+    m.append([Signal(vals, t, name="LmcDrvLvl12LongEmerSrvAvl", conversion=conv)], acq_name="MOTION_1")
+    m.save(path, overwrite=True)
+    defs = {"srvAvl": SignalDef(channels=["LmcDrvLvl12LongEmerSrvAvl"], kind="discrete")}
+    raw, issues = read_signals(str(path), defs)
+    rs = raw["srvAvl"]
+    assert rs.samples.dtype.kind in "SUO"  # physical values are text
+    assert rs.labels == {1.0: "FailureDetectedReducedAvl", 3.0: "Available"}
+    frame, align_issues, _ = build_frame(raw, defs, 100.0)
+    v = frame.values["srvAvl"]
+    assert not np.isnan(v).any() and set(np.unique(v)) == {1.0, 3.0}
+    assert not [i for i in align_issues if i.severity == "warning"]

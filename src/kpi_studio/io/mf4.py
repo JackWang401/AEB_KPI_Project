@@ -251,6 +251,27 @@ def resolve_recording(defs: dict[str, SignalDef], rec: Recording, indexes: dict)
     return out
 
 
+def _attach_raw_values(rs, mdf, ch) -> None:
+    """Text samples from a value-to-text conversion: keep the raw numbers and the labels too."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            sig = mdf.get(ch.name, group=ch.group, index=ch.index, raw=True)
+        vals = np.asarray(sig.samples)
+        if vals.dtype.kind not in "biuf" or len(vals) != len(rs.samples):
+            return
+        rs.raw_values = vals
+        labels = {}
+        for u in np.unique(vals)[:256]:
+            text = sig.conversion.convert(np.array([u]))[0] if sig.conversion is not None else u
+            if isinstance(text, bytes):
+                text = text.decode("utf-8", "replace")
+            labels[float(u)] = str(text).strip().strip("\x00")
+        rs.labels = labels
+    except Exception:  # noqa: BLE001
+        rs.raw_values = None
+
+
 def read_signals(source, defs: dict[str, SignalDef],
                  index=None) -> tuple[dict[str, RawSignal], list[FileIssue]]:
     """Read only the channels the profile maps, from one file or from all files of a Recording.
@@ -299,6 +320,8 @@ def read_signals(source, defs: dict[str, SignalDef],
                 raw[sname] = RawSignal(sname, np.asarray(sig.timestamps) + offset[f], np.asarray(sig.samples),
                                        unit=str(sig.unit or ch.unit or ""),
                                        channel=f"{ch.name} ({Path(f).name})" if multi else ch.name, group=ch.group)
+                if raw[sname].samples.dtype.kind in "SUO":
+                    _attach_raw_values(raw[sname], opened[f], ch)
             except Exception as exc:  # noqa: BLE001
                 issues.append(FileIssue("error" if sdef.required else "warning",
                                         f"signal '{sname}': failed to read '{ch.name}': {exc}"))

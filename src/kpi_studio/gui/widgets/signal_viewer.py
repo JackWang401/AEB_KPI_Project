@@ -36,8 +36,11 @@ COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#62
 MAX_AXES = 8
 
 
-def _fmt(v) -> str:
-    return "–" if v is None else f"{v:.4g}"
+def _fmt(v, labels=None) -> str:
+    if v is None:
+        return "–"
+    text = (labels or {}).get(float(v))
+    return f"{v:.4g} {text}" if text else f"{v:.4g}"
 
 
 class SignalLoadWorker(QThread):
@@ -63,7 +66,9 @@ class SignalLoadWorker(QThread):
             ev.compute_derived(outcome)
             values = {k: v for k, v in ev.env.values.items() if k != "time"}
             units = {n: (d.unit or "") for n, d in defs.items()}
+            labels = {n: r.labels for n, r in raw.items() if r.labels}
             self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "units": units,
+                            "labels": labels,
                             "missing": dict(ev.env.missing),
                             "issues": [i.message for i in issues + align_issues + outcome.issues
                                        if i.severity != "info"]})
@@ -87,7 +92,7 @@ class SignalViewer(QWidget):
         self.spans: list[tuple[float, float]] = []
         self.cursors: list = [None, None]    # cursor A and B times [s]
         self._axes: list = []
-        self._series: dict = {}              # axes -> [(label, time, values)]
+        self._series: dict = {}              # axes -> [(label, time, values, enum labels)]
         self._artists: list = []
         self._dragging = None
 
@@ -347,8 +352,11 @@ class SignalViewer(QWidget):
                 y = np.asarray(d["values"][n], dtype=float)
                 color = COLORS[(j if overlay else i) % len(COLORS)]
                 ax.plot(d["time"], y, color=color, lw=1.2, label=Path(r.name).name if i == 0 else None)
-                self._series.setdefault(ax, []).append((Path(r.name).name, np.asarray(d["time"]), y))
+                enum = d.get("labels", {}).get(n)
+                self._series.setdefault(ax, []).append((Path(r.name).name, np.asarray(d["time"]), y, enum))
                 unit = unit or d["units"].get(n, "")
+                if enum and len(enum) <= 16:
+                    ax.set_yticks(sorted(enum), [enum[k] for k in sorted(enum)])
             ax.text(0.005, 0.97, f"{n} [{unit}]" if unit else n, transform=ax.transAxes, fontsize=8, va="top",
                     ha="left", color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
             for lo, hi in self.spans:
@@ -407,14 +415,14 @@ class SignalViewer(QWidget):
         a, b = self.cursors
         for ax in self._axes:
             lines = []
-            for label, t, y in self._series.get(ax, []):
+            for label, t, y, enum in self._series.get(ax, []):
                 va, vb = self.value_at(t, y, a), self.value_at(t, y, b)
                 parts = []
                 if a is not None:
-                    parts.append(f"A {_fmt(va)}")
+                    parts.append(f"A {_fmt(va, enum)}")
                 if b is not None:
-                    parts.append(f"B {_fmt(vb)}")
-                if va is not None and vb is not None:
+                    parts.append(f"B {_fmt(vb, enum)}")
+                if va is not None and vb is not None and not enum:
                     parts.append(f"Δ {_fmt(vb - va)}")
                 if parts:
                     prefix = f"{label}: " if len(self._series[ax]) > 1 else ""
