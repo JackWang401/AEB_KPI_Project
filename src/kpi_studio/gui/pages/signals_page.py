@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -29,10 +28,10 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio.gui.state import AppState
-from src.kpi_studio.gui.widgets.common import ExprEdit, make_canvas
+from src.kpi_studio.gui.widgets.common import ExprEdit
+from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
-from src.kpi_studio.io.mf4 import ChannelInfo, match_channel, read_signals
-from src.kpi_studio.core.model import SignalDef
+from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
 
 LIB_COLOR = QColor("#6b6b66")
 
@@ -72,7 +71,11 @@ class SignalsPage(QWidget):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Channel", "Unit", "Files"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        left.setMinimumWidth(300)
         ll.addWidget(self.tree, 1)
         self.add_sig_btn = QPushButton("Add selected as signals →")
         ll.addWidget(self.add_sig_btn)
@@ -98,38 +101,52 @@ class SignalsPage(QWidget):
         imp.addWidget(self.lib_remove)
         rl.addLayout(imp)
 
-        rl.addWidget(QLabel("Signals (grey rows come from an imported library; editing one overrides it here)"))
+        vsplit = QSplitter(Qt.Vertical)
+        rl.addWidget(vsplit, 1)
+
+        sig_box = QWidget()
+        sl = QVBoxLayout(sig_box)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(QLabel("Signals (grey rows come from an imported library; editing one overrides it here)"))
         self.sig_table = QTableWidget(0, len(self.SIG_COLS))
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
         self.sig_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        rl.addWidget(self.sig_table, 2)
+        self.sig_table.verticalHeader().setDefaultSectionSize(24)
+        sl.addWidget(self.sig_table, 1)
         row = QHBoxLayout()
         self.del_sig_btn = QPushButton("Delete signal")
-        self.preview_btn = QPushButton("Preview signal")
-        self.preview_file = QComboBox()
+        self.preview_btn = QPushButton("Plot selected signals ↓")
         row.addWidget(self.del_sig_btn)
         row.addStretch(1)
-        row.addWidget(QLabel("from"))
-        row.addWidget(self.preview_file, 1)
         row.addWidget(self.preview_btn)
-        rl.addLayout(row)
+        sl.addLayout(row)
+        vsplit.addWidget(sig_box)
 
-        rl.addWidget(QLabel("Derived signals (expressions over signals; use the toolbox, e.g. lowpass(x, 10))"))
+        der_box = QWidget()
+        dl = QVBoxLayout(der_box)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.addWidget(QLabel("Derived signals (expressions over signals; use the toolbox, e.g. lowpass(x, 10))"))
         self.der_table = QTableWidget(0, 2)
         self.der_table.setHorizontalHeaderLabels(["Name", "Expression"])
         self.der_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        rl.addWidget(self.der_table, 1)
+        self.der_table.verticalHeader().setDefaultSectionSize(24)
+        dl.addWidget(self.der_table, 1)
         drow = QHBoxLayout()
         self.add_der_btn = QPushButton("Add derived")
         self.del_der_btn = QPushButton("Delete derived")
         drow.addWidget(self.add_der_btn)
         drow.addWidget(self.del_der_btn)
         drow.addStretch(1)
-        rl.addLayout(drow)
+        dl.addLayout(drow)
+        vsplit.addWidget(der_box)
 
-        self.fig, self.canvas, _ = make_canvas()
-        self.canvas.setMinimumHeight(180)
-        rl.addWidget(self.canvas, 1)
+        view_box = QGroupBox("Signal viewer")
+        vl = QVBoxLayout(view_box)
+        self.viewer = SignalViewer(self.state)
+        vl.addWidget(self.viewer)
+        vsplit.addWidget(view_box)
+        vsplit.setStretchFactor(2, 1)
+        vsplit.setSizes([230, 120, 520])
         split.addWidget(right)
         split.setSizes([380, 820])
 
@@ -267,12 +284,6 @@ class SignalsPage(QWidget):
                     item.setForeground(QColor("#c27a00") if not d.get("required", True) else QColor("#e34948"))
                 self.sig_table.setItem(r, c, item)
         self._loading = False
-        files = [Path(f).name for f in self.state.files]
-        cur = self.preview_file.currentText()
-        self.preview_file.clear()
-        self.preview_file.addItems(files)
-        if cur in files:
-            self.preview_file.setCurrentText(cur)
 
     def signal_cell_changed(self, item: QTableWidgetItem):
         if self._loading:
@@ -317,32 +328,17 @@ class SignalsPage(QWidget):
 
     def preview_signal(self):
         rows = sorted({i.row() for i in self.sig_table.selectedIndexes()})
-        if not rows or not self.state.files:
+        rows += sorted({i.row() + 10_000 for i in self.der_table.selectedIndexes()})
+        names = [self.sig_table.item(r, 0).data(Qt.UserRole)[0] for r in rows if r < 10_000]
+        names += [self.der_table.item(r - 10_000, 0).text() for r in rows
+                  if r >= 10_000 and self.der_table.item(r - 10_000, 0)]
+        if not names:
+            self.viewer.status.setText("Select rows in the signals or derived table first, or tick signals below.")
             return
-        name, from_lib = self.sig_table.item(rows[0], 0).data(Qt.UserRole)
-        sdict = dict(self.state.data.get("signals", {}).get(name) or
-                     (self.state.resolved.signals[name].model_dump(exclude_none=True) if self.state.resolved else {}))
-        f = self.state.files[max(self.preview_file.currentIndex(), 0)]
-        try:
-            raw, issues = read_signals(f, {name: SignalDef.model_validate(sdict)}, self.state.indexes.get(f))
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Preview", str(exc))
-            return
-        self.fig.clear()
-        ax = self.fig.add_subplot(111)
-        if name in raw:
-            r = raw[name]
-            try:
-                y = np.asarray(r.samples, dtype=float)
-            except (TypeError, ValueError):
-                y = np.full(len(r.timestamps), np.nan)
-            ax.plot(r.timestamps, y, color="#2a78d6", lw=1.5)
-            ax.set_title(f"{name}  ←  {r.channel}  [{r.unit}]  ({Path(f).name})", fontsize=9)
-        else:
-            ax.set_title(f"{name}: not found in {Path(f).name}", fontsize=9)
-        ax.grid(True, color="#e6e5e0")
-        ax.set_xlabel("time [s]")
-        self.canvas.draw_idle()
+        self.viewer.plot_signals(names)
+
+    def shutdown(self):
+        self.viewer.shutdown()
 
     # ------------------------------------------------------------------ derived
     def refresh_derived(self):

@@ -30,18 +30,29 @@ from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.io import profile_store
 
+# Used with the Fusion style (set in app.py) so the window looks the same on macOS, Windows and Linux.
 STYLE = """
 QWidget { font-size: 12px; color: #1f1f1e; }
-QMainWindow, QTabWidget::pane { background: #f6f6f3; }
-QTabBar::tab { padding: 8px 16px; font-weight: 600; }
-QTabBar::tab:selected { color: #2a78d6; }
-QPushButton { padding: 6px 10px; border: 1px solid #cfcdc4; border-radius: 6px; background: #ffffff; }
+QMainWindow { background: #f6f6f3; }
+QTabWidget::pane { background: #f6f6f3; border: none; border-top: 1px solid #dcdad2; }
+QTabWidget::tab-bar { alignment: left; }
+QTabBar::tab { padding: 8px 18px; font-weight: 600; color: #5f5e5a; background: transparent;
+               border: none; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #2a78d6; border-bottom: 2px solid #2a78d6; }
+QTabBar::tab:hover { color: #1f1f1e; }
+QPushButton { padding: 5px 12px; border: 1px solid #cfcdc4; border-radius: 6px; background: #ffffff; }
 QPushButton:hover { background: #f0f4fb; }
-QPushButton#primary { background: #2a78d6; color: white; border: none; font-weight: 700; padding: 8px 24px; }
+QPushButton:disabled { color: #a8a7a1; }
+QPushButton#primary { background: #2a78d6; color: white; border: none; font-weight: 700; padding: 6px 20px; }
+QPushButton#primary:hover { background: #1f68c0; }
 QPushButton#primary:disabled { background: #9ec5f4; }
+QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { min-height: 22px; background: #ffffff; }
+QGroupBox { font-weight: 600; border: 1px solid #dcdad2; border-radius: 6px; margin-top: 10px; padding-top: 6px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
 QLabel#hint { color: #6b6b66; }
 QLabel#sectionTitle { font-weight: 700; }
-QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { padding: 3px; }
+QToolBar { spacing: 4px; padding: 3px; border-bottom: 1px solid #dcdad2; }
+QHeaderView::section { padding: 4px; }
 """
 
 
@@ -61,6 +72,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.files_page = FilesPage(self.state, self.settings)
         self.signals_page = SignalsPage(self.state)
         self.kpi_page = KpiPage(self.state)
@@ -127,7 +139,7 @@ class MainWindow(QMainWindow):
         dock.setWidget(self.issues)
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
-        self.resizeDocks([dock], [110], Qt.Vertical)
+        self.resizeDocks([dock], [80], Qt.Vertical)
 
     def _show_issues(self):
         self.issues.clear()
@@ -253,5 +265,6 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.files_page.shutdown()
+        self.signals_page.shutdown()
         self.run_page.shutdown()
         event.accept()

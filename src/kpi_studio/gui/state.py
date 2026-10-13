@@ -124,6 +124,21 @@ class AppState(QObject):
             self.issues = [Issue("error", "profile", f"{type(exc).__name__}: {exc}")]
         self.validated.emit()
 
+    def signals_only_compiled(self):
+        """Compile only the signals and derived signals (events, KPIs and plots left out).
+
+        Lets the signal viewer work while an event or KPI is still incomplete.
+        Returns the compiled profile, or None if the signals themselves have errors.
+        """
+        data = self.clean_data()
+        for key in ("events", "kpis", "plots"):
+            data.pop(key, None)
+        try:
+            profile = profile_store.parse_profile(data, "profile")
+            return profile_store.load_compiled(profile, base_dir=self.base_dir)[1]
+        except Exception:  # noqa: BLE001
+            return None
+
     # names usable in expressions (after resolving imports when possible)
     def signal_names(self) -> list[str]:
         if self.resolved is not None:

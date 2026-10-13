@@ -96,3 +96,29 @@ def test_user_tools_button_loads_folder(window, tmp_path, monkeypatch):
     window.pick_user_tools()
     assert toolbox.get("signal", "gui_double").origin == "user"
     assert window.settings.value("tools/user_enabled", False, type=bool)
+
+
+def test_signal_viewer_works_while_an_event_is_incomplete(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.state.data["events"]["unfinished"] = {"window": {"pre": 1, "post": 1}}  # no start yet
+    window.state.edited(structure=True)
+    window.state.validate_now()
+    assert window.state.compiled is None
+    viewer = window.signals_page.viewer
+    viewer.plot_signals(["egoSpeed", "longJerk"])  # a raw and a derived signal
+    qtbot.waitUntil(lambda: viewer.data is not None and viewer.worker is None, timeout=20000)
+    assert {"egoSpeed", "longJerk"} <= set(viewer.data["values"])
+    assert len(window.signals_page.viewer.fig.axes) == 2
+
+
+def test_preview_shows_whole_file_when_event_never_fires(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.state.data["events"]["never"] = {"start": "egoSpeedKph > 1000", "window": {"pre": 1, "post": 1}}
+    window.state.edited(structure=True)
+    window.state.validate_now()
+    page = window.kpi_page
+    page.refresh_preview_choices()
+    page.pv_event.setCurrentText("never")
+    page.run_preview()
+    qtbot.waitUntil(lambda: page.preview_data is not None, timeout=20000)
+    assert page.fig.axes and "Whole file" in page.fig.axes[0].get_title()

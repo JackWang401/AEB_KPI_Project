@@ -57,12 +57,31 @@ FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"
          ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs")]
 
 
-def _spin(minimum=0.0, maximum=1e6, decimals=3, step=0.1):
+def _spin(minimum=0.0, maximum=1e6, decimals=2, step=0.1):
     s = QDoubleSpinBox()
     s.setRange(minimum, maximum)
     s.setDecimals(decimals)
     s.setSingleStep(step)
+    s.setMinimumWidth(80)
     return s
+
+
+def _label_axis(ax, name: str, unit: str = ""):
+    """Signal name in the top-left corner of its subplot (y labels collide when subplots are short)."""
+    ax.text(0.005, 0.97, f"{name} [{unit}]" if unit else name, transform=ax.transAxes, fontsize=8,
+            va="top", ha="left", color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
+
+
+def _form(parent=None) -> QFormLayout:
+    """Form whose fields stretch to the full width on every platform (macOS keeps them narrow by default)."""
+    form = QFormLayout(parent) if parent is not None else QFormLayout()
+    form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+    form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+    form.setHorizontalSpacing(10)
+    form.setVerticalSpacing(6)
+    return form
 
 
 # ============================================================================ event form
@@ -77,7 +96,7 @@ class EventForm(QWidget):
         enums = self.state.enum_map
 
         lay = QVBoxLayout(self)
-        form = QFormLayout()
+        form = _form()
         self.name_edit = QLineEdit()
         self.desc = QLineEdit()
         self.mode = QComboBox()
@@ -110,12 +129,22 @@ class EventForm(QWidget):
         form.addRow(self.preset_label, self.preset)
         form.addRow(self.inputs_label, self.preset_inputs)
         form.addRow(self.params_label, self.preset_params)
+        occ = QHBoxLayout()
+        occ.setSpacing(8)
+        for label, w in (("ignore shorter than", self.min_dur), ("merge gaps below", self.merge)):
+            occ.addWidget(QLabel(label))
+            occ.addWidget(w)
+            w.setSuffix(" s")
+        occ.addStretch(1)
+        form.addRow("Occurrences", occ)
         win = QHBoxLayout()
-        for label, w in (("ignore shorter than [s]", self.min_dur), ("merge gaps below [s]", self.merge),
-                         ("window before [s]", self.pre), ("after [s]", self.post)):
+        win.setSpacing(8)
+        for label, w in (("before start", self.pre), ("after end", self.post)):
             win.addWidget(QLabel(label))
             win.addWidget(w)
-        form.addRow("Occurrences", win)
+            w.setSuffix(" s")
+        win.addStretch(1)
+        form.addRow("Window", win)
         lay.addLayout(form)
 
         box = QGroupBox("Moments: the exact instants KPIs are read at (start, end, window_start, window_end are built in)")
@@ -353,7 +382,7 @@ class KpiForm(QWidget):
         self.index: int | None = None
         self._loading = False
 
-        lay = QFormLayout(self)
+        lay = _form(self)
         self.name_edit = QLineEdit()
         self.event = QComboBox()
         self.form = QComboBox()
@@ -653,10 +682,17 @@ class KpiPage(QWidget):
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Preview on"))
         self.pv_file = QComboBox()
+        self.pv_file.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.pv_file.setMinimumContentsLength(28)
         self.pv_event = QComboBox()
+        self.pv_event.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.pv_event.setMinimumContentsLength(14)
         self.pv_occ = QSpinBox()
         self.pv_occ.setMinimum(1)
+        self.pv_occ.setMinimumWidth(60)
+        self.pv_occ.setToolTip("Which occurrence of the event to show")
         self.pv_run = QPushButton("Run preview")
+        self.pv_run.setObjectName("primary")
         self.pv_status = QLabel()
         for w in (self.pv_file, QLabel("event"), self.pv_event, QLabel("occurrence"), self.pv_occ, self.pv_run):
             bar.addWidget(w)
@@ -664,16 +700,22 @@ class KpiPage(QWidget):
         pl.addLayout(bar)
         ps = QSplitter(Qt.Horizontal)
         self.pv_signals = QListWidget()
-        self.pv_signals.setMaximumWidth(220)
+        self.pv_signals.setToolTip("Signals to plot")
         ps.addWidget(self.pv_signals)
-        self.fig, self.canvas, _ = make_canvas()
-        ps.addWidget(self.canvas)
+        plot_box = QWidget()
+        pbl = QVBoxLayout(plot_box)
+        pbl.setContentsMargins(0, 0, 0, 0)
+        self.fig, self.canvas, Toolbar = make_canvas()
+        pbl.addWidget(Toolbar(self.canvas, plot_box))
+        pbl.addWidget(self.canvas, 1)
+        ps.addWidget(plot_box)
         self.pv_table = QTableWidget(0, 5)
         self.pv_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
         self.pv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.pv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         ps.addWidget(self.pv_table)
-        ps.setSizes([180, 600, 420])
+        ps.setStretchFactor(1, 1)
+        ps.setSizes([190, 700, 380])
         pl.addWidget(ps, 1)
         vsplit.addWidget(pv)
         vsplit.setSizes([430, 360])
@@ -947,7 +989,8 @@ class KpiPage(QWidget):
             self.pv_status.setText("Add files first.")
             return
         if self.state.compiled is None:
-            self.pv_status.setText("Fix the profile errors first (see the issues panel).")
+            self.pv_status.setText("Fix the errors listed under Profile check first. "
+                                   "To look at signals meanwhile, use the Signal viewer on the Signals tab.")
             return
         f = self.state.files[max(self.pv_file.currentIndex(), 0)]
         self.pv_status.setText(f"Running on {Path(f).name}…")
@@ -976,7 +1019,8 @@ class KpiPage(QWidget):
         checked = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
                    if self.pv_signals.item(i).checkState() == Qt.Checked]
         if not checked:
-            defaults = set(self._default_signals(ev))
+            defaults = set(self._default_signals(ev)) or {self.pv_signals.item(i).text()
+                                                           for i in range(min(3, self.pv_signals.count()))}
             self.pv_signals.blockSignals(True)
             for i in range(self.pv_signals.count()):
                 it = self.pv_signals.item(i)
@@ -997,23 +1041,36 @@ class KpiPage(QWidget):
         occ = next((o for o in out.occurrences if o.event == ev and o.index == idx), None)
         names = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
                  if self.pv_signals.item(i).checkState() == Qt.Checked and self.pv_signals.item(i).text() in values]
+        colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+        n = max(len(names), 1)
         if occ is None:
-            ax = self.fig.add_subplot(111)
-            ax.text(0.5, 0.5, f"No occurrence #{idx} of '{ev}' in this file", ha="center", va="center",
-                    transform=ax.transAxes)
-            ax.set_axis_off()
+            # no occurrence to zoom into: show the whole file, with any occurrences of the event shaded
+            spans = [(o.t_start, o.t_end) for o in out.occurrences if o.event == ev]
+            axes = self.fig.subplots(n, 1, sharex=True, squeeze=False)[:, 0]
+            for i, ax in enumerate(axes):
+                if i < len(names):
+                    ax.plot(t, np.asarray(values[names[i]], dtype=float), color=colors[i % 8], lw=1.2)
+                    _label_axis(ax, names[i])
+                for lo, hi in spans:
+                    ax.axvspan(lo, hi, color="#2a78d6", alpha=0.08, lw=0)
+                ax.grid(True, color="#e6e5e0", lw=0.6)
+                ax.tick_params(labelsize=7)
+            axes[0].set_title(f"Whole file: no occurrence #{idx} of '{ev}' found" if not spans
+                              else f"Whole file: occurrence #{idx} of '{ev}' not found", fontsize=9, color="#5f5e5a")
+            if not names:
+                axes[0].text(0.5, 0.5, "Tick signals on the left to plot them", ha="center", va="center",
+                             transform=axes[0].transAxes, color="#6b6b66")
+            axes[-1].set_xlabel("time [s]", fontsize=8)
             self.canvas.draw_idle()
             return
         lo, hi = occ.t_window_start, occ.t_window_end
         sl = slice(int(np.searchsorted(t, lo)), int(np.searchsorted(t, hi, side="right")))
         moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
-        colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-        n = max(len(names), 1)
-        axes = [self.fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        axes = self.fig.subplots(n, 1, sharex=True, squeeze=False)[:, 0]
         for i, ax in enumerate(axes):
             if i < len(names):
                 ax.plot(t[sl], np.asarray(values[names[i]], dtype=float)[sl], color=colors[i % 8], lw=1.4)
-                ax.set_ylabel(names[i], fontsize=8)
+                _label_axis(ax, names[i])
             ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.08, lw=0)
             for m in moments:
                 if m.time is not None:

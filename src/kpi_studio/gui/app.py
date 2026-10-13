@@ -15,6 +15,7 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     app = QApplication.instance() or QApplication(argv or sys.argv)
     app.setApplicationName("KPI Studio")
+    app.setStyle("Fusion")  # same look on macOS, Windows and Linux; the native macOS style squeezes forms
     win = MainWindow()
     win.show()
     return app.exec()
