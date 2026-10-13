@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio.gui.state import AppState
-from src.kpi_studio.gui.widgets.common import ExprEdit
+from src.kpi_studio.gui.widgets.common import ExprEdit, matches
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
@@ -45,7 +45,7 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
-    SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in (recordings)"]
+    SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
@@ -66,7 +66,7 @@ class SignalsPage(QWidget):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.addWidget(QLabel("Channels in the loaded files"))
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Filter channels…")
+        self.search.setPlaceholderText("Filter channels… (wildcards: * ?  e.g. lmc*it)")
         ll.addWidget(self.search)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Channel", "Unit", "Files"])
@@ -183,7 +183,7 @@ class SignalsPage(QWidget):
         return union
 
     def refresh_channels(self):
-        needle = self.search.text().strip().lower()
+        needle = self.search.text().strip()
         union = self._channel_union()
         n_files = sum(1 for f in self.state.files if self.state.indexes.get(f) and self.state.indexes[f].ok)
         self.tree.clear()
@@ -192,7 +192,7 @@ class SignalsPage(QWidget):
         for key in sorted(union):
             e = union[key]
             c: ChannelInfo = e["info"]
-            if needle and needle not in key.lower():
+            if needle and not (matches(needle, key) or matches(needle, c.name)):
                 continue
             g = groups.get(c.group_name)
             if g is None:

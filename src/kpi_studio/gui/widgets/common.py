@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 from typing import Callable, Optional
 
 import yaml
@@ -24,6 +25,18 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.expr import ExprError, compile_expr
+
+def matches(needle: str, text: str) -> bool:
+    """Case-insensitive search: plain text matches anywhere; with * or ? it is a wildcard
+    pattern, also anywhere in the text ('lmc*it' finds 'LmcAxTrgtLimit')."""
+    needle = (needle or "").strip().lower()
+    if not needle:
+        return True
+    text = text.lower()
+    if any(c in needle for c in "*?["):
+        return fnmatch.fnmatchcase(text, f"*{needle}*")
+    return needle in text
+
 
 OK_STYLE = ""
 BAD_STYLE = "QLineEdit { border: 1px solid #e34948; background: #fdf1f1; }"
@@ -127,7 +140,7 @@ class ToolPalette(QWidget):
         needle = self.search.text().strip().lower()
         self.tree.clear()
         self._names = list(self.names_fn()) if self.names_fn else []
-        shown = [n for n in self._names if not needle or needle in n.lower()]
+        shown = [n for n in self._names if matches(needle, n)]
         if self.names_fn is not None:
             top = QTreeWidgetItem([f"Signals ({len(self._names)}, from tab 2)"])
             top.setToolTip(0, "Double-click a signal to insert its name into the field you are editing")
@@ -142,8 +155,8 @@ class ToolPalette(QWidget):
         labels = {"signal": "Signal tools", "condition": "Conditions", "moment": "Moments (rules)",
                   "reducer": "Reducers", "event": "Event presets"}
         for kind in self.kinds:
-            specs = [s for s in toolbox.tools(kind) if not needle or needle in s.name.lower()
-                     or needle in s.doc.lower() or needle in s.category.lower()]
+            specs = [s for s in toolbox.tools(kind) if matches(needle, s.name)
+                     or (not any(c in needle for c in "*?[") and (needle in s.doc.lower() or needle in s.category.lower()))]
             if not specs:
                 continue
             top = QTreeWidgetItem([labels[kind]])

@@ -160,3 +160,28 @@ def test_new_signals_reach_tab3_while_an_event_is_unfinished(qtbot, window, mf4_
     item = next(top.child(i) for i in range(top.childCount()) if top.child(i).text(0) == "myNewSignal")
     page.palette._insert(item)
     assert "myNewSignal" in page.event_form.start.text()
+
+
+def test_wildcard_search():
+    from src.kpi_studio.gui.widgets.common import matches
+
+    assert matches("lmc*it", "Group::LmcAxTrgtLimit")
+    assert matches("veh*sp?ed", "VehicleSpeedQF")
+    assert matches("SPEED", "vehicleSpeed") and matches("", "x")
+    assert not matches("veh*xyz", "VehicleSpeed")
+
+
+def test_channel_filter_and_viewer_overlay_two_recordings(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    sp = window.signals_page
+    sp.search.setText("acc*[0]")
+    shown = [sp.tree.topLevelItem(i).child(j).text(0) for i in range(sp.tree.topLevelItemCount())
+             for j in range(sp.tree.topLevelItem(i).childCount())]
+    assert shown == ["acceleration[0]"]
+    viewer = sp.viewer
+    viewer.select_recordings([r.name for r in window.state.recordings()])
+    viewer.plot_signals(["egoSpeed"])
+    qtbot.waitUntil(lambda: len(viewer.cache) == 2 and viewer.worker is None, timeout=30000)
+    lines = viewer.fig.axes[0].get_lines()
+    assert len(lines) == 2  # one line per recording, overlaid
+    assert viewer.fig.axes[0].get_legend() is not None
