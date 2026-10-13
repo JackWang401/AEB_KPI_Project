@@ -18,6 +18,7 @@ PySide6 is included in `requirements.txt` for the GUI; on some systems you may n
 - GUI (PySide6): `python3 -m src.gui.app`  
   Select MF4 folder → pick features → hit RUN; logs stream into the window as each feature runs sequentially.
 - Compatibility entrypoint: `python3 -m src.run_kpi_tool` (launches the same GUI).
+- **KPI Studio** (configurable KPI extractor): `python3 -m src.kpi_studio.gui.app`, or the CLI `python3 -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi.yaml rec1.mf4 rec2.mf4`. See [docs/kpi_studio_usage.md](docs/kpi_studio_usage.md).
 Configs: `src/config/config_as_long.json` and `src/config/config_as_lat.json`.
 
 Outputs (per run) under `rawdata/analysis_results/`:
