@@ -1,6 +1,6 @@
 # KPI Studio — architecture for a configurable KPI extractor
 
-Status: design proposal, no implementation yet.
+Status: design agreed (decisions in section 11), no implementation yet.
 Branch: `claude/project-thread-ki5k8a` (forked from `codex-reconstruct-kpi-pipeline`).
 
 ## 1. What we are building
@@ -51,6 +51,9 @@ typo like `widnow:` is caught immediately instead of silently ignored).
 schema_version: 1
 name: AEB basic
 description: Trigger speed, latency and stopping KPIs for AEB activations
+
+imports:                        # shared KPI library files (section 3.4)
+  - library/aeb_core.kpi-lib.yaml
 
 timebase:
   rate_hz: 100                  # every file is resampled onto this grid
@@ -114,6 +117,7 @@ kpis:
     reduce: max
     of: abs(derivative(steerWheelAngle))
     between: [start, end]
+  - use: aeb_core.impact_rel_speed   # KPI taken from the imported library
 
 plots:
   - type: scatter
@@ -166,13 +170,107 @@ arrays; **nothing is ever passed to `eval`**. Allowed:
 
 - signal names, numbers, enum member names of the signal being compared
 - `+ - * / ** abs`, comparisons, `and or not`, `in (...)`
-- functions: `abs, min, max, clip, lowpass(x, hz), derivative(x), integral(x), delay(x, s),`
-  `rising(cond), falling(cond), hold(cond, s), between(x, lo, hi)`
+- any function registered in the **toolbox** (section 4), e.g. `lowpass(x, 10)`, `derivative(x)`,
+  `rising(cond)`, `hold(cond, 0.2)`, `ttc(objDistance, relSpeed)`
 
 Expressions are checked when the profile loads (unknown names, wrong argument counts) and errors
 point to the profile key, e.g. `events.aeb.moments.brake_onset: unknown signal 'longAccFlt'`.
 
-## 4. Architecture
+### 3.4 Shared KPI library
+
+Signals, derived signals, events, moments and KPIs can live in **library files**
+(`*.kpi-lib.yaml`, same syntax as a profile minus `plots` and `timebase`). A profile lists them under
+`imports` and refers to entries as `<library>.<name>`, either with `use:` or directly in expressions
+and moment references. Rules:
+
+- Each library has its own namespace, so two libraries may both define `trigger_speed`.
+- A profile may override an imported signal's `channels` (different logger, same meaning) but not
+  silently redefine an imported KPI; a name clash is a load error.
+- Imports are resolved at load time into one flat profile. Every run saves that **resolved** profile,
+  so results stay reproducible even if a library changes later.
+- In the GUI, the KPI editor has "Save to library" and "Add from library" actions.
+
+### 3.5 Profile scope
+
+One profile is applied to every file in a run. Speed-dependent calibration curves are out of
+scope for the first version; thresholds are constants in the profile.
+
+## 4. Toolbox
+
+The toolbox is the library of reusable, tested building blocks that profiles call. It is how
+today's hand-written logic (filters, onset detection, braking windows, stop distance, TTC) becomes
+available to any KPI without new pipeline code.
+
+### 4.1 Tool kinds
+
+| Kind | Input → output | Used in | Examples |
+|---|---|---|---|
+| **Signal** | arrays → array | `derived`, any expression | `lowpass`, `highpass`, `moving_average`, `derivative`, `jerk`, `integral`, `delay`, `rate_limit`, `to_kph`, `to_deg`, `to_g`, `rel_speed`, `ttc`, `enum_decode`, `fillna_hold` |
+| **Condition** | arrays → bool array | event `start`/`end`, `first`/`last` | `rising`, `falling`, `hold(cond, s)`, `debounce(cond, on_s, off_s)`, `between`, `in_band(x, ref, tol)`, `stable(x, tol, s)`, `changed(x)` |
+| **Moment** | arrays + search range → time or None | `moments:` | `first`, `last`, `argmax`, `argmin`, `crossing`, `offset`, `decel_onset(jerk, thd)`, `jerk_end(jerk, thd)`, `first_nonzero(x)`, `vehicle_stop(speed, thd, hold)`, `settled(x, tol, s)` |
+| **Reducer** | arrays + range → number | `reduce:` | `max`, `min`, `mean`, `time_mean`, `rms`, `peak_to_peak`, `integral`, `distance(speed)`, `time_true`, `count_rising`, `value_at` |
+| **Event preset** | arrays → occurrences | `events:` via `preset:` | `aeb_request`, `fcw_request`, `lsaeb_cpm`, `lka_intervention`, `target_decel_window` |
+
+Event presets and domain moments are thin wrappers around existing, already-tested functions, so a
+profile can say `start: { preset: aeb_request, signal: aebRequest }` or
+`brake_onset: { decel_onset: jerk(longActAccelFlt), threshold: -5, after: start }` instead of
+spelling out the logic.
+
+### 4.2 How a tool is defined
+
+```python
+# src/kpi_studio/toolbox/signal/filters.py
+@tool(kind="signal", category="Filters", unit="same")
+def lowpass(x: Signal, cutoff_hz: Param[float, Gt(0)], order: Param[int] = 4) -> Signal:
+    """Zero-phase Butterworth low-pass filter."""
+    ...
+```
+
+- The `@tool` decorator registers the function in one **registry** with its kind, category,
+  parameter types and limits, unit behaviour and docstring.
+- The expression validator, the moment/reducer schema and the GUI all read the registry. Adding a
+  tool therefore automatically makes it valid in profiles, shows it in the GUI's tool palette with
+  its documentation, and builds its parameter form; no GUI code is written per tool.
+- Tools are pure numpy functions: no file access, no Qt, no globals. They receive the common
+  timebase (`dt`, `time`) through a context object when they need it.
+- Every tool states how it handles NaN, empty input and arrays shorter than its own needs
+  (e.g. a filter shorter than its pad length returns the input with a warning, as
+  `accel_filter` does today).
+
+### 4.3 Toolbox robustness
+
+- **Contract tests** run automatically on every registered tool with a standard set of synthetic
+  inputs (constant, step, ramp, noise, NaN gaps, length 0/1/2, wrong dtype). A tool cannot be added
+  without passing them.
+- Each tool also has its own behaviour tests with known answers.
+- Tools are versioned with the package; the run's `RunInfo` sheet records the toolbox version.
+- **User tools** (optional, off by default): Python files in a user tools folder are registered at
+  start-up when enabled in settings. They are listed separately in the GUI and recorded in
+  `RunInfo`, and they run through the same contract tests from a "Check tools" button.
+
+### 4.4 Seeded from the current code
+
+| Existing code | Becomes |
+|---|---|
+| `utils/signal_filters.accel_filter` | `lowpass` |
+| `utils/mf4_postprocess` conversions (`egoSpeed*3.6`, `np.degrees`) | `to_kph`, `to_deg` |
+| `utils/mf4_extractor.convert_tact_unit` | `to_g` and unit conversion helpers |
+| `utils/enum_loader.EnumMapper` | `enum_decode`, enum names in conditions |
+| `utils/event_detector/as_long/aeb.detect_aeb_events` | event preset `aeb_request` |
+| `utils/event_detector/as_long/fcw.detect_fcw_events`, `lsaeb.detect_lsaeb_events`, `as_lat/lka.detect_lka_events` | event presets `fcw_request`, `lsaeb_cpm`, `lka_intervention` (merge window as parameter) |
+| `event_detector/as_long/aeb.find_first_last_indices`, `find_aeb_intv_start` | `first`, `last` with tolerance |
+| `event_detector/as_long/aeb.find_aeb_intv_end` | `vehicle_stop` and `first` combined in the AEB library |
+| `event_detector/as_long/decel.detect_decel_onset`, `detect_brake_jerk_end` | moments `decel_onset`, `jerk_end` |
+| `kpis/as_long/autonomous_braking_window` | event preset `target_decel_window` |
+| `kpis/as_long/actual_decel_onset` | moment `decel_onset` applied after a request edge |
+| `kpis/as_long/braking_average_accel` | reducer `time_mean` |
+| `kpis/as_long/braking_stop_distance` | reducer `distance(speed)` |
+| `kpis/as_long/aeb/*` (latency, distance, impact speed, steering, throttle, yaw, lat accel, brake mode), `fcw/*`, `lsaeb/distance` | KPIs in `library/aeb_core`, `library/fcw_core`, `library/lsaeb_core`, built from the tools above; the classes' numeric core is moved into tools where it is generic |
+
+The existing classes take an `extractor` object and read config attributes; the toolbox versions
+take arrays and explicit parameters instead, so they can be tested and reused on their own.
+
+## 5. Architecture
 
 ```mermaid
 flowchart TB
@@ -189,14 +287,18 @@ flowchart TB
   RS --> PL[report.plots]
   EN --> EX[core.expr]
   EN --> MD[core.model]
+  EN --> TB[toolbox registry]
+  EX --> TB
+  GUI --> TB
   PS --> MD
 ```
 
-Dependency rule: `gui → app → io / report → core`. `core` imports only numpy, pandas and pydantic,
+Dependency rule: `gui → app → io / report → core → toolbox`. `core` and `toolbox` import only
+numpy, scipy, pandas and pydantic,
 never Qt, asammdf or openpyxl. That keeps the engine fast to unit-test with synthetic arrays and
 lets the same run be driven from the GUI, the CLI or a test.
 
-### 4.1 Module layout
+### 5.1 Module layout
 
 ```
 src/kpi_studio/
@@ -205,10 +307,17 @@ src/kpi_studio/
     expr.py           # safe parser + vectorised evaluator, name/arity checks
     engine.py         # detect_occurrences(), resolve_moments(), compute_kpis()
     results.py        # Occurrence, KpiResult, Status enum, results -> DataFrame
+  toolbox/
+    registry.py       # @tool decorator, Param types, lookup by kind/category
+    signal/           # filters.py, calculus.py, units.py, kinematics.py (ttc, rel_speed), enums.py
+    condition/        # edges.py, timing.py (hold, debounce), bands.py
+    moment/           # search.py (first/last/argmax/crossing), braking.py (decel_onset, vehicle_stop)
+    reducer/          # stats.py, integrals.py (distance, time_mean)
+    event/            # presets.py (aeb_request, fcw_request, lsaeb_cpm, lka_intervention, ...)
   io/
     mf4_index.py      # scan files: channels, units, rasters, duration (no sample data)
     mf4_reader.py     # read only mapped channels, align onto timebase -> SignalFrame
-    profile_store.py  # load/save YAML, schema_version migrations, atomic writes
+    profile_store.py  # load/save YAML, imports resolution, schema_version migrations, atomic writes
   report/
     excel_writer.py   # Summary / per-event / Details / Files / RunInfo sheets
     plots.py          # Plotly figures from PlotDef + dashboard index
@@ -218,12 +327,13 @@ src/kpi_studio/
   gui/
     main_window.py    # 4-step wizard shell
     pages/files_page.py, signals_page.py, kpi_editor_page.py, run_page.py
-    widgets/condition_builder.py, moment_editor.py, signal_preview.py
+    widgets/condition_builder.py, moment_editor.py, signal_preview.py, tool_palette.py
   cli.py              # python -m src.kpi_studio.cli run profile.yaml a.mf4 b.mf4 -o out/
+library/aeb_core.kpi-lib.yaml, fcw_core.kpi-lib.yaml, lsaeb_core.kpi-lib.yaml
 profiles/examples/aeb_basic.kpi.yaml
 ```
 
-### 4.2 Run data flow
+### 5.2 Run data flow
 
 ```
 files ──► mf4_index (headers only) ──► preflight ──► user confirms
@@ -244,7 +354,7 @@ Key data types:
 - `KpiResult`: file, event, occurrence, kpi, value, unit, moment time, `status`, message.
   Results are a long, tidy table; Excel's wide view is a pivot of it.
 
-## 5. GUI
+## 6. GUI
 
 A four-step window that mirrors the workflow, with the profile always editable and savable.
 
@@ -267,9 +377,12 @@ A four-step window that mirrors the workflow, with the profile always editable a
 4. **Run**: output folder, preflight summary (missing signals per file, warnings), Run and Cancel
    buttons, per-file progress, log panel, and buttons to open the Excel and dashboard when done.
 
+A **tool palette** (searchable, grouped by category) sits beside every expression field: picking a
+tool inserts it with a parameter form built from the registry and shows its documentation.
+
 The last files, folder and profile are remembered with `QSettings`, as the current GUI does.
 
-## 6. Outputs
+## 7. Outputs
 
 `<output>/<profile>_<timestamp>/`
 
@@ -284,7 +397,7 @@ The last files, folder and profile are remembered with `QSettings`, as the curre
 - `plots/*.html` plus `dashboard.html` linking all of them.
 - `profile.kpi.yaml`: a copy of the exact profile used, so any result can be reproduced.
 
-## 7. Robustness
+## 8. Robustness
 
 | Risk | How the design handles it |
 |---|---|
@@ -298,57 +411,63 @@ The last files, folder and profile are remembered with `QSettings`, as the curre
 | Arbitrary code in profiles | Whitelisted AST evaluator, no `eval`/`exec`. |
 | Output corrupted or locked | Profile and Excel written to a temp file then renamed; a locked Excel (open in Excel on Windows) produces a clear message and a retry, not a crash. |
 | Results that can't be reproduced | Profile copy, hash, tool version and inputs saved with every run. |
+| A toolbox function misbehaves on odd input | Contract tests on every tool (NaN, empty, short, constant, step); user tools off by default and checked the same way. |
+| A shared library changes under old results | Runs save the resolved profile; library name clashes are load errors. |
 | Profile format evolves | `schema_version` plus migration functions in `profile_store`; old profiles keep loading. |
 | Silent wrong numbers | Every KPI stores the moment time; verification time-series plots show window and moments; golden tests on known signals. |
 
 Logging uses the standard `logging` module (file + GUI handler) instead of redirecting stdout as the
 current runner does.
 
-## 8. What is reused from `codex-reconstruct-kpi-pipeline`
+## 9. What is reused from `codex-reconstruct-kpi-pipeline`
 
 | Existing code | Use in KPI Studio |
 |---|---|
 | `src/utils/mf4_extractor.py`: channel matching, suffix cleanup, duplicate-timestamp handling, unit maps and `convert_tact_unit` | Moved into `io/mf4_reader.py` / `io/mf4_index.py` behind a smaller API; the signal-database (Excel) path is dropped. |
 | `src/utils/signal_mdf.py`: robust time-vector resolution (`_resolve_time`), `safe_load_mdf` | Reused for files with several masters or missing time channels. |
-| `src/utils/signal_filters.py`: `accel_filter` | Becomes the `lowpass()` expression function. |
-| `src/utils/enum_loader.py` + `config/enum_definitions.yaml` | Enum names usable in conditions (`aebRequest == FULL`). |
+| `src/utils/signal_filters.py`, `enum_loader.py`, `event_detector/*`, `kpis/*` | Moved into the toolbox; see section 4.4 for the one-by-one mapping. |
+| `config/enum_definitions.yaml` | Enum names usable in conditions (`aebRequest == FULL`). |
 | `src/utils/exporter.py` | Pattern kept, rewritten to write the whole workbook once instead of re-opening it per sheet. |
 | `src/viz/visualizers/dashboard_visualizer.py` | Reused as is for `dashboard.html`. |
 | `src/viz/plotters/*` and `src/viz/core/*` | Styling and layer ideas (averages, reference lines) carried over; new figures are built directly in Plotly because the current plotters are tied to `graphSpec` sheets and Matplotlib-to-Plotly conversion. |
 | `src/gui/main_window.py`, `gui/controllers/pipeline_runner.py` | Stylesheet, `QSettings` persistence and the `QThread` runner pattern; stdout capture replaced by typed progress signals. |
 | `src/utils/path_manager.py`, `run_kpi_tool.spec`, `hooks/` | Resource paths and PyInstaller packaging; the spec gains a second entry point. |
-| Existing AEB/FCW KPI logic (`utils/event_detector`, `utils/kpis`) | Not called directly; used as the reference to write `profiles/examples/aeb_basic.kpi.yaml` and as a cross-check that the profile reproduces today's numbers. |
+| Existing AEB/FCW/LSAEB KPI definitions | Rebuilt as library files on top of the toolbox; today's results are the parity reference. |
 
 Not reused: per-feature pipeline/segmenter/extractor classes, the Excel-based configs
 (`kpi_as_long.xlsx`, `graphSpec`), and writing event chunks to disk.
 
-## 9. Testing
+## 10. Testing
 
 - `core` unit tests with synthetic arrays: every moment rule, every KPI form, edge cases (event at
   file start/end, no occurrences, NaNs, missing moment).
+- Toolbox contract tests over every registered tool, plus per-tool known-answer tests, including
+  parity with the original functions they were moved from.
 - Expression tests: valid and invalid syntax, rejected constructs (`__import__`, attribute access).
-- Profile round-trip and migration tests; example profiles validated in CI.
+- Profile round-trip, import resolution and migration tests; example profiles and libraries
+  validated in CI.
 - End-to-end: small MF4 files generated with asammdf in the test fixtures, run through the CLI,
   Excel compared to golden values.
 - Parity test: the AEB example profile against current pipeline results on the same recording.
 - GUI smoke tests with `pytest-qt` in offscreen mode (load profile, preview, run).
 
-## 10. Implementation plan
+## 11. Implementation plan
 
-1. **Core and CLI**: schema, expression engine, occurrences/moments/KPIs, MF4 reader, Excel
-   writer, CLI. Usable headless with a hand-written profile.
-2. **Plots and dashboard**.
-3. **GUI**: files, signals, KPI editor with preview, run page.
-4. **Packaging and parity**: PyInstaller entry point, AEB example profile matched against the
-   current tool.
+1. **Toolbox foundation**: registry, contract tests, and the seeded tools from section 4.4.
+2. **Core and CLI**: schema with imports, expression engine, occurrences/moments/KPIs, MF4 reader,
+   Excel writer, CLI. Usable headless with a hand-written profile.
+3. **Libraries and parity**: `aeb_core`, `fcw_core`, `lsaeb_core` libraries matched against the
+   current tool's results.
+4. **Plots and dashboard**.
+5. **GUI**: files, signals, KPI editor with tool palette and preview, run page.
+6. **Packaging**: PyInstaller entry point.
 
-## 11. Open questions
+## 12. Decisions
 
-1. Should one run apply a single profile to all files (proposed), or allow different profiles per
-   file?
-2. Is one row per occurrence the Excel layout you want in `Summary`, or one row per file with
-   occurrences as columns?
-3. Do you need speed-dependent thresholds (calibration curves like the current `calParam` sheet)
-   inside conditions in the first version, or can that wait?
-4. Should a KPI defined in one profile be importable into another (a shared KPI library), or is one
-   self-contained file per profile enough for now?
+| Question | Decision (Jack, 2026-10-13) |
+|---|---|
+| One profile for all files in a run? | Yes. |
+| Excel `Summary` with one row per occurrence? | Yes. |
+| Speed-dependent calibration curves in v1? | No, constants only. |
+| Shareable KPIs between profiles? | Yes, through library files (section 3.4). |
+| Rich toolbox of reusable KPI functions | Yes, seeded from the current code (section 4). |
