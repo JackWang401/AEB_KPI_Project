@@ -100,6 +100,10 @@ class MainWindow(QMainWindow):
         examples = QAction("Open example", self)
         examples.triggered.connect(self.open_example)
         tb.addAction(examples)
+        user_tools = QAction("User tools…", self)
+        user_tools.setToolTip("Load your own @tool functions from a folder of .py files")
+        user_tools.triggered.connect(self.pick_user_tools)
+        tb.addAction(user_tools)
         tb.addSeparator()
         box = QWidget()
         lay = QHBoxLayout(box)
@@ -157,6 +161,20 @@ class MainWindow(QMainWindow):
     def _update_title(self):
         name = self.state.path.name if self.state.path else "unsaved profile"
         self.setWindowTitle(f"KPI Studio {__version__} — {name}{' *' if self.state.dirty else ''}")
+
+    def pick_user_tools(self):
+        start = self.settings.value("tools/user_folder", "") or str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, "Folder with your tool .py files", start)
+        if not folder:
+            return
+        loaded = toolbox.load_user_tools(folder)
+        self.settings.setValue("tools/user_folder", folder)
+        self.settings.setValue("tools/user_enabled", True)
+        self.kpi_page.palette.populate()
+        self.state.validate_now()
+        QMessageBox.information(self, "User tools",
+                                f"Loaded {len(loaded)} file(s) from {folder}.\n"
+                                "They load again automatically next time KPI Studio starts.")
 
     # ------------------------------------------------------------------ profile files
     def _confirm_discard(self) -> bool:

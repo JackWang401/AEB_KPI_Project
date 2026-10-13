@@ -79,3 +79,20 @@ def test_save_and_reopen(qtbot, window, mf4_dir, tmp_path):
     assert window._save(target)
     window.open_profile(target)
     assert window.state.compiled is not None
+
+
+def test_user_tools_button_loads_folder(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from src.kpi_studio import toolbox
+
+    (tmp_path / "my_tools.py").write_text(
+        "from src.kpi_studio.toolbox.registry import tool\n"
+        "@tool('signal', 'Math')\n"
+        "def gui_double(ctx, x):\n"
+        "    '''Twice the input.'''\n"
+        "    return 2 * x\n")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    window.pick_user_tools()
+    assert toolbox.get("signal", "gui_double").origin == "user"
+    assert window.settings.value("tools/user_enabled", False, type=bool)

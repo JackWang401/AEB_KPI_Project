@@ -8,7 +8,7 @@ inside that window, and the KPIs read at those moments. The design is in
 ## GUI
 
 ```
-python -m src.kpi_studio.gui.app
+python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 ```
 
 1. **Files** – add two or more MF4 files (or a folder, or drag and drop).
@@ -41,10 +41,19 @@ Example: `python -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi
 
 `cli tools` lists every tool with its signature. Your own tools go in a folder
 of `.py` files using the `@tool` decorator from
-`src.kpi_studio.toolbox.registry`; load them with `--user-tools FOLDER`.
+`src.kpi_studio.toolbox.registry`; load them with `--user-tools FOLDER` on the
+command line, or the **User tools…** button in the GUI (remembered for next time).
 
 ## Tests
 
 ```
 QT_QPA_PLATFORM=offscreen python -m pytest tests/kpi_studio
 ```
+
+## Build the app
+
+```
+pyinstaller kpi_studio.spec
+```
+
+Creates `dist/KPI_Studio/` (and `KPI_Studio.app` on macOS).

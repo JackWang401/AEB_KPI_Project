@@ -7,5 +7,6 @@ plotly==6.3.1
 pyecharts==2.0.5
 openpyxl==3.1.5
 PyYAML==6.0.3
+pydantic==2.13.5
 pyinstaller==6.11.1
 PySide6==6.8.1

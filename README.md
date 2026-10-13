@@ -1,94 +1,96 @@
-# 🚗 ADAS KPI Processing Pipelines
+# KPI Studio
 
-End-to-end tooling for extracting and visualizing ADAS KPIs from MF4 logs. Supports longitudinal (AEB, FCW, LSAEB) and lateral (LKA) features, event-level KPIs, cycle/availability KPIs, and interactive Plotly visualizations.
+A configurable KPI extractor for ADAS MF4 recordings. Instead of hard-coding each
+feature, you describe **what to measure** in a readable profile file and KPI Studio
+does the rest:
+
+1. **Load** two or more MF4 files.
+2. **Pick the signals** the KPIs need (one name per signal, with fallback channel names
+   for recordings that log it differently).
+3. **Define the window and the moments** where KPIs are read, in a GUI, and save them by
+   name to a `*.kpi.yaml` profile.
+4. **Run**: KPIs go to one Excel workbook, plus interactive Plotly plots and a dashboard.
+
+> This branch (`kpi-studio`) is separate from `codex-reconstruct-kpi-pipeline`, which
+> keeps the feature-specific pipeline. KPI Studio reuses a few of its helpers
+> (filters and AEB/FCW/LSAEB/LKA detectors under `src/utils/`), so those stay in the tree.
+
+The design is in [docs/kpi_studio_architecture.md](docs/kpi_studio_architecture.md).
 
 ---
 
-## 📦 Install
+## Install
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
-PySide6 is included in `requirements.txt` for the GUI; on some systems you may need Qt platform plugins (X11/Wayland on Linux, or ensure Xcode Command Line Tools on macOS).
+
+## Run
+| What | Command |
+|---|---|
+| GUI | `python3 run_kpi_studio.py` (or `python3 -m src.kpi_studio.gui.app`) |
+| Extract KPIs | `python3 -m src.kpi_studio.cli run PROFILE rec1.mf4 rec2.mf4 [-o OUT] [--workers N]` |
+| Check a profile | `python3 -m src.kpi_studio.cli validate PROFILE` |
+| Check signal coverage | `python3 -m src.kpi_studio.cli preflight PROFILE rec1.mf4 ...` |
+| List channels in a file | `python3 -m src.kpi_studio.cli channels rec1.mf4` |
+| List toolbox functions | `python3 -m src.kpi_studio.cli tools [--kind moment]` |
+
+Example profile: `src/kpi_studio/profiles/aeb_basic.kpi.yaml`.
+Step-by-step guide: [docs/kpi_studio_usage.md](docs/kpi_studio_usage.md).
+
+## Output
+Each run writes a new folder `<output>/<profile>_<timestamp>/`:
+- `kpi_results.xlsx`: Summary (one row per event occurrence), one sheet per event,
+  Details (status of every KPI), Moments, Files, RunInfo.
+- `plots/Fig_## - <title>.html` and `dashboard.html`.
+- `profile.resolved.kpi.yaml`: the exact profile used, for reproducibility.
+
+A file with a missing signal or a broken recording is reported and skipped; the
+other files still produce results.
 
 ---
 
-## ▶️ Run
-- GUI (PySide6): `python3 -m src.gui.app`  
-  Select MF4 folder → pick features → hit RUN; logs stream into the window as each feature runs sequentially.
-- Compatibility entrypoint: `python3 -m src.run_kpi_tool` (launches the same GUI).
-- **KPI Studio** (configurable KPI extractor): `python3 -m src.kpi_studio.gui.app`, or the CLI `python3 -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi.yaml rec1.mf4 rec2.mf4`. See [docs/kpi_studio_usage.md](docs/kpi_studio_usage.md).
-Configs: `src/config/config_as_long.json` and `src/config/config_as_lat.json`.
+## Concepts
+| Term | Meaning |
+|---|---|
+| **Signal** | A short name mapped to one or more channel candidates; the first found in a file wins. Units are converted. |
+| **Derived signal** | An expression over signals, e.g. `lowpass(longActAccel, 10)`. |
+| **Event** | The window to analyse: a start/end condition (`aebTargetDecel < -6`) or a preset detector, with pre/post margins. |
+| **Moment** | A named instant inside the event, e.g. `decel_onset(longJerk, threshold=-25, after=start)`. |
+| **KPI** | A value at a moment, a duration between moments, a reducer over a range (`max`, `mean`, `integral`, …), or a formula over earlier KPIs. |
+| **Library** | `*.kpi-lib.yaml` file of signals, events and KPIs shared between profiles (`vehicle`, `aeb_core`, `fcw_core`, `lsaeb_core`). |
 
-Outputs (per run) under `rawdata/analysis_results/`:
-- `*_kpi_results.xlsx` with event sheets (`aeb`, `fcw`, `lsaeb`, `lka`) plus shared `cycleKPI`.
-- HTML plots per feature in subfolders (e.g., `analysis_results/aeb/`).
-- KPI catalog: `docs/kpi_catalog.md`.
-
----
-
-## 🧭 Workflow
-1) **Config load** (`src/config/config.py`)  
-   Reads JSON + KPI Excel (vbRcSignals, graphSpec, lineColors, markerShapes, KPI schemas, calibratables).
-2) **Signal extraction** (`src/pipeline/input_handler.py`)  
-   Parses MF4, maps signals, writes extracted MF4 chunks and `.mat` files.
-3) **Event detection** (`src/pipeline/base/base_event_segmenter.py` subclasses)  
-   Splits logs into per-event chunks (AEB/FCW/LSAEB/LKA).
-4) **KPI extraction**  
-   - Event KPIs via `BaseEventKpiExtractor` subclasses.  
-   - Cycle/availability KPIs via `BaseCycleKpiExtractor` subclasses. Shared distance-weighted features now use `src/pipeline/base/rule_based_cycle_kpi_extractor.py`.  
-   Exported into `*_kpi_results.xlsx`.
-5) **Visualization**  
-   `src/viz` renders Matplotlib → Plotly HTML (calibrations, averages, legend ordering).
-
----
-
-## 📂 Key Modules
-- `src/config/` — configs, enum definitions, KPI schemas.
-- `src/pipeline/` — feature registry, declarative pipelines, event/cycle extractors, visualizers.
-- `src/viz/` — plotter registry, exporters, figure/style/filter managers.
-- `src/gui/` — PySide6 desktop UI (folder selection, feature toggles, runner).
-- `src/utils/` — IO helpers, KPI table builders, path utilities.
-
----
-
-## 🧱 Extension Model
-- Add new features in `src/pipeline/registry.py`; the GUI runner and domain entrypoints read from that registry instead of hard-coding feature lists.
-- Reuse `src/pipeline/base/base_pipeline.py` by declaring component classes on the pipeline class rather than re-implementing `_detect_events`, `_extract_kpis`, and `_visualize_results`.
-- Reuse `src/pipeline/base/rule_based_cycle_kpi_extractor.py` for distance-based cycle KPIs driven by signal masks and calibratable thresholds.
-- Keep exported KPI names documented in `docs/kpi_catalog.md`.
-
----
-
-## 🗂️ Outputs & Sheets
-- Event KPIs: per-feature sheets (`aeb`, `fcw`, `lsaeb`, `lka`).
-- Cycle KPIs: combined `cycleKPI` sheet keyed by `label` + `feature` so multiple features coexist.
-- Plots: HTML in `analysis_results/<feature>/Fig_## - <title>.html`.
-
----
-
-## 🧪 Quick Checks
-```bash
-python3 -m src.run_kpi_tool
-# verify analysis_results contains updated Excel and HTML outputs
+## Source layout
+```
+src/kpi_studio/
+  toolbox/   signal, condition, moment, reducer and event tools (@tool registry)
+  core/      profile model, expression language, validation, alignment, engine
+  io/        profile/library store (YAML), MF4 reader
+  report/    Excel writer, Plotly plots and dashboard
+  app/       run service (preflight, parallel processing, output folder)
+  gui/       PySide6 HMI (Files, Signals, Events & KPIs, Plots & Run)
+  library/   built-in KPI libraries
+  profiles/  example profiles
+  cli.py     command line
+src/utils/   reused helpers from the pipeline (filters, event detectors, paths)
+src/config/  enum_definitions.yaml (enum text for discrete signals)
 ```
 
----
+## Your own tools
+Put `.py` files using the `@tool` decorator from `src.kpi_studio.toolbox.registry` in a
+folder and load it with `--user-tools FOLDER` (CLI) or the **User tools…** button (GUI). They appear in
+the toolbox next to the built-in ones.
 
-## 📦 Build Executable (PyInstaller)
-Ensure dependencies are installed (`pip install -r requirements.txt`), then build from repo root:
+## Tests
 ```bash
-pyinstaller run_kpi_tool.spec
+QT_QPA_PLATFORM=offscreen python3 -m pytest tests/kpi_studio
 ```
-Artifacts:
-- `dist/ADAS_KPI_Tool/` directory bundle (contains CLI + GUI).
-- On macOS, a `.app` bundle is also produced.
-If the GUI fails to start due to Qt plugins, verify `PySide6` is installed and rerun the build; the spec already collects PySide6, pyecharts, and Qt data.
 
----
-
-## 🛠️ Notes
-- Requirements: see `requirements.txt` (asammdf, numpy/pandas/scipy, matplotlib/plotly/pyecharts, openpyxl, PyYAML, pyinstaller, etc.).
-- Keep the KPI Excel files in `src/config/` aligned with vbRcSignals, graph specs, and KPI definitions.
-- Migration: `signal_map.xlsx` is deprecated; move vbRcSignals into `kpi_as_long.xlsx` and `kpi_as_lat.xlsx`.
+## Build the app (PyInstaller)
+```bash
+pyinstaller kpi_studio.spec
+```
+Produces `dist/KPI_Studio/` (and `KPI_Studio.app` on macOS). Run it with no arguments
+for the GUI, or with CLI arguments (`KPI_Studio run PROFILE files...`).
+The legacy pipeline's `run_kpi_tool.spec` is left unchanged.
