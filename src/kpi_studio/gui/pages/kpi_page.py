@@ -943,7 +943,7 @@ class KpiPage(QWidget):
         cur = self.pv_file.currentText()
         self.pv_file.blockSignals(True)
         self.pv_file.clear()
-        self.pv_file.addItems([Path(f).name for f in self.state.files])
+        self.pv_file.addItems([r.label for r in self.state.recordings()])
         if cur:
             self.pv_file.setCurrentText(cur)
         self.pv_file.blockSignals(False)
@@ -992,10 +992,11 @@ class KpiPage(QWidget):
             self.pv_status.setText("Fix the errors listed under Profile check first. "
                                    "To look at signals meanwhile, use the Signal viewer on the Signals tab.")
             return
-        f = self.state.files[max(self.pv_file.currentIndex(), 0)]
-        self.pv_status.setText(f"Running on {Path(f).name}…")
+        recs = self.state.recordings()
+        f = recs[min(max(self.pv_file.currentIndex(), 0), len(recs) - 1)]
+        self.pv_status.setText(f"Running on {f.label}…")
         self.pv_run.setEnabled(False)
-        self.worker = PreviewWorker(self.state.compiled, f, self.state.indexes.get(f), self)
+        self.worker = PreviewWorker(self.state.compiled, f, dict(self.state.indexes), self)
         self.worker.done.connect(self.preview_done)
         self.worker.failed.connect(self.preview_failed)
         self.worker.finished.connect(lambda: self.pv_run.setEnabled(True))

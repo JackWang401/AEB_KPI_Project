@@ -37,7 +37,8 @@ class PreviewWorker(QThread):
     done = Signal(object)    # dict(outcome=FileOutcome, time=..., values=...)
     failed = Signal(str)
 
-    def __init__(self, compiled, path: str, index=None, parent=None):
+    def __init__(self, compiled, path, index=None, parent=None):
+        """`path`: a file path or a Recording; `index`: a RecordingIndex or dict path -> index."""
         super().__init__(parent)
         self.cp = compiled
         self.path = path
@@ -45,14 +46,14 @@ class PreviewWorker(QThread):
 
     def run(self):
         try:
-            outcome = FileOutcome(file=self.path)
+            outcome = FileOutcome(file=getattr(self.path, "name", self.path))
             raw, issues = read_signals(self.path, self.cp.profile.signals, self.index)
             outcome.issues.extend(issues)
             frame, align_issues, uses = build_frame(raw, self.cp.profile.signals, self.cp.profile.timebase.rate_hz,
                                                     profile_store.load_enum_tables())
             outcome.issues.extend(align_issues)
             outcome.channels.extend(uses)
-            ev = FileEvaluator(self.cp, frame, self.path)
+            ev = FileEvaluator(self.cp, frame, outcome.file)
             ev.run(outcome)
             self.done.emit({"outcome": outcome, "time": ev.time, "values": dict(ev.env.values)})
         except Exception as exc:  # noqa: BLE001
@@ -79,7 +80,7 @@ class RunWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, profile, files: list[str], output_root: str, workers: int, base_dir=None,
-                 indexes=None, parent=None):
+                 indexes=None, combine: bool = True, parent=None):
         super().__init__(parent)
         self.profile = profile
         self.files = files
@@ -87,6 +88,7 @@ class RunWorker(QThread):
         self.workers = workers
         self.base_dir = base_dir
         self.indexes = indexes or {}
+        self.combine = combine
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -99,7 +101,7 @@ class RunWorker(QThread):
         try:
             svc = RunService(self.profile, self.files, self.output_root, workers=self.workers,
                              progress=lambda *a: self.progress.emit(*a), cancel=self.cancel_event,
-                             base_dir=self.base_dir)
+                             base_dir=self.base_dir, combine=self.combine)
             svc.indexes.update(self.indexes)
             result = svc.run()
             for o in result.outcomes:

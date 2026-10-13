@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from src.kpi_studio.core.model import Profile
 from src.kpi_studio.core.validate import CompiledProfile, Issue, ProfileError
 from src.kpi_studio.io import profile_store
-from src.kpi_studio.io.mf4 import RecordingIndex
+from src.kpi_studio.io.mf4 import Recording, RecordingIndex, group_recordings
 
 NEW_PROFILE = {
     "schema_version": 1,
@@ -41,6 +41,7 @@ class AppState(QObject):
         self.dirty = False
         self.files: list[str] = []
         self.indexes: dict[str, RecordingIndex] = {}
+        self.combine = True   # read files of the same recording (one per logger/bus) together
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
         self.resolved: Optional[Profile] = None
@@ -182,3 +183,12 @@ class AppState(QObject):
     def set_index(self, path: str, index: RecordingIndex):
         self.indexes[path] = index
         self.files_changed.emit()
+
+    def set_combine(self, combine: bool):
+        if combine != self.combine:
+            self.combine = combine
+            self.files_changed.emit()
+
+    def recordings(self) -> list[Recording]:
+        """What gets processed: the files grouped into recordings (one file each when combining is off)."""
+        return group_recordings(self.files, self.indexes, self.combine)

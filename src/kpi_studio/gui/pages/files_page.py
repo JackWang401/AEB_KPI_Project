@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -23,7 +24,7 @@ from src.kpi_studio.gui.workers import IndexWorker
 
 
 class FilesPage(QWidget):
-    COLS = ["File", "Folder", "Duration [s]", "Channels", "Status"]
+    COLS = ["File", "Recording", "Folder", "Duration [s]", "Channels", "Status"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -46,6 +47,17 @@ class FilesPage(QWidget):
         for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             bar.addWidget(b)
         bar.addStretch(1)
+        self.combine = QCheckBox("Combine files of the same recording")
+        self.combine.setToolTip(
+            "Loggers often write one drive as several files, one per bus or ECU, e.g.\n"
+            "  AADT-150453_002_ABD_Robot__20260826T151159.mf4\n"
+            "  AADT-150453_002_MOTION_1__20260826T151158.mf4\n"
+            "Files in the same folder with the same name before the logger part (and start times within\n"
+            "5 minutes) are read together as one recording, on one time axis. KPIs can then use signals\n"
+            "from all of them.")
+        self.combine.setChecked(self.settings.value("files/combine", True, type=bool))
+        self.state.set_combine(self.combine.isChecked())
+        bar.addWidget(self.combine)
         lay.addLayout(bar)
 
         self.table = QTableWidget(0, len(self.COLS))
@@ -53,7 +65,8 @@ class FilesPage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         lay.addWidget(self.table, 1)
         self.summary = QLabel()
         lay.addWidget(self.summary)
@@ -62,6 +75,7 @@ class FilesPage(QWidget):
         self.add_folder_btn.clicked.connect(self.pick_folder)
         self.remove_btn.clicked.connect(self.remove_selected)
         self.clear_btn.clicked.connect(lambda: self.state.set_files([]))
+        self.combine.toggled.connect(self._combine_toggled)
         state.files_changed.connect(self.refresh)
         self.refresh()
 
@@ -98,6 +112,10 @@ class FilesPage(QWidget):
         keep = [f for i, f in enumerate(self.state.files) if i not in rows]
         self.state.set_files(keep)
 
+    def _combine_toggled(self, on: bool):
+        self.settings.setValue("files/combine", on)
+        self.state.set_combine(on)
+
     # drag and drop
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -117,6 +135,8 @@ class FilesPage(QWidget):
     def refresh(self):
         self.table.setRowCount(len(self.state.files))
         indexed = 0
+        recs = self.state.recordings()
+        rec_of = {f: r for r in recs for f in r.files}
         for r, f in enumerate(self.state.files):
             idx = self.state.indexes.get(f)
             p = Path(f)
@@ -129,12 +149,16 @@ class FilesPage(QWidget):
                 chans = str(len(idx.channels))
             else:
                 status, dur, chans = idx.error, "", ""
-            for c, text in enumerate([p.name, str(p.parent), dur, chans, status]):
+            rec = rec_of.get(f)
+            rec_text = Path(rec.name).name if rec is not None and len(rec.files) > 1 else "(own)"
+            for c, text in enumerate([p.name, rec_text, str(p.parent), dur, chans, status]):
                 item = QTableWidgetItem(text)
-                if c == 4 and idx is not None and not idx.ok:
+                if c == 5 and idx is not None and not idx.ok:
                     item.setForeground(Qt.red)
                 self.table.setItem(r, c, item)
-        self.summary.setText(f"{len(self.state.files)} file(s), {indexed} ready")
+        multi = sum(1 for r in recs if len(r.files) > 1)
+        self.summary.setText(f"{len(self.state.files)} file(s), {indexed} ready  ·  {len(recs)} recording(s) to process"
+                             + (f", {multi} of them combined from several files" if multi else ""))
 
     def shutdown(self):
         for w in list(self.workers):

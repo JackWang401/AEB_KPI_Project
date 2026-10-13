@@ -48,4 +48,4 @@ def test_cli_validate_and_run(mf4_dir, tmp_path, capsys):
     folder, _ = mf4_dir
     assert main(["validate", str(PROFILE)]) == 0
     assert main(["run", str(PROFILE), str(folder), "-o", str(tmp_path / "o")]) == 0
-    assert "Files OK:  2/2" in capsys.readouterr().out
+    assert "Recordings OK: 2/2" in capsys.readouterr().out

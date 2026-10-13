@@ -122,3 +122,20 @@ def test_preview_shows_whole_file_when_event_never_fires(qtbot, window, mf4_dir)
     page.run_preview()
     qtbot.waitUntil(lambda: page.preview_data is not None, timeout=20000)
     assert page.fig.axes and "Whole file" in page.fig.axes[0].get_title()
+
+
+def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
+    from tests.kpi_studio.test_recordings import _split_recording
+
+    files = _split_recording(tmp_path)
+    window.files_page.add_files(files)
+    qtbot.waitUntil(lambda: len(window.state.indexes) == 2, timeout=10000)
+    window.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")
+    assert len(window.state.recordings()) == 1
+    assert window.files_page.table.item(0, 1).text() == "AADT-1_002"
+    viewer = window.signals_page.viewer
+    viewer.plot_signals(["egoSpeed", "aebTargetDecel"])  # one from each file
+    qtbot.waitUntil(lambda: viewer.data is not None and viewer.worker is None, timeout=20000)
+    assert {"egoSpeed", "aebTargetDecel"} <= set(viewer.data["values"])
+    window.files_page.combine.setChecked(False)
+    assert len(window.state.recordings()) == 2

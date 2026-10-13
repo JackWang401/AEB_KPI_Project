@@ -56,7 +56,7 @@ def cmd_validate(args) -> int:
 def cmd_preflight(args) -> int:
     from src.kpi_studio.app.run_service import RunService
 
-    svc = RunService(args.profile, _expand(args.files), ".")
+    svc = RunService(args.profile, _expand(args.files), ".", combine=not args.separate_files)
     report = svc.preflight()
     print(report.text())
     return 0 if report.ok else 1
@@ -68,7 +68,8 @@ def cmd_run(args) -> int:
 
     files = _expand(args.files)
     try:
-        svc = RunService(args.profile, files, args.output, workers=args.workers, progress=_progress)
+        svc = RunService(args.profile, files, args.output, workers=args.workers, progress=_progress,
+                         combine=not args.separate_files)
     except ProfileError as exc:
         for issue in exc.issues:
             print(issue)
@@ -82,7 +83,7 @@ def cmd_run(args) -> int:
     print(f"\nExcel:     {result.excel}")
     if result.dashboard:
         print(f"Dashboard: {result.dashboard}")
-    print(f"Files OK:  {result.n_ok}/{len(result.outcomes)}")
+    print(f"Recordings OK: {result.n_ok}/{len(result.outcomes)}")
     for o in result.outcomes:
         for i in o.issues:
             if i.severity != "info":
@@ -110,6 +111,10 @@ def cmd_tools(args) -> int:
     return 0
 
 
+SEPARATE_HELP = ("treat every file as its own recording (by default files such as "
+                 "<test>_<run>_ABD_Robot__<time>.mf4 and <test>_<run>_MOTION_1__<time>.mf4 are combined)")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="kpi_studio", description="Configurable KPI extraction from MF4 files")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -122,6 +127,7 @@ def main(argv=None) -> int:
     p.add_argument("-o", "--output", default="kpi_studio_output")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--force", action="store_true", help="run even if preflight reports errors")
+    p.add_argument("--separate-files", action="store_true", help=SEPARATE_HELP)
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("validate", help="check a profile")
@@ -131,6 +137,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("preflight", help="check signal coverage of files")
     p.add_argument("profile")
     p.add_argument("files", nargs="+")
+    p.add_argument("--separate-files", action="store_true", help=SEPARATE_HELP)
     p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("channels", help="list channels in an MF4 file")

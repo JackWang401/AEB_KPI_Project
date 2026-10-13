@@ -53,12 +53,12 @@ class SignalLoadWorker(QThread):
             raw, issues = read_signals(self.path, defs, self.index)
             frame, align_issues, _ = build_frame(raw, defs, self.cp.profile.timebase.rate_hz,
                                                  profile_store.load_enum_tables())
-            outcome = FileOutcome(file=self.path)
-            ev = FileEvaluator(self.cp, frame, self.path)
+            outcome = FileOutcome(file=getattr(self.path, "name", self.path))
+            ev = FileEvaluator(self.cp, frame, outcome.file)
             ev.compute_derived(outcome)
             values = {k: v for k, v in ev.env.values.items() if k != "time"}
             units = {n: (d.unit or "") for n, d in defs.items()}
-            self.done.emit({"file": self.path, "time": ev.time, "values": values, "units": units,
+            self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "units": units,
                             "missing": dict(ev.env.missing),
                             "issues": [i.message for i in issues + align_issues + outcome.issues
                                        if i.severity != "info"]})
@@ -130,7 +130,7 @@ class SignalViewer(QWidget):
     # ------------------------------------------------------------------ lists
     def refresh_files(self):
         cur = self.file.currentText()
-        names = [Path(f).name for f in self.state.files]
+        names = [r.label for r in self.state.recordings()]
         self.file.blockSignals(True)
         self.file.clear()
         self.file.addItems(names)
@@ -179,20 +179,24 @@ class SignalViewer(QWidget):
         self.draw()
 
     def _file_changed(self):
-        if self.data is not None and self.current_file() != self.data["file"]:
+        cur = self.current_file()
+        if self.data is not None and cur is not None and cur.name != self.data["file"]:
             self.load()
 
     def current_file(self):
-        if not self.state.files:
+        """The selected recording (one file, or several files read together)."""
+        recs = self.state.recordings()
+        if not recs:
             return None
-        return self.state.files[max(self.file.currentIndex(), 0)]
+        return recs[min(max(self.file.currentIndex(), 0), len(recs) - 1)]
 
     # ------------------------------------------------------------------ load + draw
     def plot_signals(self, names, spans=()):
         """Check `names` (only those) and plot them, loading the file first if needed."""
         self.set_checked(names, only=True)
         self.spans = list(spans)
-        if self.data is None or self.data["file"] != self.current_file():
+        cur = self.current_file()
+        if self.data is None or cur is None or self.data["file"] != cur.name:
             self.load()
         else:
             self.draw()
@@ -210,9 +214,9 @@ class SignalViewer(QWidget):
             return
         if not self.checked():
             self.set_checked(list(cp.profile.signals)[:3])
-        self.status.setText(f"Reading {Path(f).name}…")
+        self.status.setText(f"Reading {f.label}…")
         self.load_btn.setEnabled(False)
-        self.worker = SignalLoadWorker(cp, f, self.state.indexes.get(f), self)
+        self.worker = SignalLoadWorker(cp, f, dict(self.state.indexes), self)
         self.worker.done.connect(self._loaded)
         self.worker.failed.connect(lambda m: self.status.setText("Could not read the file: " + m.splitlines()[0]))
         self.worker.finished.connect(self._worker_finished)

@@ -188,7 +188,7 @@ class RunPage(QWidget):
         if missing_idx:
             self.log.appendPlainText("Still reading file headers; try again in a moment.")
             return False
-        report = preflight(self.state.compiled, self.state.files, self.state.indexes)
+        report = preflight(self.state.compiled, self.state.files, self.state.indexes, self.state.combine)
         self.log.appendPlainText(report.text())
         return report.ok
 
@@ -206,7 +206,7 @@ class RunPage(QWidget):
         self.log.appendPlainText("— run started —")
         self.worker = RunWorker(self.state.resolved, list(self.state.files), self.out_dir.text(),
                                 self.workers.value(), base_dir=self.state.base_dir,
-                                indexes=dict(self.state.indexes), parent=self)
+                                indexes=dict(self.state.indexes), combine=self.state.combine, parent=self)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.finished_ok.connect(self.on_done)
@@ -230,7 +230,7 @@ class RunPage(QWidget):
     def on_done(self, result):
         self.result = result
         ok = result.n_ok
-        self.log.appendPlainText(f"Finished: {ok}/{len(result.outcomes)} file(s) OK"
+        self.log.appendPlainText(f"Finished: {ok}/{len(result.outcomes)} recording(s) OK"
                                  + (" (cancelled)" if result.cancelled else "") + f"\nExcel: {result.excel}")
         for b in (self.open_excel, self.open_folder):
             b.setEnabled(True)

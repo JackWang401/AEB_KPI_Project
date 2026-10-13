@@ -45,7 +45,7 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
-    SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
+    SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in (recordings)"]
 
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
@@ -254,16 +254,16 @@ class SignalsPage(QWidget):
         return rows
 
     def _found(self, sdict: dict) -> str:
-        ok = [f for f in self.state.files if self.state.indexes.get(f) and self.state.indexes[f].ok]
-        if not ok:
+        """In how many recordings (a combined recording counts once) any channel candidate exists."""
+        idx = self.state.indexes
+        recs = [[f for f in r.files if idx.get(f) and idx[f].ok] for r in self.state.recordings()]
+        recs = [r for r in recs if r]
+        if not recs:
             return ""
-        hits = 0
-        for f in ok:
-            for cand in sdict.get("channels", []):
-                if match_channel(cand, self.state.indexes[f].channels)[0] is not None:
-                    hits += 1
-                    break
-        return f"{hits}/{len(ok)}"
+        hits = sum(1 for files in recs
+                   if any(match_channel(c, idx[f].channels)[0] is not None
+                          for c in sdict.get("channels", []) for f in files))
+        return f"{hits}/{len(recs)}"
 
     def refresh_signals(self):
         self._loading = True

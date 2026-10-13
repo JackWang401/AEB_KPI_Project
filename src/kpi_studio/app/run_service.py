@@ -26,7 +26,7 @@ from src.kpi_studio.core.model import Profile
 from src.kpi_studio.core.results import FileIssue, FileOutcome, Status
 from src.kpi_studio.core.validate import CompiledProfile
 from src.kpi_studio.io import profile_store
-from src.kpi_studio.io.mf4 import RecordingIndex, index_file, read_signals, resolve_signals
+from src.kpi_studio.io.mf4 import Recording, as_recording, group_recordings, index_file, read_signals, resolve_recording
 from src.kpi_studio.report.excel_writer import write_workbook
 from src.kpi_studio.report.plots import build_dashboard, render_plots
 
@@ -46,18 +46,23 @@ class SignalCoverage:
 
 @dataclass
 class PreflightReport:
-    files: list
+    files: list          # recording names (a single-file recording is named by its path)
     indexes: dict
     coverage: list
     errors: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    recordings: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.errors
 
     def text(self) -> str:
-        lines = [f"{len(self.files)} file(s)"]
+        n_files = sum(len(r.files) for r in self.recordings) or len(self.files)
+        lines = [f"{len(self.files)} recording(s) from {n_files} file(s)"]
+        for r in self.recordings:
+            if len(r.files) > 1:
+                lines.append(f"  {r.label}: " + ", ".join(Path(f).name for f in r.files))
         for c in self.coverage:
             mark = "OK " if not c.missing_in else ("ERR" if c.required else "WRN")
             lines.append(f"  [{mark}] {c.signal}: found in {len(c.found_in)}/{len(self.files)}"
@@ -66,28 +71,31 @@ class PreflightReport:
         return "\n".join(lines)
 
 
-def preflight(cp: CompiledProfile, files: list[str], indexes: Optional[dict] = None) -> PreflightReport:
+def preflight(cp: CompiledProfile, files: list[str], indexes: Optional[dict] = None,
+              combine: bool = True) -> PreflightReport:
     indexes = dict(indexes or {})
     for f in files:
         if f not in indexes:
             indexes[f] = index_file(f)
-    report = PreflightReport(files=list(files), indexes=indexes, coverage=[])
+    recordings = group_recordings(files, indexes, combine)
+    report = PreflightReport(files=[r.name for r in recordings], indexes=indexes, coverage=[], recordings=recordings)
     report.warnings.extend(str(w) for w in cp.warnings)
     defs = cp.profile.signals
-    per_file = {f: resolve_signals(defs, indexes[f]) for f in files if indexes[f].ok}
     for f in files:
         if not indexes[f].ok:
             report.errors.append(f"{Path(f).name}: {indexes[f].error}")
+    per_rec = {r.name: resolve_recording(defs, r, indexes) for r in recordings
+               if any(indexes[f].ok for f in r.files)}
     for name, sdef in defs.items():
         cov = SignalCoverage(name, sdef.required)
-        for f, mapping in per_file.items():
-            ch, _ = mapping[name]
-            (cov.found_in if ch else cov.missing_in).append((f, ch.name) if ch else f)
+        for rname, mapping in per_rec.items():
+            f, ch, _ = mapping[name]
+            (cov.found_in if ch else cov.missing_in).append((rname, ch.name) if ch else rname)
         report.coverage.append(cov)
         if cov.missing_in and sdef.required:
-            msg = (f"required signal '{name}' not found in {len(cov.missing_in)} file(s); "
-                   f"those files will be skipped (tried {sdef.channels})")
-            (report.errors if len(cov.missing_in) == len(per_file) else report.warnings).append(msg)
+            msg = (f"required signal '{name}' not found in {len(cov.missing_in)} recording(s); "
+                   f"those will be skipped (tried {sdef.channels})")
+            (report.errors if len(cov.missing_in) == len(per_rec) else report.warnings).append(msg)
     if not files:
         report.errors.append("no files selected")
     return report
@@ -104,11 +112,13 @@ def _capture_spec(profile: Profile) -> dict:
     return cap
 
 
-def process_file(cp: CompiledProfile, path: str, index: Optional[RecordingIndex] = None) -> FileOutcome:
-    """Read, align and evaluate one file. Never raises: failures become statuses."""
+def process_file(cp: CompiledProfile, source, index=None) -> FileOutcome:
+    """Read, align and evaluate one recording (a file path or a Recording). Never raises."""
+    rec = as_recording(source)
+    path = rec.name
     outcome = FileOutcome(file=path)
     try:
-        raw, issues = read_signals(path, cp.profile.signals, index)
+        raw, issues = read_signals(rec, cp.profile.signals, index)
         outcome.issues.extend(issues)
         missing_required = [n for n, s in cp.profile.signals.items() if s.required and n not in raw]
         if missing_required:
@@ -126,13 +136,13 @@ def process_file(cp: CompiledProfile, path: str, index: Optional[RecordingIndex]
         return outcome.error(f"unexpected error: {type(exc).__name__}: {exc}")
 
 
-def _worker(profile_dict: dict, path: str, user_tool_files: list[str]) -> FileOutcome:
+def _worker(profile_dict: dict, name: str, files: list[str], user_tool_files: list[str]) -> FileOutcome:
     # runs in a child process: rebuild the compiled profile from plain data
     for f in user_tool_files:
         toolbox.load_user_tools(Path(f).parent)
     profile = Profile.model_validate(profile_dict)
     _, cp = profile_store.load_compiled(profile)
-    return process_file(cp, path)
+    return process_file(cp, Recording(name, files))
 
 
 # ----------------------------------------------------------------------------- run
@@ -157,7 +167,8 @@ def _slug(text: str) -> str:
 class RunService:
     def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path],
                  *, workers: int = 1, progress: Optional[ProgressFn] = None,
-                 cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None):
+                 cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None,
+                 combine: bool = True):
         self.profile_src = profile
         if isinstance(profile, (str, Path)):
             base_dir = base_dir or Path(profile).parent
@@ -168,6 +179,8 @@ class RunService:
         self.progress = progress or (lambda *a: None)
         self.cancel = cancel or threading.Event()
         self.indexes: dict = {}
+        self.combine = combine
+        self.recordings: list[Recording] = []
 
     def preflight(self) -> PreflightReport:
         total = len(self.files)
@@ -175,10 +188,15 @@ class RunService:
             self.progress("index", i - 1, total, f"Reading header of {Path(f).name}")
             self.indexes[f] = index_file(f)
         self.progress("index", total, total, "Headers read")
-        return preflight(self.cp, self.files, self.indexes)
+        report = preflight(self.cp, self.files, self.indexes, self.combine)
+        self.recordings = report.recordings
+        return report
 
     def _process_all(self) -> list[FileOutcome]:
-        total = len(self.files)
+        if not self.recordings:
+            self.recordings = group_recordings(self.files, self.indexes, self.combine)
+        recs = self.recordings
+        total = len(recs)
         outcomes: dict[str, FileOutcome] = {}
         if self.workers > 1 and total > 1:
             data = self.resolved.model_dump(by_alias=True, exclude_none=True)
@@ -186,28 +204,28 @@ class RunService:
             # spawn (not fork): same behaviour on Windows/macOS/Linux and safe with Qt threads
             ctx = multiprocessing.get_context("spawn")
             with ProcessPoolExecutor(max_workers=min(self.workers, total), mp_context=ctx) as pool:
-                futures = {pool.submit(_worker, data, f, user_files): f for f in self.files}
+                futures = {pool.submit(_worker, data, r.name, r.files, user_files): r for r in recs}
                 done = 0
                 for fut in as_completed(futures):
-                    f = futures[fut]
+                    r = futures[fut]
                     try:
-                        outcomes[f] = fut.result()
+                        outcomes[r.name] = fut.result()
                     except Exception as exc:  # noqa: BLE001
-                        outcomes[f] = FileOutcome(file=f).error(f"worker failed: {exc}")
+                        outcomes[r.name] = FileOutcome(file=r.name).error(f"worker failed: {exc}")
                     done += 1
-                    self.progress("process", done, total, f"Finished {Path(f).name}")
+                    self.progress("process", done, total, f"Finished {r.label}")
                     if self.cancel.is_set():
                         for other in futures:
                             other.cancel()
                         break
         else:
-            for i, f in enumerate(self.files):
+            for i, r in enumerate(recs):
                 if self.cancel.is_set():
                     break
-                self.progress("process", i, total, f"Processing {Path(f).name}")
-                outcomes[f] = process_file(self.cp, f, self.indexes.get(f))
-            self.progress("process", len(outcomes), total, "Files processed")
-        return [outcomes[f] for f in self.files if f in outcomes]
+                self.progress("process", i, total, f"Processing {r.label}")
+                outcomes[r.name] = process_file(self.cp, r, self.indexes)
+            self.progress("process", len(outcomes), total, "Recordings processed")
+        return [outcomes[r.name] for r in recs if r.name in outcomes]
 
     def run(self, output_dir: Optional[Path] = None) -> RunResult:
         stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -217,9 +235,9 @@ class RunService:
         outcomes = self._process_all()
         cancelled = self.cancel.is_set()
         if cancelled:
-            for f in self.files:
-                if f not in {o.file for o in outcomes}:
-                    outcomes.append(FileOutcome(file=f, issues=[FileIssue("warning", "cancelled before processing")],
+            for r in self.recordings:
+                if r.name not in {o.file for o in outcomes}:
+                    outcomes.append(FileOutcome(file=r.name, issues=[FileIssue("warning", "cancelled before processing")],
                                                 status=Status.ERROR))
 
         profile_text = profile_store.to_yaml(self.resolved)
@@ -236,13 +254,15 @@ class RunService:
             ("run time", _dt.datetime.now().isoformat(timespec="seconds")),
             ("host", f"{platform.node()} / Python {platform.python_version()}"),
             ("files", "\n".join(self.files)),
+            ("recordings", "\n".join(f"{r.label}: " + ", ".join(Path(f).name for f in r.files)
+                                     for r in self.recordings if len(r.files) > 1) or "one file each"),
             ("cancelled", "yes" if cancelled else "no"),
         ]
         self.progress("excel", 0, 1, "Writing Excel")
         excel = write_workbook(out_dir / "kpi_results.xlsx", outcomes, kpi_order=kpi_order, units=units,
                                events=list(self.cp.events), run_info=run_info, profile_text=profile_text)
         self.progress("plots", 0, 1, "Rendering plots")
-        plots = render_plots(self.resolved, outcomes, out_dir / "plots", units, self.files)
+        plots = render_plots(self.resolved, outcomes, out_dir / "plots", units, [r.name for r in self.recordings])
         dashboard = build_dashboard(plots, out_dir) if plots else None
         self.progress("done", 1, 1, f"Done: {out_dir}")
         return RunResult(out_dir, excel, plots, dashboard, outcomes, cancelled)
