@@ -17,7 +17,7 @@ import numpy as np
 
 from src.kpi_studio.core.align import RawSignal
 from src.kpi_studio.core.model import SignalDef
-from src.kpi_studio.core.results import ChannelUse, FileIssue
+from src.kpi_studio.core.results import FileIssue
 
 log = logging.getLogger(__name__)
 

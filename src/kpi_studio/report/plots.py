@@ -141,23 +141,25 @@ def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, 
                       row=r, col=1)
     if p.show_window and occurrence is not None:
         fig.add_vrect(x0=occurrence.t_start, x1=occurrence.t_end, fillcolor=WINDOW_FILL, line_width=0,
-                      annotation_text=f"{p.event} active", annotation_position="top left")
+                      row="all", col=1)
     if p.show_moments:
-        for m in moments:
-            if m.time is None:
-                continue
+        found = sorted((m for m in moments if m.time is not None), key=lambda m: m.time)
+        for i, m in enumerate(found):
             fig.add_vline(x=m.time, line=dict(color=INK_2, dash="dot", width=1))
-            fig.add_annotation(x=m.time, y=1.0, yref="paper", text=m.moment, showarrow=False,
-                               textangle=-90, xanchor="right", yanchor="top", font=dict(size=11, color=INK_2))
+            # stagger labels so moments close in time do not overlap
+            fig.add_annotation(x=m.time, y=1.0 + 0.035 * (i % 3), yref="paper", yanchor="bottom",
+                               text=f"{m.moment} {m.time:.2f}s", showarrow=False, xanchor="left",
+                               font=dict(size=11, color=INK_2), bgcolor="rgba(255,255,255,0.85)")
     ok = [k for k in kpis if k.status == Status.OK and k.value is not None]
     caption = "  ·  ".join(f"{k.kpi} = {k.value:.4g}{(' ' + k.unit) if k.unit else ''}" for k in ok[:8])
     title = f"{p.title or p.event}: {Path(trace.file).name} #{trace.occurrence}"
-    fig.update_xaxes(title_text="time [s]", row=rows, col=1)
-    _layout(fig, title, height=220 * rows + 140)
+    fig.update_xaxes(title_text="time [s] (shaded: event active)", row=rows, col=1)
+    height = 200 * rows + 200
+    _layout(fig, title, height=height)
+    fig.update_layout(showlegend=False, margin=dict(l=60, r=24, t=130, b=110))
     if caption:
-        fig.add_annotation(text=caption, x=0, y=-0.12 if rows == 1 else -0.06, xref="paper", yref="paper",
-                           showarrow=False, xanchor="left", font=dict(size=11, color=INK_2))
-    fig.update_layout(showlegend=False)
+        fig.add_annotation(text=caption, x=0, y=-70 / (height - 240), xref="paper", yref="paper",
+                           showarrow=False, xanchor="left", yanchor="top", font=dict(size=11, color=INK_2))
     return fig
 
 

@@ -1,0 +1,239 @@
+"""KPI Studio main window: Files -> Signals -> Events & KPIs -> Run."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (
+    QDockWidget,
+    QFileDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QTabWidget,
+    QToolBar,
+    QWidget,
+    QHBoxLayout,
+)
+
+from src.kpi_studio import __version__, toolbox
+from src.kpi_studio.core.validate import ProfileError
+from src.kpi_studio.gui.pages.files_page import FilesPage
+from src.kpi_studio.gui.pages.kpi_page import KpiPage
+from src.kpi_studio.gui.pages.run_page import RunPage
+from src.kpi_studio.gui.pages.signals_page import SignalsPage
+from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.io import profile_store
+
+STYLE = """
+QWidget { font-size: 12px; color: #1f1f1e; }
+QMainWindow, QTabWidget::pane { background: #f6f6f3; }
+QTabBar::tab { padding: 8px 16px; font-weight: 600; }
+QTabBar::tab:selected { color: #2a78d6; }
+QPushButton { padding: 6px 10px; border: 1px solid #cfcdc4; border-radius: 6px; background: #ffffff; }
+QPushButton:hover { background: #f0f4fb; }
+QPushButton#primary { background: #2a78d6; color: white; border: none; font-weight: 700; padding: 8px 24px; }
+QPushButton#primary:disabled { background: #9ec5f4; }
+QLabel#hint { color: #6b6b66; }
+QLabel#sectionTitle { font-weight: 700; }
+QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { padding: 3px; }
+"""
+
+
+class MainWindow(QMainWindow):
+    SETTINGS_ORG = "JackWang401"
+    SETTINGS_APP = "KPI_Studio"
+
+    def __init__(self, settings: QSettings | None = None, parent=None):
+        super().__init__(parent)
+        self.settings = settings or QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
+        if self.settings.value("tools/user_enabled", False, type=bool):
+            folder = self.settings.value("tools/user_folder", "")
+            if folder:
+                toolbox.load_user_tools(folder)
+        self.state = AppState(self)
+        self.setStyleSheet(STYLE)
+        self.resize(1400, 900)
+
+        self.tabs = QTabWidget()
+        self.files_page = FilesPage(self.state, self.settings)
+        self.signals_page = SignalsPage(self.state)
+        self.kpi_page = KpiPage(self.state)
+        self.run_page = RunPage(self.state, self.settings)
+        self.tabs.addTab(self.files_page, "1  Files")
+        self.tabs.addTab(self.signals_page, "2  Signals")
+        self.tabs.addTab(self.kpi_page, "3  Events && KPIs")
+        self.tabs.addTab(self.run_page, "4  Plots && Run")
+        self.setCentralWidget(self.tabs)
+
+        self._build_toolbar()
+        self._build_issues_dock()
+        self.state.dirty_changed.connect(lambda *_: self._update_title())
+        self.state.validated.connect(self._show_issues)
+        self.state.profile_changed.connect(self._load_name)
+
+        last = self.settings.value("profile/last", "")
+        if last and Path(last).exists():
+            self.open_profile(last, quiet=True)
+        else:
+            self.state.new()
+        self._update_title()
+
+    # ------------------------------------------------------------------ chrome
+    def _build_toolbar(self):
+        tb = QToolBar("Profile")
+        tb.setMovable(False)
+        self.addToolBar(tb)
+        for text, slot, key in (("New", self.new_profile, QKeySequence.New),
+                                ("Open…", self.pick_profile, QKeySequence.Open),
+                                ("Save", self.save_profile, QKeySequence.Save),
+                                ("Save as…", self.save_profile_as, QKeySequence.SaveAs)):
+            act = QAction(text, self)
+            act.setShortcut(key)
+            act.triggered.connect(slot)
+            tb.addAction(act)
+        examples = QAction("Open example", self)
+        examples.triggered.connect(self.open_example)
+        tb.addAction(examples)
+        tb.addSeparator()
+        box = QWidget()
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(8, 0, 8, 0)
+        lay.addWidget(QLabel("Profile name"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setMinimumWidth(260)
+        self.name_edit.editingFinished.connect(self._name_changed)
+        lay.addWidget(self.name_edit)
+        lay.addWidget(QLabel("Rate [Hz]"))
+        self.rate_edit = QLineEdit()
+        self.rate_edit.setMaximumWidth(70)
+        self.rate_edit.editingFinished.connect(self._rate_changed)
+        lay.addWidget(self.rate_edit)
+        tb.addWidget(box)
+
+    def _build_issues_dock(self):
+        dock = QDockWidget("Profile check", self)
+        dock.setObjectName("issues")
+        self.issues = QListWidget()
+        dock.setWidget(self.issues)
+        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.resizeDocks([dock], [110], Qt.Vertical)
+
+    def _show_issues(self):
+        self.issues.clear()
+        if not self.state.issues:
+            self.issues.addItem(QListWidgetItem("✓ Profile is valid"))
+            return
+        errors = [i for i in self.state.issues if i.severity == "error"]
+        for i in errors + [i for i in self.state.issues if i.severity != "error"]:
+            item = QListWidgetItem(("✖ " if i.severity == "error" else "⚠ ") + f"{i.where}: {i.message}")
+            item.setForeground(Qt.red if i.severity == "error" else Qt.darkYellow)
+            self.issues.addItem(item)
+
+    def _load_name(self):
+        self.name_edit.setText(self.state.data.get("name", ""))
+        self.rate_edit.setText(str((self.state.data.get("timebase") or {}).get("rate_hz", 100)))
+
+    def _name_changed(self):
+        if self.name_edit.text().strip() and self.name_edit.text().strip() != self.state.data.get("name"):
+            self.state.data["name"] = self.name_edit.text().strip()
+            self.state.edited()
+
+    def _rate_changed(self):
+        try:
+            rate = float(self.rate_edit.text())
+        except ValueError:
+            self._load_name()
+            return
+        self.state.data.setdefault("timebase", {})["rate_hz"] = rate
+        self.state.edited()
+
+    def _update_title(self):
+        name = self.state.path.name if self.state.path else "unsaved profile"
+        self.setWindowTitle(f"KPI Studio {__version__} — {name}{' *' if self.state.dirty else ''}")
+
+    # ------------------------------------------------------------------ profile files
+    def _confirm_discard(self) -> bool:
+        if not self.state.dirty:
+            return True
+        r = QMessageBox.question(self, "Unsaved changes", "Save changes to the current profile first?",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        if r == QMessageBox.Save:
+            return self.save_profile()
+        return r == QMessageBox.Discard
+
+    def new_profile(self):
+        if self._confirm_discard():
+            self.state.new()
+            self._update_title()
+
+    def pick_profile(self):
+        if not self._confirm_discard():
+            return
+        start = str(self.state.base_dir or profile_store.builtin_profile_dir())
+        path, _ = QFileDialog.getOpenFileName(self, "Open profile", start, "KPI profile (*.kpi.yaml *.yaml)")
+        if path:
+            self.open_profile(path)
+
+    def open_example(self):
+        if self._confirm_discard():
+            self.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")
+            self.state.path = None  # save-as to keep the example untouched
+            self._update_title()
+
+    def open_profile(self, path, quiet=False):
+        try:
+            self.state.load(path)
+        except ProfileError as exc:
+            if not quiet:
+                QMessageBox.warning(self, "Open profile", str(exc))
+            self.state.new()
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not quiet:
+                QMessageBox.warning(self, "Open profile", f"{type(exc).__name__}: {exc}")
+            self.state.new()
+            return
+        self.settings.setValue("profile/last", str(path))
+        self._update_title()
+
+    def save_profile(self) -> bool:
+        if self.state.path is None:
+            return self.save_profile_as()
+        return self._save(self.state.path)
+
+    def save_profile_as(self) -> bool:
+        start = str(self.state.base_dir or Path.home())
+        default = self.state.data.get("name", "profile").replace(" ", "_") + profile_store.PROFILE_SUFFIX
+        path, _ = QFileDialog.getSaveFileName(self, "Save profile", str(Path(start) / default),
+                                              "KPI profile (*.kpi.yaml)")
+        if not path:
+            return False
+        if not path.endswith(".yaml"):
+            path += profile_store.PROFILE_SUFFIX
+        return self._save(Path(path))
+
+    def _save(self, path: Path) -> bool:
+        try:
+            self.state.save(path)
+        except ProfileError as exc:
+            QMessageBox.warning(self, "Save profile",
+                                "The profile cannot be saved until these are fixed:\n\n" + str(exc))
+            return False
+        self.settings.setValue("profile/last", str(path))
+        self._update_title()
+        return True
+
+    def closeEvent(self, event):
+        if not self._confirm_discard():
+            event.ignore()
+            return
+        self.files_page.shutdown()
+        self.run_page.shutdown()
+        event.accept()

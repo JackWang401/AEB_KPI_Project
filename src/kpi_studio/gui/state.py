@@ -1,0 +1,169 @@
+"""Shared GUI state: the profile being edited, the loaded files, live validation."""
+
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+from typing import Optional
+
+import yaml
+from PySide6.QtCore import QObject, QTimer, Signal
+
+from src.kpi_studio.core.model import Profile
+from src.kpi_studio.core.validate import CompiledProfile, Issue, ProfileError
+from src.kpi_studio.io import profile_store
+from src.kpi_studio.io.mf4 import RecordingIndex
+
+NEW_PROFILE = {
+    "schema_version": 1,
+    "name": "New profile",
+    "description": "",
+    "imports": [],
+    "timebase": {"rate_hz": 100.0},
+    "signals": {},
+    "derived": {},
+    "events": {},
+    "kpis": [],
+    "plots": [],
+}
+
+
+class AppState(QObject):
+    profile_changed = Signal()          # structure edited (pages refresh lists)
+    validated = Signal()                # compile finished; see .issues / .compiled
+    files_changed = Signal()
+    dirty_changed = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data: dict = copy.deepcopy(NEW_PROFILE)
+        self.path: Optional[Path] = None
+        self.dirty = False
+        self.files: list[str] = []
+        self.indexes: dict[str, RecordingIndex] = {}
+        self.issues: list[Issue] = []
+        self.compiled: Optional[CompiledProfile] = None
+        self.resolved: Optional[Profile] = None
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(300)
+        self._timer.timeout.connect(self.validate_now)
+
+    # ------------------------------------------------------------------ profile
+    @property
+    def base_dir(self) -> Optional[Path]:
+        return self.path.parent if self.path else None
+
+    def new(self):
+        self.data = copy.deepcopy(NEW_PROFILE)
+        self.path = None
+        self._set_dirty(False)
+        self.profile_changed.emit()
+        self.validate_now()
+
+    def load(self, path: str | Path):
+        path = Path(path)
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        profile_store.parse_profile(data, str(path))  # raises ProfileError on schema problems
+        merged = copy.deepcopy(NEW_PROFILE)
+        merged.update(data)
+        self.data = merged
+        self.path = path
+        self._set_dirty(False)
+        self.profile_changed.emit()
+        self.validate_now()
+
+    def save(self, path: Optional[str | Path] = None):
+        path = Path(path) if path else self.path
+        if path is None:
+            raise ValueError("no file name")
+        profile = self.as_profile()
+        profile_store.save_profile(profile, path)
+        self.path = path
+        self._set_dirty(False)
+
+    def as_profile(self) -> Profile:
+        return profile_store.parse_profile(self.clean_data(), "profile")
+
+    def clean_data(self) -> dict:
+        def strip(obj):
+            if isinstance(obj, dict):
+                return {k: strip(v) for k, v in obj.items() if v not in (None, "", [], {}) or k in ("signals",)}
+            if isinstance(obj, list):
+                return [strip(v) for v in obj]
+            return obj
+
+        data = strip(copy.deepcopy(self.data))
+        data.setdefault("name", "Unnamed")
+        return data
+
+    def edited(self, structure: bool = False):
+        """Call after changing self.data. `structure`: names/lists changed, pages should refresh."""
+        self._set_dirty(True)
+        if structure:
+            self.profile_changed.emit()
+        self._timer.start()
+
+    def _set_dirty(self, value: bool):
+        if self.dirty != value:
+            self.dirty = value
+            self.dirty_changed.emit(value)
+
+    def validate_now(self):
+        self._timer.stop()
+        try:
+            profile = self.as_profile()
+            self.resolved, self.compiled = profile_store.load_compiled(profile, base_dir=self.base_dir)
+            self.issues = list(self.compiled.warnings)
+        except ProfileError as exc:
+            self.compiled = None
+            self.issues = list(exc.issues)
+        except Exception as exc:  # noqa: BLE001
+            self.compiled = None
+            self.issues = [Issue("error", "profile", f"{type(exc).__name__}: {exc}")]
+        self.validated.emit()
+
+    # names usable in expressions (after resolving imports when possible)
+    def signal_names(self) -> list[str]:
+        if self.resolved is not None:
+            return list(self.resolved.signals) + list(self.resolved.derived)
+        return list(self.data.get("signals", {})) + list(self.data.get("derived", {}))
+
+    def enum_map(self) -> dict:
+        """signal name -> {MEMBER: value} for signals that declare an enum."""
+        tables = profile_store.load_enum_tables()
+        signals = dict(self.resolved.signals) if self.resolved is not None else {}
+        out = {}
+        for name, sdef in signals.items():
+            if sdef.enum and sdef.enum in tables:
+                out[name] = tables[sdef.enum]
+        for name, sdef in (self.data.get("signals") or {}).items():
+            enum = (sdef or {}).get("enum")
+            if enum in tables:
+                out[name] = tables[enum]
+        return out
+
+    def event_names(self) -> list[str]:
+        names = list(self.data.get("events", {}))
+        if self.resolved is not None:
+            names += [e for e in self.resolved.events if e not in names]
+        return names
+
+    def moments_of(self, event: str) -> list[str]:
+        from src.kpi_studio.core.model import BUILTIN_MOMENTS
+
+        ev = self.data.get("events", {}).get(event)
+        if ev is None and self.resolved is not None and event in self.resolved.events:
+            return list(BUILTIN_MOMENTS) + list(self.resolved.events[event].moments)
+        return list(BUILTIN_MOMENTS) + list((ev or {}).get("moments", {}) or {})
+
+    # ------------------------------------------------------------------ files
+    def set_files(self, files: list[str]):
+        self.files = list(dict.fromkeys(files))
+        self.indexes = {f: i for f, i in self.indexes.items() if f in self.files}
+        self.files_changed.emit()
+
+    def set_index(self, path: str, index: RecordingIndex):
+        self.indexes[path] = index
+        self.files_changed.emit()

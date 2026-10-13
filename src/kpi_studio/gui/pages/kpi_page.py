@@ -1,0 +1,1039 @@
+"""Step 3: define events, windows, moments and KPIs; preview them on one file."""
+
+from __future__ import annotations
+
+import copy
+import re
+from pathlib import Path
+
+import numpy as np
+import yaml
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.kpi_studio import toolbox
+from src.kpi_studio.core.model import BUILTIN_MOMENTS
+from src.kpi_studio.core.results import Status
+from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets.common import (
+    ConditionBuilder,
+    ExprEdit,
+    ToolPalette,
+    format_options,
+    make_canvas,
+    parse_options,
+)
+from src.kpi_studio.gui.workers import PreviewWorker
+from src.kpi_studio.io import profile_store
+
+NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
+         ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs")]
+
+
+def _spin(minimum=0.0, maximum=1e6, decimals=3, step=0.1):
+    s = QDoubleSpinBox()
+    s.setRange(minimum, maximum)
+    s.setDecimals(decimals)
+    s.setSingleStep(step)
+    return s
+
+
+# ============================================================================ event form
+class EventForm(QWidget):
+    def __init__(self, page: "KpiPage"):
+        super().__init__()
+        self.page = page
+        self.state = page.state
+        self.name: str | None = None
+        self._loading = False
+        names = self.state.signal_names
+        enums = self.state.enum_map
+
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        self.name_edit = QLineEdit()
+        self.desc = QLineEdit()
+        self.mode = QComboBox()
+        self.mode.addItems(["Condition (start / end expressions)", "Preset from the toolbox"])
+        self.start = ExprEdit(names, placeholder="e.g. aebRequest in (FULL, PARTIAL)", enums_fn=enums)
+        self.end = ExprEdit(names, placeholder="optional; default: until the start condition is false",
+                            enums_fn=enums)
+        sb, eb = QPushButton("Build…"), QPushButton("Build…")
+        self.build_buttons = (sb, eb)
+        srow, erow = QHBoxLayout(), QHBoxLayout()
+        srow.addWidget(self.start, 1)
+        srow.addWidget(sb)
+        erow.addWidget(self.end, 1)
+        erow.addWidget(eb)
+        self.preset = QComboBox()
+        self.preset.addItems(toolbox.names("event"))
+        self.preset_inputs = QLineEdit()
+        self.preset_inputs.setPlaceholderText("signal names, comma separated")
+        self.preset_params = QLineEdit()
+        self.preset_params.setPlaceholderText("e.g. merge_window: 2.0")
+        self.min_dur, self.merge = _spin(), _spin()
+        self.pre, self.post = _spin(), _spin()
+        form.addRow("Name", self.name_edit)
+        form.addRow("Description", self.desc)
+        form.addRow("Trigger", self.mode)
+        self.start_label, self.end_label = QLabel("Start when"), QLabel("End when")
+        form.addRow(self.start_label, srow)
+        form.addRow(self.end_label, erow)
+        self.preset_label, self.inputs_label, self.params_label = QLabel("Preset"), QLabel("Inputs"), QLabel("Options")
+        form.addRow(self.preset_label, self.preset)
+        form.addRow(self.inputs_label, self.preset_inputs)
+        form.addRow(self.params_label, self.preset_params)
+        win = QHBoxLayout()
+        for label, w in (("ignore shorter than [s]", self.min_dur), ("merge gaps below [s]", self.merge),
+                         ("window before [s]", self.pre), ("after [s]", self.post)):
+            win.addWidget(QLabel(label))
+            win.addWidget(w)
+        form.addRow("Occurrences", win)
+        lay.addLayout(form)
+
+        box = QGroupBox("Moments: the exact instants KPIs are read at (start, end, window_start, window_end are built in)")
+        bl = QVBoxLayout(box)
+        self.moments = QTableWidget(0, 4)
+        self.moments.setHorizontalHeaderLabels(["Name", "Rule", "Expression / target moment", "Options"])
+        self.moments.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.moments.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        bl.addWidget(self.moments)
+        hint = QLabel("Options: after: start, before: end, within: 1.5, between: [start, end], hold: 0.2, "
+                      "plus the rule's own options (e.g. threshold: -20). Offset rule: target moment + 'by: -0.5'.")
+        hint.setWordWrap(True)
+        hint.setObjectName("hint")
+        bl.addWidget(hint)
+        mrow = QHBoxLayout()
+        add_m, del_m = QPushButton("Add moment"), QPushButton("Delete moment")
+        mrow.addWidget(add_m)
+        mrow.addWidget(del_m)
+        mrow.addStretch(1)
+        bl.addLayout(mrow)
+        lay.addWidget(box, 1)
+
+        self.name_edit.editingFinished.connect(self.rename)
+        self.desc.editingFinished.connect(lambda: self.set("description", self.desc.text()))
+        self.mode.currentIndexChanged.connect(self.mode_changed)
+        self.start.editingFinished.connect(lambda: self.set("start", self.start.text().strip()))
+        self.end.editingFinished.connect(lambda: self.set("end", self.end.text().strip()))
+        sb.clicked.connect(lambda: self.build(self.start, "start"))
+        eb.clicked.connect(lambda: self.build(self.end, "end"))
+        self.preset.currentTextChanged.connect(lambda *_: self.save_preset())
+        self.preset_inputs.editingFinished.connect(self.save_preset)
+        self.preset_params.editingFinished.connect(self.save_preset)
+        for key, w in (("min_duration", self.min_dur), ("merge_gap", self.merge)):
+            w.valueChanged.connect(lambda v, k=key: self.set(k, v))
+        self.pre.valueChanged.connect(lambda v: self.set_window("pre", v))
+        self.post.valueChanged.connect(lambda v: self.set_window("post", v))
+        add_m.clicked.connect(self.add_moment)
+        del_m.clicked.connect(self.delete_moment)
+        self.moments.itemChanged.connect(self.moment_renamed)
+        for w in (self.start, self.end):
+            w.focused.connect(page.set_target)
+
+    # ---- data helpers
+    @property
+    def ev(self) -> dict:
+        return self.state.data["events"][self.name]
+
+    def set(self, key, value):
+        if self._loading or self.name is None:
+            return
+        if self.ev.get(key) != value:
+            self.ev[key] = value
+            self.state.edited()
+
+    def set_window(self, key, value):
+        if self._loading or self.name is None:
+            return
+        self.ev.setdefault("window", {})[key] = value
+        self.state.edited()
+
+    def load(self, name: str):
+        self._loading = True
+        self.name = name
+        ev = self.ev
+        self.name_edit.setText(name)
+        self.desc.setText(ev.get("description", ""))
+        preset = ev.get("preset")
+        self.mode.setCurrentIndex(1 if preset else 0)
+        self.start.setText(ev.get("start") or "")
+        self.end.setText(ev.get("end") or "")
+        if preset:
+            self.preset.setCurrentText(preset.get("name", ""))
+            of = preset.get("of", [])
+            self.preset_inputs.setText(of if isinstance(of, str) else ", ".join(of))
+            self.preset_params.setText(format_options({k: v for k, v in preset.items() if k not in ("name", "of")}))
+        else:
+            self.preset_inputs.clear()
+            self.preset_params.clear()
+        self.min_dur.setValue(float(ev.get("min_duration", 0) or 0))
+        self.merge.setValue(float(ev.get("merge_gap", 0) or 0))
+        w = ev.get("window", {}) or {}
+        self.pre.setValue(float(w.get("pre", 0) or 0))
+        self.post.setValue(float(w.get("post", 0) or 0))
+        self.load_moments()
+        self._show_mode()
+        self._loading = False
+
+    def _show_mode(self):
+        preset = self.mode.currentIndex() == 1
+        for w in (self.start, self.end, self.start_label, self.end_label, *self.build_buttons):
+            w.setVisible(not preset)
+        for w in (self.preset, self.preset_inputs, self.preset_params, self.preset_label, self.inputs_label,
+                  self.params_label):
+            w.setVisible(preset)
+
+    def mode_changed(self):
+        self._show_mode()
+        if self._loading:
+            return
+        if self.mode.currentIndex() == 1:
+            self.ev.pop("start", None)
+            self.ev.pop("end", None)
+            self.save_preset()
+        else:
+            self.ev.pop("preset", None)
+            self.ev["start"] = self.start.text().strip()
+            self.state.edited()
+
+    def save_preset(self):
+        if self._loading or self.name is None or self.mode.currentIndex() != 1:
+            return
+        inputs = [s.strip() for s in self.preset_inputs.text().split(",") if s.strip()]
+        try:
+            params = parse_options(self.preset_params.text())
+        except Exception as exc:  # noqa: BLE001
+            self.preset_params.setToolTip(str(exc))
+            return
+        self.ev["preset"] = {"name": self.preset.currentText(), "of": inputs[0] if len(inputs) == 1 else inputs,
+                             **params}
+        self.state.edited()
+
+    def build(self, edit: ExprEdit, key: str):
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=edit.text())
+        if dlg.exec() == QDialog.Accepted and dlg.expression():
+            edit.setText(dlg.expression())
+            self.set(key, dlg.expression())
+
+    def rename(self):
+        new = self.name_edit.text().strip()
+        if self.name is None or new == self.name:
+            return
+        events = self.state.data["events"]
+        if not NAME_RE.match(new) or new in events:
+            QMessageBox.warning(self, "Rename event", f"'{new}' is not a valid, unused name.")
+            self.name_edit.setText(self.name)
+            return
+        events[new] = events.pop(self.name)
+        for k in self.state.data.get("kpis", []):
+            if k.get("event") == self.name:
+                k["event"] = new
+        for p in self.state.data.get("plots", []):
+            if p.get("event") == self.name:
+                p["event"] = new
+        self.name = new
+        self.state.edited(structure=True)
+        self.page.select_event(new)
+
+    # ---- moments
+    def load_moments(self):
+        moments = self.ev.get("moments", {}) or {}
+        tools = toolbox.names("moment")
+        self.moments.blockSignals(True)
+        self.moments.setRowCount(len(moments))
+        for r, (mname, raw) in enumerate(moments.items()):
+            raw = dict(raw or {})
+            if "offset" in raw:
+                rule, target = "offset", raw.pop("offset")
+            else:
+                rule = next((k for k in raw if k in tools), tools[0])
+                target = raw.pop(rule, "")
+            name_item = QTableWidgetItem(mname)
+            name_item.setData(Qt.UserRole, mname)
+            self.moments.setItem(r, 0, name_item)
+            combo = QComboBox()
+            combo.addItems(tools + ["offset"])
+            combo.setCurrentText(rule)
+            combo.currentTextChanged.connect(lambda *_, row=r: self.save_moment(row))
+            self.moments.setCellWidget(r, 1, combo)
+            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map)
+            expr.setText(str(target))
+            expr.focused.connect(self.page.set_target)
+            expr.editingFinished.connect(lambda row=r: self.save_moment(row))
+            self.moments.setCellWidget(r, 2, expr)
+            opts = QLineEdit(format_options(raw))
+            opts.editingFinished.connect(lambda row=r: self.save_moment(row))
+            self.moments.setCellWidget(r, 3, opts)
+        self.moments.blockSignals(False)
+
+    def save_moment(self, row: int):
+        if self._loading:
+            return
+        mname = self.moments.item(row, 0).data(Qt.UserRole)
+        rule = self.moments.cellWidget(row, 1).currentText()
+        target = self.moments.cellWidget(row, 2).text().strip()
+        opts_edit = self.moments.cellWidget(row, 3)
+        try:
+            opts = parse_options(opts_edit.text())
+            opts_edit.setStyleSheet("")
+        except Exception as exc:  # noqa: BLE001
+            opts_edit.setStyleSheet("QLineEdit { border: 1px solid #e34948; }")
+            opts_edit.setToolTip(f"Could not read options: {exc}")
+            return
+        self.ev.setdefault("moments", {})[mname] = {rule: target, **opts}
+        self.state.edited()
+
+    def moment_renamed(self, item):
+        if item.column() != 0:
+            return
+        old, new = item.data(Qt.UserRole), item.text().strip()
+        moments = self.ev.setdefault("moments", {})
+        if new == old:
+            return
+        if not NAME_RE.match(new) or new in moments or new in BUILTIN_MOMENTS:
+            item.setText(old)
+            return
+        moments[new] = moments.pop(old)
+        self.state.edited(structure=True)
+        self.load_moments()
+
+    def add_moment(self):
+        moments = self.ev.setdefault("moments", {})
+        i = len(moments) + 1
+        while f"moment{i}" in moments:
+            i += 1
+        moments[f"moment{i}"] = {"first": "", "after": "start"}
+        self.state.edited(structure=True)
+        self.load_moments()
+
+    def delete_moment(self):
+        rows = sorted({i.row() for i in self.moments.selectedIndexes()}, reverse=True)
+        moments = self.ev.get("moments", {})
+        for r in rows:
+            moments.pop(self.moments.item(r, 0).data(Qt.UserRole), None)
+        if rows:
+            self.state.edited(structure=True)
+            self.load_moments()
+
+
+# ============================================================================ KPI form
+class KpiForm(QWidget):
+    def __init__(self, page: "KpiPage"):
+        super().__init__()
+        self.page = page
+        self.state = page.state
+        self.index: int | None = None
+        self._loading = False
+
+        lay = QFormLayout(self)
+        self.name_edit = QLineEdit()
+        self.event = QComboBox()
+        self.form = QComboBox()
+        for key, label in FORMS:
+            self.form.addItem(label, key)
+        self.expr = ExprEdit(self.state.signal_names, placeholder="expression, e.g. egoSpeedKph",
+                             enums_fn=self.state.enum_map)
+        self.formula = QLineEdit()
+        self.formula.setPlaceholderText("e.g. pedalPosMax - pedalPosAtStart")
+        self.at = QComboBox()
+        self.m1, self.m2 = QComboBox(), QComboBox()
+        self.reducer = QComboBox()
+        self.reducer.addItems(toolbox.names("reducer"))
+        self.args = QLineEdit()
+        self.args.setPlaceholderText("reducer options, if any")
+        self.unit = QLineEdit()
+        self.desc = QLineEdit()
+        rng = QHBoxLayout()
+        rng.addWidget(self.m1)
+        rng.addWidget(QLabel("to"))
+        rng.addWidget(self.m2)
+        self.rows = {}
+        for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
+                         ("Reducer", self.reducer), ("Expression", self.expr), ("Formula", self.formula),
+                         ("At moment", self.at), ("From", rng), ("Options", self.args), ("Unit", self.unit),
+                         ("Description", self.desc)):
+            lab = QLabel(label)
+            lay.addRow(lab, w)
+            self.rows[label] = (lab, w)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        lay.addRow(self.status)
+
+        self.name_edit.editingFinished.connect(self.rename)
+        self.event.currentTextChanged.connect(self.event_changed)
+        self.form.currentIndexChanged.connect(self.form_changed)
+        self.expr.editingFinished.connect(self.save)
+        self.formula.editingFinished.connect(self.save)
+        for w in (self.at, self.m1, self.m2, self.reducer):
+            w.currentTextChanged.connect(lambda *_: self.save())
+        for w in (self.args, self.unit, self.desc):
+            w.editingFinished.connect(self.save)
+        self.expr.focused.connect(page.set_target)
+
+    @property
+    def k(self) -> dict:
+        return self.state.data["kpis"][self.index]
+
+    def _fill_moments(self, event: str):
+        moments = self.state.moments_of(event)
+        for combo in (self.at, self.m1, self.m2):
+            cur = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(moments)
+            if cur in moments:
+                combo.setCurrentText(cur)
+            combo.blockSignals(False)
+
+    def load(self, index: int):
+        self._loading = True
+        self.index = index
+        k = self.k
+        self.name_edit.setText(k.get("name", ""))
+        self.event.blockSignals(True)
+        self.event.clear()
+        self.event.addItems(self.state.event_names())
+        self.event.setCurrentText(k.get("event", ""))
+        self.event.blockSignals(False)
+        self._fill_moments(k.get("event", ""))
+        form = ("value" if "value" in k else "duration" if "duration" in k else "formula" if "formula" in k
+                else "reduce")
+        self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
+        self.expr.setText(k.get("value") or k.get("of") or "")
+        self.formula.setText(k.get("formula", ""))
+        self.at.setCurrentText(k.get("at", "start"))
+        if form == "reduce":
+            rng = k.get("between") or ["window_start", "window_end"]
+        else:
+            rng = k.get("duration") or ["start", "end"]
+        self.m1.setCurrentText(rng[0])
+        self.m2.setCurrentText(rng[1])
+        self.reducer.setCurrentText(k.get("reduce", "max"))
+        self.args.setText(format_options(k.get("args", {})))
+        self.unit.setText(k.get("unit", "") or "")
+        self.desc.setText(k.get("description", "") or "")
+        self._show_form(form)
+        self._loading = False
+        self.show_status()
+
+    def _show_form(self, form):
+        visible = {
+            "value": {"Expression", "At moment"},
+            "duration": {"From"},
+            "reduce": {"Reducer", "Expression", "From", "Options"},
+            "formula": {"Formula"},
+        }[form]
+        for label in ("Reducer", "Expression", "Formula", "At moment", "From", "Options"):
+            lab, w = self.rows[label]
+            lab.setVisible(label in visible)
+            if hasattr(w, "setVisible"):
+                w.setVisible(label in visible)
+            else:
+                for i in range(w.count()):
+                    wid = w.itemAt(i).widget()
+                    if wid:
+                        wid.setVisible(label in visible)
+        self.rows["From"][0].setText("Between" if form == "reduce" else "From")
+
+    def form_changed(self):
+        form = self.form.currentData()
+        self._show_form(form)
+        self.save()
+
+    def event_changed(self, ev):
+        self._fill_moments(ev)
+        self.save()
+
+    def save(self):
+        if self._loading or self.index is None:
+            return
+        form = self.form.currentData()
+        name = self.k.get("name")
+        k = {"name": name, "event": self.event.currentText()}
+        if form == "value":
+            k.update(value=self.expr.text().strip(), at=self.at.currentText())
+        elif form == "duration":
+            k.update(duration=[self.m1.currentText(), self.m2.currentText()])
+        elif form == "reduce":
+            k.update(reduce=self.reducer.currentText(), of=self.expr.text().strip())
+            if (self.m1.currentText(), self.m2.currentText()) != ("window_start", "window_end"):
+                k["between"] = [self.m1.currentText(), self.m2.currentText()]
+            try:
+                args = parse_options(self.args.text())
+                if args:
+                    k["args"] = args
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            k.update(formula=self.formula.text().strip())
+        if self.unit.text().strip():
+            k["unit"] = self.unit.text().strip()
+        if self.desc.text().strip():
+            k["description"] = self.desc.text().strip()
+        if k != self.k:
+            self.state.data["kpis"][self.index] = k
+            self.state.edited()
+            self.page.refresh_kpi_labels()
+
+    def rename(self):
+        new = self.name_edit.text().strip()
+        if self.index is None or new == self.k.get("name"):
+            return
+        taken = {k.get("name") for i, k in enumerate(self.state.data["kpis"]) if i != self.index}
+        if not NAME_RE.match(new) or new in taken:
+            QMessageBox.warning(self, "Rename KPI", f"'{new}' is not a valid, unused KPI name.")
+            self.name_edit.setText(self.k.get("name", ""))
+            return
+        old = self.k.get("name")
+        self.k["name"] = new
+        for p in self.state.data.get("plots", []):
+            for key in ("x", "y"):
+                if p.get(key) == old:
+                    p[key] = new
+        self.state.edited()
+        self.page.refresh_kpi_labels()
+
+    def show_status(self):
+        if self.index is None:
+            return
+        name = self.k.get("name", "")
+        msgs = [str(i) for i in self.state.issues if f"kpis.{name}" in i.where]
+        self.status.setText("<span style='color:#e34948'>" + "<br>".join(msgs) + "</span>" if msgs else "")
+
+
+# ============================================================================ library dialogs
+class LibraryPicker(QDialog):
+    def __init__(self, base_dir, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add KPIs from a library")
+        self.resize(560, 520)
+        lay = QVBoxLayout(self)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["KPI", "Event", "Description"])
+        lay.addWidget(self.tree)
+        dirs = [profile_store.builtin_library_dir()] + ([Path(base_dir)] if base_dir else [])
+        seen = set()
+        for d in dirs:
+            for path in sorted(d.glob("*" + profile_store.LIBRARY_SUFFIX)):
+                try:
+                    lib = profile_store.load_library(path)
+                except Exception:  # noqa: BLE001
+                    continue
+                if lib.name in seen or not lib.kpis:
+                    continue
+                seen.add(lib.name)
+                top = QTreeWidgetItem([lib.name, "", lib.description])
+                top.setFlags(top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
+                top.setCheckState(0, Qt.Unchecked)
+                top.setData(0, Qt.UserRole, (lib.name, str(path), None))
+                for k in lib.kpis:
+                    item = QTreeWidgetItem([k.name, k.event or "", k.description])
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(0, Qt.Unchecked)
+                    item.setData(0, Qt.UserRole, (lib.name, str(path), k.name))
+                    top.addChild(item)
+                self.tree.addTopLevelItem(top)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def selection(self) -> list[tuple[str, str, str]]:
+        """[(library, path, kpi or '*')]"""
+        out = []
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            lib, path, _ = top.data(0, Qt.UserRole)
+            if top.checkState(0) == Qt.Checked:
+                out.append((lib, path, "*"))
+                continue
+            for j in range(top.childCount()):
+                ch = top.child(j)
+                if ch.checkState(0) == Qt.Checked:
+                    out.append((lib, path, ch.data(0, Qt.UserRole)[2]))
+        return out
+
+
+# ============================================================================ page
+class KpiPage(QWidget):
+    def __init__(self, state: AppState, parent=None):
+        super().__init__(parent)
+        self.state = state
+        self.target: ExprEdit | None = None
+        self.preview_data = None
+        self.worker = None
+
+        outer = QVBoxLayout(self)
+        vsplit = QSplitter(Qt.Vertical)
+        outer.addWidget(vsplit)
+        top = QSplitter(Qt.Horizontal)
+        vsplit.addWidget(top)
+
+        # ---- left lists
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(QLabel("Events"))
+        self.events = QListWidget()
+        ll.addWidget(self.events, 1)
+        er = QHBoxLayout()
+        self.add_ev, self.del_ev = QPushButton("Add event"), QPushButton("Delete")
+        er.addWidget(self.add_ev)
+        er.addWidget(self.del_ev)
+        ll.addLayout(er)
+        ll.addWidget(QLabel("KPIs"))
+        self.kpis = QListWidget()
+        ll.addWidget(self.kpis, 2)
+        kr = QHBoxLayout()
+        self.add_kpi, self.del_kpi = QPushButton("Add KPI"), QPushButton("Delete")
+        self.up, self.down = QPushButton("↑"), QPushButton("↓")
+        for b in (self.add_kpi, self.del_kpi, self.up, self.down):
+            kr.addWidget(b)
+        ll.addLayout(kr)
+        lr = QHBoxLayout()
+        self.from_lib, self.to_lib = QPushButton("Add from library…"), QPushButton("Save KPI to library…")
+        lr.addWidget(self.from_lib)
+        lr.addWidget(self.to_lib)
+        ll.addLayout(lr)
+        top.addWidget(left)
+
+        # ---- center forms
+        self.stack = QStackedWidget()
+        self.empty = QLabel("Select or add an event or a KPI.\n\nAn event says WHEN something happens; its moments say "
+                            "the exact instants inside the window; a KPI reads a value at a moment, a time between "
+                            "moments, or a reduction over a range.")
+        self.empty.setWordWrap(True)
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.event_form = EventForm(self)
+        self.kpi_form = KpiForm(self)
+        self.lib_note = QLabel()
+        self.lib_note.setWordWrap(True)
+        self.lib_note.setAlignment(Qt.AlignTop)
+        for w in (self.empty, self.event_form, self.kpi_form, self.lib_note):
+            self.stack.addWidget(w)
+        top.addWidget(self.stack)
+
+        self.palette = ToolPalette()
+        self.palette.insert_requested.connect(self.insert_tool)
+        top.addWidget(self.palette)
+        top.setSizes([260, 700, 300])
+
+        # ---- preview
+        pv = QWidget()
+        pl = QVBoxLayout(pv)
+        pl.setContentsMargins(0, 0, 0, 0)
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Preview on"))
+        self.pv_file = QComboBox()
+        self.pv_event = QComboBox()
+        self.pv_occ = QSpinBox()
+        self.pv_occ.setMinimum(1)
+        self.pv_run = QPushButton("Run preview")
+        self.pv_status = QLabel()
+        for w in (self.pv_file, QLabel("event"), self.pv_event, QLabel("occurrence"), self.pv_occ, self.pv_run):
+            bar.addWidget(w)
+        bar.addWidget(self.pv_status, 1)
+        pl.addLayout(bar)
+        ps = QSplitter(Qt.Horizontal)
+        self.pv_signals = QListWidget()
+        self.pv_signals.setMaximumWidth(220)
+        ps.addWidget(self.pv_signals)
+        self.fig, self.canvas, _ = make_canvas()
+        ps.addWidget(self.canvas)
+        self.pv_table = QTableWidget(0, 5)
+        self.pv_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
+        self.pv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.pv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        ps.addWidget(self.pv_table)
+        ps.setSizes([180, 600, 420])
+        pl.addWidget(ps, 1)
+        vsplit.addWidget(pv)
+        vsplit.setSizes([430, 360])
+
+        self.events.currentRowChanged.connect(self.event_selected)
+        self.kpis.currentRowChanged.connect(self.kpi_selected)
+        self.add_ev.clicked.connect(self.new_event)
+        self.del_ev.clicked.connect(self.delete_event)
+        self.add_kpi.clicked.connect(self.new_kpi)
+        self.del_kpi.clicked.connect(self.delete_kpi)
+        self.up.clicked.connect(lambda: self.move_kpi(-1))
+        self.down.clicked.connect(lambda: self.move_kpi(1))
+        self.from_lib.clicked.connect(self.add_from_library)
+        self.to_lib.clicked.connect(self.save_to_library)
+        self.pv_run.clicked.connect(self.run_preview)
+        self.pv_occ.valueChanged.connect(self.draw_preview)
+        self.pv_event.currentTextChanged.connect(lambda *_: self.draw_preview())
+        self.pv_signals.itemChanged.connect(lambda *_: self.draw_preview())
+
+        state.profile_changed.connect(self.refresh)
+        state.files_changed.connect(self.refresh_preview_choices)
+        state.validated.connect(self.on_validated)
+        self.refresh()
+
+    # ------------------------------------------------------------------ lists
+    def refresh(self):
+        cur_ev = self.events.currentItem().text() if self.events.currentItem() else None
+        self.events.blockSignals(True)
+        self.events.clear()
+        for name in self.state.data.get("events", {}):
+            self.events.addItem(name)
+        self.events.blockSignals(False)
+        self.refresh_kpi_labels()
+        self.refresh_preview_choices()
+        if self.stack.currentWidget() is self.event_form and self.event_form.name in self.state.data.get("events", {}):
+            self.event_form.load(self.event_form.name)
+        elif cur_ev and cur_ev in self.state.data.get("events", {}):
+            pass
+        elif self.stack.currentWidget() is self.kpi_form and self.kpi_form.index is not None \
+                and self.kpi_form.index < len(self.state.data.get("kpis", [])):
+            self.kpi_form.load(self.kpi_form.index)
+        else:
+            self.stack.setCurrentWidget(self.empty)
+
+    def refresh_kpi_labels(self):
+        row = self.kpis.currentRow()
+        self.kpis.blockSignals(True)
+        self.kpis.clear()
+        for k in self.state.data.get("kpis", []):
+            if k.get("use"):
+                label = f"⧉ {k['use']}" + (f" as {k['as']}" if k.get("as") else "")
+            else:
+                label = f"{k.get('name', '?')}   ·  {k.get('event', '')}"
+            self.kpis.addItem(label)
+        self.kpis.setCurrentRow(row)
+        self.kpis.blockSignals(False)
+
+    def select_event(self, name):
+        items = self.events.findItems(name, Qt.MatchExactly)
+        if items:
+            self.events.setCurrentItem(items[0])
+
+    def event_selected(self, row):
+        if row < 0:
+            return
+        self.kpis.blockSignals(True)
+        self.kpis.setCurrentRow(-1)
+        self.kpis.blockSignals(False)
+        self.event_form.load(self.events.item(row).text())
+        self.stack.setCurrentWidget(self.event_form)
+
+    def kpi_selected(self, row):
+        if row < 0:
+            return
+        self.events.blockSignals(True)
+        self.events.setCurrentRow(-1)
+        self.events.blockSignals(False)
+        k = self.state.data["kpis"][row]
+        if k.get("use"):
+            self.lib_note.setText(f"<b>{k['use']}</b><br><br>This entry takes KPIs from an imported library. "
+                                  "Edit the library file to change them, or delete this entry and add your own.")
+            self.stack.setCurrentWidget(self.lib_note)
+            return
+        self.kpi_form.load(row)
+        self.stack.setCurrentWidget(self.kpi_form)
+
+    def new_event(self):
+        events = self.state.data.setdefault("events", {})
+        i = len(events) + 1
+        while f"event{i}" in events:
+            i += 1
+        events[f"event{i}"] = {"start": "", "window": {"pre": 2.0, "post": 2.0}, "moments": {}}
+        self.state.edited(structure=True)
+        self.select_event(f"event{i}")
+
+    def delete_event(self):
+        item = self.events.currentItem()
+        if not item:
+            return
+        name = item.text()
+        used = [k.get("name") for k in self.state.data.get("kpis", []) if k.get("event") == name]
+        if used and QMessageBox.question(self, "Delete event",
+                                         f"KPIs {', '.join(used)} use '{name}'. Delete the event anyway?") \
+                != QMessageBox.Yes:
+            return
+        del self.state.data["events"][name]
+        self.stack.setCurrentWidget(self.empty)
+        self.state.edited(structure=True)
+
+    def new_kpi(self):
+        kpis = self.state.data.setdefault("kpis", [])
+        names = {k.get("name") for k in kpis}
+        i = len(kpis) + 1
+        while f"kpi{i}" in names:
+            i += 1
+        events = self.state.event_names()
+        kpis.append({"name": f"kpi{i}", "event": events[0] if events else "", "value": "", "at": "start"})
+        self.state.edited(structure=True)
+        self.kpis.setCurrentRow(len(kpis) - 1)
+
+    def delete_kpi(self):
+        row = self.kpis.currentRow()
+        if row < 0:
+            return
+        del self.state.data["kpis"][row]
+        self.stack.setCurrentWidget(self.empty)
+        self.kpi_form.index = None
+        self.state.edited(structure=True)
+
+    def move_kpi(self, delta):
+        row = self.kpis.currentRow()
+        kpis = self.state.data.get("kpis", [])
+        new = row + delta
+        if row < 0 or not 0 <= new < len(kpis):
+            return
+        kpis[row], kpis[new] = kpis[new], kpis[row]
+        self.kpi_form.index = new
+        self.state.edited(structure=True)
+        self.kpis.setCurrentRow(new)
+
+    # ------------------------------------------------------------------ toolbox
+    def set_target(self, edit):
+        self.target = edit
+
+    def insert_tool(self, snippet):
+        if self.target is not None:
+            self.target.insert_text(snippet)
+
+    # ------------------------------------------------------------------ libraries
+    def add_from_library(self):
+        dlg = LibraryPicker(self.state.base_dir, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        imports = self.state.data.setdefault("imports", [])
+        kpis = self.state.data.setdefault("kpis", [])
+        for lib, path, kname in dlg.selection():
+            ref = lib if Path(path).parent == profile_store.builtin_library_dir() else path
+            if ref not in imports:
+                imports.append(ref)
+            if lib != "vehicle" and "vehicle" not in imports and Path(path).parent == profile_store.builtin_library_dir():
+                imports.insert(0, "vehicle")
+            use = f"{lib}.{kname}"
+            if not any(k.get("use") == use for k in kpis):
+                kpis.append({"use": use})
+        self.state.edited(structure=True)
+
+    def save_to_library(self):
+        row = self.kpis.currentRow()
+        cp = self.state.compiled
+        if row < 0 or self.state.data["kpis"][row].get("use"):
+            QMessageBox.information(self, "Save to library", "Select one of your own KPIs first.")
+            return
+        if cp is None:
+            QMessageBox.warning(self, "Save to library", "Fix the profile errors first (see the issues panel).")
+            return
+        kdict = copy.deepcopy(self.state.data["kpis"][row])
+        start = str(self.state.base_dir or Path.home())
+        path, _ = QFileDialog.getSaveFileName(self, "Save KPI to library", start,
+                                              "KPI library (*.kpi-lib.yaml)")
+        if not path:
+            return
+        if not path.endswith(profile_store.LIBRARY_SUFFIX):
+            path += profile_store.LIBRARY_SUFFIX
+        p = Path(path)
+        lib = yaml.safe_load(p.read_text()) if p.exists() else {"schema_version": 1, "name": p.name.split(".")[0]}
+        lib.setdefault("signals", {})
+        lib.setdefault("derived", {})
+        lib.setdefault("events", {})
+        lib.setdefault("kpis", [])
+        ev_name = kdict.get("event", "")
+        if "." in ev_name:
+            QMessageBox.warning(self, "Save to library", "This KPI uses an event from another library; "
+                                                         "only KPIs on your own events can be saved.")
+            return
+        ev = cp.events[ev_name]
+        deps = set()
+        for c in [ev.start, ev.end, *ev.preset_inputs] + [m.expr for m in ev.moments.values()]:
+            if c is not None:
+                deps |= set(c.deps)
+        ck = next(k for k in cp.kpis if k.defn.name == kdict["name"])
+        for c in (ck.value, ck.of):
+            if c is not None and ck.defn.form != "formula":
+                deps |= set(c.deps)
+        derived = dict(cp.derived)
+        todo = list(deps)
+        while todo:
+            n = todo.pop()
+            if n in derived and n not in lib["derived"]:
+                lib["derived"][n] = cp.profile.derived[n]
+                todo += list(derived[n].deps)
+            elif n in cp.profile.signals and n not in lib["signals"]:
+                lib["signals"][n] = cp.profile.signals[n].model_dump(exclude_none=True)
+        lib["events"][ev_name] = copy.deepcopy(self.state.data["events"][ev_name])
+        lib["kpis"] = [k for k in lib["kpis"] if k.get("name") != kdict["name"]] + [kdict]
+        try:
+            profile_store.atomic_write_text(p, yaml.safe_dump(lib, sort_keys=False))
+            profile_store.load_library(p)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Save to library", f"Saved, but the library does not validate: {exc}")
+            return
+        QMessageBox.information(self, "Save to library", f"Saved '{kdict['name']}' to {p.name}.")
+
+    # ------------------------------------------------------------------ preview
+    def refresh_preview_choices(self):
+        cur = self.pv_file.currentText()
+        self.pv_file.blockSignals(True)
+        self.pv_file.clear()
+        self.pv_file.addItems([Path(f).name for f in self.state.files])
+        if cur:
+            self.pv_file.setCurrentText(cur)
+        self.pv_file.blockSignals(False)
+        cur_ev = self.pv_event.currentText()
+        self.pv_event.blockSignals(True)
+        self.pv_event.clear()
+        self.pv_event.addItems(self.state.event_names())
+        if cur_ev:
+            self.pv_event.setCurrentText(cur_ev)
+        self.pv_event.blockSignals(False)
+
+    def on_validated(self):
+        if self.stack.currentWidget() is self.kpi_form:
+            self.kpi_form.show_status()
+        names = self.state.signal_names()
+        checked = {self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
+                   if self.pv_signals.item(i).checkState() == Qt.Checked}
+        existing = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())]
+        if existing != names:
+            self.pv_signals.blockSignals(True)
+            self.pv_signals.clear()
+            for n in names:
+                it = QListWidgetItem(n)
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setCheckState(Qt.Checked if n in checked else Qt.Unchecked)
+                self.pv_signals.addItem(it)
+            self.pv_signals.blockSignals(False)
+        self.refresh_preview_choices()
+
+    def _default_signals(self, event: str) -> list[str]:
+        cp = self.state.compiled
+        if cp is None or event not in cp.events:
+            return []
+        ev = cp.events[event]
+        out: list[str] = []
+        for c in [ev.start, *ev.preset_inputs] + [m.expr for m in ev.moments.values()]:
+            if c is not None:
+                out += [d for d in sorted(c.deps) if d != "time" and d not in out]
+        return out[:4]
+
+    def run_preview(self):
+        if not self.state.files:
+            self.pv_status.setText("Add files first.")
+            return
+        if self.state.compiled is None:
+            self.pv_status.setText("Fix the profile errors first (see the issues panel).")
+            return
+        f = self.state.files[max(self.pv_file.currentIndex(), 0)]
+        self.pv_status.setText(f"Running on {Path(f).name}…")
+        self.pv_run.setEnabled(False)
+        self.worker = PreviewWorker(self.state.compiled, f, self.state.indexes.get(f), self)
+        self.worker.done.connect(self.preview_done)
+        self.worker.failed.connect(self.preview_failed)
+        self.worker.finished.connect(lambda: self.pv_run.setEnabled(True))
+        self.worker.start()
+
+    def preview_failed(self, msg):
+        self.pv_status.setText("Preview failed: " + msg.splitlines()[0])
+
+    def preview_done(self, data):
+        self.preview_data = data
+        out = data["outcome"]
+        ev = self.pv_event.currentText()
+        n = sum(1 for o in out.occurrences if o.event == ev)
+        self.pv_occ.blockSignals(True)
+        self.pv_occ.setMaximum(max(n, 1))
+        self.pv_occ.blockSignals(False)
+        issues = [i.message for i in out.issues if i.severity != "info"]
+        self.pv_status.setText(f"{len(out.occurrences)} occurrence(s) in total, {n} for '{ev}'"
+                               + (f"  ·  {len(issues)} warning(s)" if issues else ""))
+        self.pv_status.setToolTip("\n".join(issues))
+        checked = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
+                   if self.pv_signals.item(i).checkState() == Qt.Checked]
+        if not checked:
+            defaults = set(self._default_signals(ev))
+            self.pv_signals.blockSignals(True)
+            for i in range(self.pv_signals.count()):
+                it = self.pv_signals.item(i)
+                it.setCheckState(Qt.Checked if it.text() in defaults else Qt.Unchecked)
+            self.pv_signals.blockSignals(False)
+        self.draw_preview()
+
+    def draw_preview(self):
+        data = self.preview_data
+        self.fig.clear()
+        self.pv_table.setRowCount(0)
+        if not data:
+            self.canvas.draw_idle()
+            return
+        out, t, values = data["outcome"], data["time"], data["values"]
+        ev = self.pv_event.currentText()
+        idx = self.pv_occ.value()
+        occ = next((o for o in out.occurrences if o.event == ev and o.index == idx), None)
+        names = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
+                 if self.pv_signals.item(i).checkState() == Qt.Checked and self.pv_signals.item(i).text() in values]
+        if occ is None:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, f"No occurrence #{idx} of '{ev}' in this file", ha="center", va="center",
+                    transform=ax.transAxes)
+            ax.set_axis_off()
+            self.canvas.draw_idle()
+            return
+        lo, hi = occ.t_window_start, occ.t_window_end
+        sl = slice(int(np.searchsorted(t, lo)), int(np.searchsorted(t, hi, side="right")))
+        moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
+        colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+        n = max(len(names), 1)
+        axes = [self.fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        for i, ax in enumerate(axes):
+            if i < len(names):
+                ax.plot(t[sl], np.asarray(values[names[i]], dtype=float)[sl], color=colors[i % 8], lw=1.4)
+                ax.set_ylabel(names[i], fontsize=8)
+            ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.08, lw=0)
+            for m in moments:
+                if m.time is not None:
+                    ax.axvline(m.time, color="#5f5e5a", ls=":", lw=1)
+                    if i == 0:
+                        ax.annotate(m.moment, (m.time, 1.0), xycoords=("data", "axes fraction"), fontsize=7,
+                                    rotation=90, va="top", ha="right", color="#5f5e5a")
+            ax.grid(True, color="#e6e5e0", lw=0.6)
+            ax.tick_params(labelsize=7)
+            if i < n - 1:
+                ax.tick_params(labelbottom=False)
+        axes[-1].set_xlabel("time [s]", fontsize=8)
+        self.canvas.draw_idle()
+
+        res = [r for r in out.results if r.event == ev and r.occurrence == idx]
+        self.pv_table.setRowCount(len(res))
+        for r, k in enumerate(res):
+            vals = [k.kpi, "" if k.value is None else f"{k.value:.4g}", k.unit, k.status, k.message]
+            for c, v in enumerate(vals):
+                item = QTableWidgetItem(v)
+                if c == 3 and k.status != Status.OK:
+                    item.setForeground(Qt.red)
+                self.pv_table.setItem(r, c, item)
