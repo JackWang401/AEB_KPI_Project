@@ -1,6 +1,6 @@
 # KPI Studio — architecture for a configurable KPI extractor
 
-Status: design agreed (decisions in section 11), no implementation yet.
+Status: design agreed (decisions in section 12), no implementation yet.
 Branch: `claude/project-thread-ki5k8a` (forked from `codex-reconstruct-kpi-pipeline`).
 
 ## 1. What we are building
