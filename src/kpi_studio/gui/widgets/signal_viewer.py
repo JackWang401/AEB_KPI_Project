@@ -2,6 +2,8 @@
 
 Works without valid events or KPIs: only the signals and derived signals are compiled.
 Stacked subplots share the time axis; the matplotlib toolbar gives zoom and pan.
+Click (or drag) in a plot to place cursor A, Shift+click for cursor B; each subplot then
+shows the signal values at the cursors and their difference. Right-click clears them.
 """
 
 from __future__ import annotations
@@ -32,6 +34,10 @@ from src.kpi_studio.io.mf4 import read_signals
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_AXES = 8
+
+
+def _fmt(v) -> str:
+    return "–" if v is None else f"{v:.4g}"
 
 
 class SignalLoadWorker(QThread):
@@ -79,6 +85,11 @@ class SignalViewer(QWidget):
         self.queue: list = []
         self.worker = None
         self.spans: list[tuple[float, float]] = []
+        self.cursors: list = [None, None]    # cursor A and B times [s]
+        self._axes: list = []
+        self._series: dict = {}              # axes -> [(label, time, values)]
+        self._artists: list = []
+        self._dragging = None
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -89,6 +100,9 @@ class SignalViewer(QWidget):
         self.status = QLabel()
         self.status.setObjectName("hint")
         bar.addWidget(self.status, 1)
+        self.cursor_info = QLabel()
+        self.cursor_info.setObjectName("hint")
+        bar.addWidget(self.cursor_info)
         lay.addLayout(bar)
 
         split = QSplitter(Qt.Horizontal)
@@ -126,6 +140,9 @@ class SignalViewer(QWidget):
         self.list.itemChanged.connect(lambda *_: self.draw())
         self.filter.textChanged.connect(self._apply_filter)
         clear.clicked.connect(self.uncheck_all)
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
         state.files_changed.connect(self.refresh_files)
         state.validated.connect(self.refresh_names)
         state.validated.connect(self._drop_stale_cache)
@@ -299,6 +316,7 @@ class SignalViewer(QWidget):
 
     def draw(self):
         self.fig.clear()
+        self._axes, self._series, self._artists = [], {}, []
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
         if not loaded:
@@ -329,6 +347,7 @@ class SignalViewer(QWidget):
                 y = np.asarray(d["values"][n], dtype=float)
                 color = COLORS[(j if overlay else i) % len(COLORS)]
                 ax.plot(d["time"], y, color=color, lw=1.2, label=Path(r.name).name if i == 0 else None)
+                self._series.setdefault(ax, []).append((Path(r.name).name, np.asarray(d["time"]), y))
                 unit = unit or d["units"].get(n, "")
             ax.text(0.005, 0.97, f"{n} [{unit}]" if unit else n, transform=ax.transAxes, fontsize=8, va="top",
                     ha="left", color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
@@ -341,6 +360,94 @@ class SignalViewer(QWidget):
         axes[-1].set_xlabel("time [s]", fontsize=8)
         if len(available) > MAX_AXES:
             axes[0].set_title(f"Showing the first {MAX_AXES} ticked signals", fontsize=8, color="#6b6b66")
+        self._axes = list(axes)
+        self._update_cursors()
+
+    # ------------------------------------------------------------------ cursors
+    def _on_press(self, event):
+        if self.toolbar.mode or event.inaxes not in self._axes or event.xdata is None:
+            return
+        if event.button == 3:
+            self.clear_cursors()
+            return
+        if event.button != 1:
+            return
+        self._dragging = 1 if event.key == "shift" else 0
+        self.set_cursor(self._dragging, event.xdata)
+
+    def _on_motion(self, event):
+        if self._dragging is not None and event.xdata is not None and event.inaxes in self._axes:
+            self.set_cursor(self._dragging, event.xdata)
+
+    def _on_release(self, _event):
+        self._dragging = None
+
+    def set_cursor(self, which: int, t):
+        self.cursors[which] = None if t is None else float(t)
+        self._update_cursors()
+
+    def clear_cursors(self):
+        self.cursors = [None, None]
+        self._update_cursors()
+
+    @staticmethod
+    def value_at(time, values, t):
+        """Value of the sample nearest to `t`, or None outside the recorded time span."""
+        if t is None or not len(time) or t < time[0] or t > time[-1]:
+            return None
+        i = int(np.clip(np.searchsorted(time, t), 1, len(time) - 1))
+        if abs(time[i - 1] - t) <= abs(time[i] - t):
+            i -= 1
+        v = float(values[i])
+        return None if np.isnan(v) else v
+
+    def readouts(self) -> dict:
+        """Signal name -> lines of text shown in that subplot for the current cursors."""
+        out = {}
+        a, b = self.cursors
+        for ax in self._axes:
+            lines = []
+            for label, t, y in self._series.get(ax, []):
+                va, vb = self.value_at(t, y, a), self.value_at(t, y, b)
+                parts = []
+                if a is not None:
+                    parts.append(f"A {_fmt(va)}")
+                if b is not None:
+                    parts.append(f"B {_fmt(vb)}")
+                if va is not None and vb is not None:
+                    parts.append(f"Δ {_fmt(vb - va)}")
+                if parts:
+                    prefix = f"{label}: " if len(self._series[ax]) > 1 else ""
+                    lines.append(prefix + "  ".join(parts))
+            out[ax] = lines
+        return out
+
+    def _update_cursors(self):
+        for art in self._artists:
+            try:
+                art.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self._artists = []
+        a, b = self.cursors
+        if self._axes:
+            for ax, lines in self.readouts().items():
+                for t, style in ((a, "-"), (b, "--")):
+                    if t is not None:
+                        self._artists.append(ax.axvline(t, color="#1f1f1e", lw=0.9, ls=style, zorder=5))
+                if lines:
+                    self._artists.append(ax.text(
+                        0.995, 0.97, "\n".join(lines), transform=ax.transAxes, fontsize=8, va="top", ha="right",
+                        family="monospace", color="#1f1f1e", zorder=6,
+                        bbox=dict(facecolor="white", edgecolor="#c9c8c2", alpha=0.9, pad=2)))
+        info = []
+        if a is not None:
+            info.append(f"A = {a:.3f} s")
+        if b is not None:
+            info.append(f"B = {b:.3f} s")
+        if a is not None and b is not None:
+            info.append(f"Δt = {b - a:.3f} s")
+        self.cursor_info.setText("   ".join(info) if info else "Click a plot to place a cursor (Shift+click: second)")
         self.canvas.draw_idle()
 
     def shutdown(self):

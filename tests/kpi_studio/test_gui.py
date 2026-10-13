@@ -185,3 +185,33 @@ def test_channel_filter_and_viewer_overlay_two_recordings(qtbot, window, mf4_dir
     lines = viewer.fig.axes[0].get_lines()
     assert len(lines) == 2  # one line per recording, overlaid
     assert viewer.fig.axes[0].get_legend() is not None
+
+
+def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    _load(qtbot, window, mf4_dir)
+    viewer = window.signals_page.viewer
+    viewer.plot_signals(["egoSpeed"])
+    qtbot.waitUntil(lambda: bool(viewer.cache) and viewer.worker is None, timeout=30000)
+    ax = viewer.fig.axes[0]
+    data = next(iter(viewer.cache.values()))
+    t, y = data["time"], np.asarray(data["values"]["egoSpeed"], dtype=float)
+    # click places cursor A, shift+click cursor B
+    viewer._on_press(SimpleNamespace(inaxes=ax, xdata=t[10], button=1, key=None))
+    viewer._on_release(None)
+    viewer._on_press(SimpleNamespace(inaxes=ax, xdata=t[50], button=1, key="shift"))
+    viewer._on_release(None)
+    assert viewer.cursors == [t[10], t[50]]
+    text = viewer.readouts()[ax][0]
+    assert f"A {y[10]:.4g}" in text and f"B {y[50]:.4g}" in text and "Δ" in text
+    assert "Δt" in viewer.cursor_info.text()
+    assert len(ax.get_lines()) == 3  # signal + two cursor lines
+    # cursors survive a redraw, and right-click clears them
+    viewer.draw()
+    assert len(viewer.fig.axes[0].get_lines()) == 3
+    viewer._on_press(SimpleNamespace(inaxes=viewer.fig.axes[0], xdata=t[5], button=3, key=None))
+    assert viewer.cursors == [None, None]
+    assert viewer.value_at(t, y, t[-1] + 100) is None
