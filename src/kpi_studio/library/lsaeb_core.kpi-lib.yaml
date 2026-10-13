@@ -1,0 +1,35 @@
+# LSAEB event KPIs rebuilt from toolbox parts. Names follow docs/kpi_catalog.md.
+schema_version: 1
+name: lsaeb_core
+description: Low-speed AEB (CPM) distances and deceleration
+
+signals:
+  cpmEventType:
+    channels: ["DIStatus::active_safety_status/notices/CPM/braking_event_status", cpmEventType]
+    kind: discrete
+    enum: DIActiveSafetyCPMEvent
+    required: false   # files without it simply have no occurrences of this event
+  cpmLongDist:
+    channels: ["nearFieldAssistStateInfo::daa_state_info/obstruction_position/x", cpmLongDist]
+    unit: m
+    required: false
+  cpmLatDist:
+    channels: ["nearFieldAssistStateInfo::daa_state_info/obstruction_position/y", cpmLatDist]
+    unit: m
+    required: false
+
+events:
+  lsaeb:
+    description: CPM event type 0 -> 1/2 until back to 0, merged within 2 s (detect_lsaeb_events)
+    preset: { name: lsaeb_cpm, of: cpmEventType, merge_window: 2.0 }
+    window: { pre: 6.0, post: 3.0 }
+    moments:
+      stop: { vehicle_stop: egoSpeed, threshold: 0.01, after: start }
+
+kpis:
+  - { name: vehSpd, event: lsaeb, value: egoSpeedKph, at: start, unit: km/h }
+  - { name: lsaebIntvLongDist, event: lsaeb, value: cpmLongDist, at: start, unit: m }
+  - { name: lsaebIntvLatDist, event: lsaeb, value: cpmLatDist, at: start, unit: m }
+  - { name: lsaebStopLongDist, event: lsaeb, value: cpmLongDist, at: stop, unit: m }
+  - { name: lsaebStopLatDist, event: lsaeb, value: cpmLatDist, at: stop, unit: m }
+  - { name: lsaebAverageAccel, event: lsaeb, reduce: time_mean, of: longActAccel, between: [start, stop], unit: m/s^2 }

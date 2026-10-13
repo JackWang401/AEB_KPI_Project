@@ -1,0 +1,300 @@
+"""Profile schema (pydantic). Strict: unknown keys are errors so typos are caught."""
+
+from __future__ import annotations
+
+import re
+from typing import Any, Literal, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+SCHEMA_VERSION = 1
+
+_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_QNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+BUILTIN_MOMENTS = ("start", "end", "window_start", "window_end")
+TIME = "time"  # built-in signal: the timebase in seconds
+MOMENT_RANGE_KEYS = ("after", "before", "within", "between")
+
+
+def _check_name(value: str, what: str, qualified: bool = False) -> str:
+    pattern = _QNAME_RE if qualified else _NAME_RE
+    if not isinstance(value, str) or not pattern.match(value):
+        raise ValueError(
+            f"invalid {what} name {value!r}: use letters, digits and _ (not starting with a digit)"
+        )
+    return value
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class SignalDef(_Strict):
+    channels: list[str] = Field(min_length=1, description="candidate MF4 channel names, first match wins")
+    unit: Optional[str] = None
+    kind: Literal["continuous", "discrete"] = "continuous"
+    enum: Optional[str] = None
+    required: bool = True
+    description: str = ""
+
+    @field_validator("channels", mode="before")
+    @classmethod
+    def _one_or_many(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
+
+
+class Timebase(_Strict):
+    rate_hz: float = Field(100.0, gt=0, le=10000)
+
+
+class Window(_Strict):
+    pre: float = Field(0.0, ge=0)
+    post: float = Field(0.0, ge=0)
+
+
+class PresetRef(BaseModel):
+    """`preset: {name: aeb_request, of: aebRequest, post_time: 3}`; extra keys are tool params."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    of: Union[str, list[str]]
+
+    @property
+    def inputs(self) -> list[str]:
+        return [self.of] if isinstance(self.of, str) else list(self.of)
+
+    @property
+    def params(self) -> dict[str, Any]:
+        return dict(self.model_extra or {})
+
+
+class MomentRule(BaseModel):
+    """Parsed moment definition.
+
+    YAML forms:
+      brake_onset: { first: "longActAccelFlt < -2", after: start, within: 1.5 }
+      onset:       { decel_onset: "jerk(longActAccelFlt)", threshold: -20, after: start }
+      early:       { offset: start, by: -0.5 }
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: Optional[str] = None       # moment tool name (None for offset)
+    expr: Optional[str] = None       # expression given to the tool
+    params: dict[str, Any] = Field(default_factory=dict)
+    after: Optional[str] = None
+    before: Optional[str] = None
+    within: Optional[float] = Field(None, gt=0)
+    between: Optional[tuple[str, str]] = None
+    offset: Optional[str] = None
+    by: float = 0.0
+
+    def references(self) -> list[str]:
+        refs = [r for r in (self.after, self.before, self.offset) if r]
+        if self.between:
+            refs.extend(self.between)
+        return refs
+
+
+def parse_moment(raw: Any, tool_names: set[str]) -> MomentRule:
+    if isinstance(raw, MomentRule):
+        return raw
+    if not isinstance(raw, dict):
+        raise ValueError("a moment must be a mapping, e.g. { first: 'egoSpeed < 0.1', after: start }")
+    raw = dict(raw)
+    if "offset" in raw:
+        allowed = {"offset", "by"}
+        extra = set(raw) - allowed
+        if extra:
+            raise ValueError(f"offset moments only take 'offset' and 'by', got {sorted(extra)}")
+        return MomentRule(offset=str(raw["offset"]), by=float(raw.get("by", 0.0)))
+    range_args = {k: raw.pop(k) for k in MOMENT_RANGE_KEYS if k in raw}
+    tool_keys = [k for k in raw if k in tool_names]
+    if len(tool_keys) != 1:
+        hint = ", ".join(sorted(tool_names))
+        if not tool_keys:
+            raise ValueError(f"no moment rule given; use one of: {hint}, or offset")
+        raise ValueError(f"only one moment rule per moment, got {tool_keys}")
+    tool = tool_keys[0]
+    expr = raw.pop(tool)
+    if "between" in range_args:
+        b = range_args["between"]
+        if not (isinstance(b, (list, tuple)) and len(b) == 2):
+            raise ValueError("'between' needs two moment names, e.g. between: [start, end]")
+        range_args["between"] = (str(b[0]), str(b[1]))
+    return MomentRule(tool=tool, expr=str(expr), params=raw, **range_args)
+
+
+class EventDef(_Strict):
+    description: str = ""
+    start: Optional[str] = None
+    end: Optional[str] = None
+    preset: Optional[PresetRef] = None
+    min_duration: float = Field(0.0, ge=0)
+    merge_gap: float = Field(0.0, ge=0)
+    window: Window = Field(default_factory=Window)
+    moments: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _start_or_preset(self):
+        if bool(self.start) == bool(self.preset):
+            raise ValueError("an event needs exactly one of 'start' (a condition) or 'preset'")
+        if self.preset and self.end:
+            raise ValueError("'end' cannot be combined with 'preset'; the preset decides the end")
+        for name in self.moments:
+            _check_name(name, "moment")
+            if name in BUILTIN_MOMENTS:
+                raise ValueError(f"moment name '{name}' is built in and cannot be redefined")
+        return self
+
+
+class KpiDef(_Strict):
+    name: Optional[str] = None
+    use: Optional[str] = None        # "<library>.<kpi>" or "<library>.*"
+    as_: Optional[str] = Field(None, alias="as")
+    event: Optional[str] = None
+    description: str = ""
+    unit: Optional[str] = None
+    # value form
+    value: Optional[str] = None
+    at: Optional[str] = None
+    # duration form
+    duration: Optional[tuple[str, str]] = None
+    # reduce form
+    reduce: Optional[str] = None
+    of: Optional[str] = None
+    between: Optional[tuple[str, str]] = None
+    args: dict[str, Any] = Field(default_factory=dict)
+    # formula form: expression over KPIs listed earlier for the same event
+    formula: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _one_form(self):
+        if self.use:
+            others = [k for k in ("name", "event", "value", "at", "duration", "reduce", "of", "between", "formula")
+                      if getattr(self, k) is not None]
+            if others:
+                raise ValueError(f"'use' entries only accept 'as'; remove {others}")
+            return self
+        if self.as_:
+            raise ValueError("'as' is only valid together with 'use'")
+        if not self.name:
+            raise ValueError("a KPI needs a 'name'")
+        _check_name(self.name, "KPI")
+        if not self.event:
+            raise ValueError(f"KPI '{self.name}' needs an 'event'")
+        forms = [f for f, present in (
+            ("value", self.value is not None),
+            ("duration", self.duration is not None),
+            ("reduce", self.reduce is not None),
+            ("formula", self.formula is not None),
+        ) if present]
+        if len(forms) != 1:
+            raise ValueError(
+                f"KPI '{self.name}' needs exactly one of 'value' (+ 'at'), 'duration', 'reduce' (+ 'of') "
+                f"or 'formula'"
+            )
+        form = forms[0]
+        if form == "value" and not self.at:
+            raise ValueError(f"KPI '{self.name}': 'value' needs 'at' (a moment name)")
+        if form != "value" and self.at:
+            raise ValueError(f"KPI '{self.name}': 'at' is only used with 'value'")
+        if form == "reduce" and not self.of:
+            raise ValueError(f"KPI '{self.name}': 'reduce' needs 'of' (an expression)")
+        if form != "reduce" and (self.of or self.between or self.args):
+            raise ValueError(f"KPI '{self.name}': 'of', 'between' and 'args' are only used with 'reduce'")
+        return self
+
+    @property
+    def form(self) -> str:
+        if self.value is not None:
+            return "value"
+        if self.duration is not None:
+            return "duration"
+        if self.formula is not None:
+            return "formula"
+        return "reduce"
+
+
+class RefLine(_Strict):
+    x: Optional[float] = None
+    y: Optional[float] = None
+    label: str = ""
+
+    @model_validator(mode="after")
+    def _one_axis(self):
+        if (self.x is None) == (self.y is None):
+            raise ValueError("a reference line needs exactly one of x or y")
+        return self
+
+
+class PlotDef(_Strict):
+    type: Literal["scatter", "box", "bar", "histogram", "timeseries"]
+    title: str = ""
+    x: Optional[str] = None
+    y: Optional[str] = None
+    color_by: Literal["file", "event", "none"] = "file"
+    group_by: Literal["file", "event"] = "file"
+    event: Optional[str] = None
+    signals: list[str] = Field(default_factory=list)
+    show_window: bool = True
+    show_moments: bool = True
+    max_figures: int = Field(50, ge=1, le=1000)
+    reference_lines: list[RefLine] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _fields_for_type(self):
+        t = self.type
+        if t == "scatter" and not (self.x and self.y):
+            raise ValueError("scatter plots need 'x' and 'y' KPI names")
+        if t in ("box", "bar") and not self.y:
+            raise ValueError(f"{t} plots need 'y' (a KPI name)")
+        if t == "histogram" and not self.x:
+            raise ValueError("histogram plots need 'x' (a KPI name)")
+        if t == "timeseries" and not (self.event and self.signals):
+            raise ValueError("timeseries plots need 'event' and 'signals'")
+        return self
+
+
+class _Body(_Strict):
+    description: str = ""
+    imports: list[str] = Field(default_factory=list)
+    signals: dict[str, SignalDef] = Field(default_factory=dict)
+    derived: dict[str, str] = Field(default_factory=dict)
+    events: dict[str, EventDef] = Field(default_factory=dict)
+    kpis: list[KpiDef] = Field(default_factory=list)
+
+    @field_validator("signals", "derived")
+    @classmethod
+    def _signal_names(cls, v):
+        for key in v:
+            _check_name(key, "signal")
+        return v
+
+    @field_validator("events")
+    @classmethod
+    def _event_names(cls, v):
+        for key in v:
+            _check_name(key, "event", qualified=True)  # library events are "<library>.<event>"
+        return v
+
+
+class Library(_Body):
+    schema_version: Literal[1] = 1
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _lib_name(cls, v):
+        return _check_name(v, "library")
+
+
+class Profile(_Body):
+    schema_version: Literal[1] = SCHEMA_VERSION
+    name: str = Field(min_length=1)
+    timebase: Timebase = Field(default_factory=Timebase)
+    plots: list[PlotDef] = Field(default_factory=list)

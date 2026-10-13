@@ -1,0 +1,24 @@
+# Example profile: AEB KPIs from the shared libraries plus two custom ones.
+# Run:  python -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi.yaml <files or folder>
+schema_version: 1
+name: AEB basic
+description: AEB activations - trigger speed, latency, stopping and driver inputs
+
+imports: [vehicle, aeb_core]
+
+timebase: { rate_hz: 100 }
+
+kpis:
+  - use: aeb_core.*
+  # a custom KPI on top of the library event
+  - { name: peakDecel, event: aeb_core.aeb, reduce: min, of: longActAccelFlt, between: [start, end], unit: m/s^2 }
+
+plots:
+  - { type: scatter, title: Stop distance vs trigger speed, x: vehSpd, y: aebStopDistance, color_by: file }
+  - { type: scatter, title: Dead time vs trigger speed, x: vehSpd, y: aebDeadTime, color_by: file }
+  - { type: box, title: Average decel per file, y: aebAverageAccel, group_by: file }
+  - type: timeseries
+    title: AEB activation
+    event: aeb_core.aeb
+    signals: [egoSpeedKph, aebTargetDecel, longActAccelFlt, longJerk]
+    max_figures: 30

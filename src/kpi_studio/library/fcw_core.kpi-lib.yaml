@@ -1,0 +1,38 @@
+# FCW event KPIs rebuilt from toolbox parts. Names follow docs/kpi_catalog.md.
+schema_version: 1
+name: fcw_core
+description: FCW warning and driver brake-jerk KPIs
+
+signals:
+  fcwRequest:
+    channels: ["aebRequest::fcw_request", fcwRequest]
+    kind: discrete
+    enum: ForwardCollisionWarningRequestType
+    required: false   # files without it simply have no occurrences of this event
+  fcwTTC:
+    channels: ["aebStateInfo::fcw_state_info/time_to_collision", fcwTTC]
+    unit: s
+    required: false
+  fcwSensitivity:
+    channels: ["DIStatus::active_safety_status/settings/FCW/configuration_level", fcwSensitivity]
+    kind: discrete
+    required: false
+
+events:
+  fcw:
+    description: FCW request 0 -> 2/3 until back to 0, merged within 2 s (detect_fcw_events)
+    preset: { name: fcw_request, of: fcwRequest, merge_window: 2.0 }
+    window: { pre: 6.0, post: 3.0 }       # PRE_TIME_FCW / POST_TIME_FCW
+    moments:
+      jerk_start: { decel_onset: longJerk, threshold: -20.0, after: start, within: 1.0 }   # BRAKEJERK_JERK_NEG_THD, WINDOW_S
+      jerk_end:   { jerk_end: longJerk, threshold: 20.0, after: jerk_start, within: 1.0 }  # BRAKEJERK_JERK_POS_THD
+
+kpis:
+  - { name: vehSpd, event: fcw, value: egoSpeedKph, at: start, unit: km/h }
+  - { name: fcwWarningTTC, event: fcw, value: fcwTTC, at: start, unit: s }
+  - { name: fcwSensitivityLvl, event: fcw, value: fcwSensitivity, at: start }
+  - { name: brakeJerkStart, event: fcw, value: time, at: jerk_start, unit: s }
+  - { name: brakeJerkEnd, event: fcw, value: time, at: jerk_end, unit: s }
+  - { name: brakeJerkDur, event: fcw, duration: [jerk_start, jerk_end], unit: s }
+  - { name: brakeJerkMax, event: fcw, reduce: abs_max, of: longJerk, between: [jerk_start, jerk_end], unit: m/s^3 }
+  - { name: brakeAccelMin, event: fcw, reduce: min, of: longActAccelFlt, between: [jerk_start, jerk_end], unit: m/s^2 }

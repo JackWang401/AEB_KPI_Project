@@ -1,0 +1,60 @@
+# AEB event KPIs rebuilt from toolbox parts. Names follow docs/kpi_catalog.md.
+# Thresholds are the current defaults from kpi_as_long.xlsx (params sheet).
+# Speed-dependent calibration flags (isSteerHigh, ...) are not part of v1.
+schema_version: 1
+name: aeb_core
+description: AEB intervention KPIs (timing, distances, driver inputs, latency)
+
+signals:
+  aebTargetDecel:
+    channels: ["vehicleIOASILCommandE2EWrapper::payload/long_ctrl_accel_request", DADCAxLmtIT4, aebTargetDecel]
+    unit: m/s^2
+    required: false   # files without it simply have no occurrences of this event
+  longGap:
+    channels: ["aebStateInfo::aeb_state_info/aeb_full_state_info/longitudinal_clearance", longGap]
+    unit: m
+    required: false
+
+events:
+  aeb:
+    description: Target decel request below PB level until release or vehicle stop (find_aeb_intv_start/end)
+    preset:
+      name: target_decel_window
+      of: [aebTargetDecel, egoSpeed]
+      start_level: -6.0      # PB_TGT_DECEL
+      tol: 0.1
+      end_level: -4.9        # AEB_END_THD
+      stop_speed: 0.0
+    window: { pre: 3.0, post: 10.0 }   # TIME_IDX_OFFSET (300 samples) / POST_TIME_AEB
+    moments:
+      veh_response: { decel_onset: longJerk, threshold: -25.0, after: start, within: 0.3 }  # AEB_JERK_NEG_THD, LATENCY_WINDOW_SAMPLES
+      stop:         { vehicle_stop: egoSpeed, threshold: 0.0, after: start }
+      first_det:    { first_nonzero: longGap, before: end }
+      stable_det:   { last_segment_start: "longGap != 0", before: end }
+
+kpis:
+  - { name: aebIntvStartTime, event: aeb, value: time, at: start, unit: s }
+  - { name: aebIntvEndTime, event: aeb, value: time, at: end, unit: s }
+  - { name: intvDur, event: aeb, duration: [start, end], unit: s }
+  - { name: isVehStopped, event: aeb, reduce: any, of: "egoSpeed <= 0", between: [start, end] }
+  - { name: vehSpd, event: aeb, value: egoSpeedKph, at: start, unit: km/h }
+  - { name: firstDetDist, event: aeb, value: longGap, at: first_det, unit: m }
+  - { name: stableDetDist, event: aeb, value: longGap, at: stable_det, unit: m }
+  - { name: aebIntvDist, event: aeb, value: longGap, at: start, unit: m }
+  - { name: aebStopGap, event: aeb, value: longGap, at: end, unit: m }
+  - { name: pedalPosAtStart, event: aeb, value: throttleValue, at: start, unit: "%" }
+  - { name: pedalPosMax, event: aeb, reduce: max, of: throttleValue, between: [start, window_end], unit: "%" }
+  - { name: pedalPosInc, event: aeb, formula: pedalPosMax - pedalPosAtStart, unit: "%" }
+  - { name: isPedalOnAtStrt, event: aeb, formula: pedalPosAtStart != 0 }
+  - { name: absSteerMaxDeg, event: aeb, reduce: abs_max, of: steerWheelAngleDeg, unit: deg }
+  - { name: absSteerRateMaxDeg, event: aeb, reduce: abs_max, of: steerWheelAngleSpeedDeg, unit: deg/s }
+  - { name: absYawRateMaxDeg, event: aeb, reduce: abs_max, of: yawRateDeg, unit: deg/s }
+  - { name: absLatAccelMax, event: aeb, reduce: abs_max, of: latActAccelFlt, unit: m/s^2 }
+  - { name: isPBOn, event: aeb, reduce: any, of: "in_band(aebTargetDecel, -6.0, 0.2)", between: [start, window_end] }
+  - { name: isFBOn, event: aeb, reduce: any, of: "in_band(aebTargetDecel, -15.0, 0.2)", between: [start, window_end] }
+  - { name: pbTime, event: aeb, reduce: time_true, of: "in_band(aebTargetDecel, -6.0, 0.2)", between: [start, window_end], unit: s }
+  - { name: fbTime, event: aeb, reduce: time_true, of: "in_band(aebTargetDecel, -15.0, 0.2)", between: [start, window_end], unit: s }
+  - { name: aebSysRespTime, event: aeb, value: time, at: veh_response, unit: s }
+  - { name: aebDeadTime, event: aeb, duration: [start, veh_response], unit: s }
+  - { name: aebAverageAccel, event: aeb, reduce: time_mean, of: longActAccel, between: [veh_response, stop], unit: m/s^2 }
+  - { name: aebStopDistance, event: aeb, reduce: distance, of: egoSpeed, between: [veh_response, stop], unit: m }

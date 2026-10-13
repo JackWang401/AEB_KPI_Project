@@ -1,0 +1,43 @@
+# Common vehicle signals shared by the AEB / FCW / LSAEB libraries.
+# Channel candidates are tried in order: Roadcast log name (with its raster
+# group), MOTION_1 name, then the generic name used by the current tool.
+schema_version: 1
+name: vehicle
+description: Ego-vehicle motion signals and their usual derived forms
+
+signals:
+  egoSpeed:
+    channels: ["vehicleIOActuationFeedback::speedESC", VehicleSpeed, egoSpeed]
+    unit: m/s
+  longActAccel:
+    channels: ["imuFrame::acceleration[0]", A2, longActAccel]
+    unit: m/s^2
+  latActAccel:
+    channels: ["imuFrame::acceleration[1]", A1, latActAccel]
+    unit: m/s^2
+    required: false
+  throttleValue:
+    channels: ["vehicleIOActuationFeedback::throttle_value", PedalPosPro, throttleValue]
+    unit: "%"
+    required: false
+  steerWheelAngle:
+    channels: ["vehicleIOActuationFeedback::steering_wheel_angle", SteeringWheelAngle, steerWheelAngle]
+    unit: rad
+    required: false
+  steerWheelAngleSpeed:
+    channels: ["vehicleIOstate::steering_wheel_angle_speed", SteeringWheelAngleSpeed, steerWheelAngleSpeed]
+    unit: rad/s
+    required: false
+  yawRate:
+    channels: ["imuFrame::turnrate[2]", YawRate, yawRate]
+    unit: rad/s
+    required: false
+
+derived:
+  egoSpeedKph: to_kph(egoSpeed)
+  longActAccelFlt: lowpass(longActAccel, 10)
+  latActAccelFlt: lowpass(latActAccel, 10)
+  longJerk: jerk(longActAccelFlt)
+  steerWheelAngleDeg: to_deg(steerWheelAngle)
+  steerWheelAngleSpeedDeg: to_deg(steerWheelAngleSpeed)
+  yawRateDeg: to_deg(yawRate)

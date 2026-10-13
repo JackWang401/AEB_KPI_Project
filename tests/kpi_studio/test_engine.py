@@ -1,0 +1,135 @@
+import numpy as np
+import pytest
+import yaml
+
+from src.kpi_studio.core.align import RawSignal, build_frame
+from src.kpi_studio.core.engine import edges_to_intervals, evaluate_frame, sample_at, clean_intervals
+from src.kpi_studio.core.model import Profile
+from src.kpi_studio.core.results import Status
+from src.kpi_studio.core.validate import ProfileError, compile_profile
+
+BASE = """
+name: t
+signals:
+  speed: {channels: [v], unit: m/s}
+  req:   {channels: [r], kind: discrete}
+  opt:   {channels: [o], required: false}
+events:
+  e:
+    start: req > 0
+    window: {pre: 1, post: 1}
+    moments:
+      half:  {crossing: speed, level: 5, direction: falling, after: start}
+      later: {offset: half, by: 0.5}
+      nope:  {first: speed > 1000}
+      dep:   {first: speed < 1, after: nope}
+kpis:
+  - {name: v0, event: e, value: speed, at: start}
+  - {name: t_half, event: e, duration: [start, half]}
+  - {name: t_later, event: e, duration: [start, later]}
+  - {name: vmax, event: e, reduce: max, of: speed}
+  - {name: twice, event: e, formula: v0 * 2}
+  - {name: never, event: e, value: speed, at: nope}
+  - {name: chained, event: e, value: speed, at: dep}
+  - {name: optional, event: e, value: opt, at: start}
+  - {name: needs_never, event: e, formula: never + 1}
+"""
+
+
+def compile_yaml(text, **over):
+    data = yaml.safe_load(text)
+    data.update(over)
+    return compile_profile(Profile.model_validate(data))
+
+
+def frame(cp):
+    t = np.arange(0, 10, 0.01)
+    req = ((t > 2) & (t < 4)).astype(float)
+    speed = np.clip(10 - np.clip(t - 2, 0, None) * 5, 0, None)
+    raw = {"speed": RawSignal("speed", t, speed, "m/s"), "req": RawSignal("req", t, req)}
+    fr, _, _ = build_frame(raw, cp.profile.signals, 100)
+    return fr
+
+
+def test_full_flow_statuses():
+    cp = compile_yaml(BASE)
+    out = evaluate_frame(cp, frame(cp), "f")
+    r = {x.kpi: x for x in out.results}
+    assert len(out.occurrences) == 1
+    assert r["v0"].value == pytest.approx(10.0, abs=0.06)
+    assert r["t_half"].value == pytest.approx(1.0, abs=0.02)
+    assert r["t_later"].value == pytest.approx(1.5, abs=0.02)
+    assert r["vmax"].value == pytest.approx(10.0)
+    assert r["twice"].value == pytest.approx(2 * r["v0"].value)
+    assert r["never"].status == Status.MOMENT_NOT_FOUND
+    assert r["chained"].status == Status.MOMENT_NOT_FOUND
+    assert r["optional"].status == Status.MISSING_SIGNAL
+    assert r["needs_never"].status == Status.MOMENT_NOT_FOUND
+    assert out.status == Status.OK
+
+
+def test_validation_collects_all_errors():
+    bad = BASE.replace("at: start}", "at: strat}", 1).replace("reduce: max", "reduce: maxx") \
+              .replace("speed > 1000", "sped > 1000")
+    with pytest.raises(ProfileError) as exc:
+        compile_yaml(bad)
+    text = str(exc.value)
+    assert "strat" in text and "maxx" in text and "sped" in text
+
+
+def test_unknown_key_is_rejected():
+    with pytest.raises(Exception, match="Extra inputs|extra"):
+        Profile.model_validate({"name": "x", "signals": {"a": {"channels": ["a"], "uint": "m"}}})
+
+
+def test_moment_cycle_detected():
+    text = BASE.replace("later: {offset: half, by: 0.5}", "later: {offset: dep, by: 0.5}") \
+               .replace("dep:   {first: speed < 1, after: nope}", "dep:   {first: speed < 1, after: later}")
+    with pytest.raises(ProfileError, match="loop"):
+        compile_yaml(text)
+
+
+def test_formula_may_only_use_earlier_kpis():
+    text = BASE + "  - {name: early, event: e, formula: late + 1}\n  - {name: late, event: e, formula: v0}\n"
+    with pytest.raises(ProfileError, match="listed earlier"):
+        compile_yaml(text)
+
+
+def test_edges_and_merge():
+    t = np.arange(10.0)
+    c = np.array([0, 1, 1, 0, 1, 0, 0, 0, 1, 1], bool)
+    assert edges_to_intervals(t, c, None) == [(1, 3), (4, 5), (8, 9)]
+    assert clean_intervals([(1, 3), (4, 5), (8, 9)], merge_gap=1.0, min_duration=0) == [(1, 5), (8, 9)]
+    assert clean_intervals([(1, 3), (4, 5)], merge_gap=0, min_duration=1.5) == [(1, 3)]
+
+
+def test_sample_at_hold_vs_interp():
+    t = np.array([0.0, 1.0])
+    v = np.array([0.0, 10.0])
+    assert sample_at(t, v, 0.5, hold=False) == 5.0
+    assert sample_at(t, v, 0.5, hold=True) == 0.0
+    assert np.isnan(sample_at(t, v, 2.0, hold=False))
+
+
+def test_align_converts_units_and_holds_discrete():
+    from src.kpi_studio.core.model import SignalDef
+
+    defs = {"v": SignalDef(channels=["v"], unit="m/s"), "s": SignalDef(channels=["s"], kind="discrete", required=False)}
+    raw = {"v": RawSignal("v", np.array([0.0, 1.0, 2.0]), np.array([36.0, 36.0, 72.0]), "km/h"),
+           "s": RawSignal("s", np.array([0.0, 1.0, 1.0, 0.5]), np.array([1.0, 2.0, 9.0, 5.0]))}
+    fr, issues, uses = build_frame(raw, defs, rate_hz=2)
+    np.testing.assert_allclose(fr.values["v"], [10, 10, 10, 15, 20])
+    # unsorted + duplicate timestamps cleaned, then held
+    np.testing.assert_allclose(fr.values["s"][:3], [1, 5, 2])
+    assert any("duplicate" in i.message for i in issues)
+    assert uses[0].converted_to == "m/s"
+
+
+def test_text_enum_samples_are_decoded():
+    from src.kpi_studio.core.model import SignalDef
+
+    defs = {"r": SignalDef(channels=["r"], kind="discrete", enum="E")}
+    raw = {"r": RawSignal("r", np.arange(3.0), np.array([b"E_NONE", b"E_FULL", b"???"]))}
+    fr, issues, _ = build_frame(raw, defs, 1, {"E": {"E_NONE": 0, "E_FULL": 2}})
+    assert fr.values["r"][:2].tolist() == [0.0, 2.0] and np.isnan(fr.values["r"][2])
+    assert any("could not be mapped" in i.message for i in issues)
