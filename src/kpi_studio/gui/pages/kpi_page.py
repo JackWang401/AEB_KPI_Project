@@ -318,7 +318,9 @@ class EventForm(QWidget):
             combo.setCurrentText(rule)
             combo.currentTextChanged.connect(lambda *_, row=r: self.save_moment(row))
             self.moments.setCellWidget(r, 1, combo)
-            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map)
+            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
+                            extras_fn=lambda m=mname: {"Moments": self.moment_names(exclude=m)})
+            expr.setPlaceholderText("▾ pick a signal, or type a condition")
             expr.setText(str(target))
             expr.focused.connect(self.page.set_target)
             expr.editingFinished.connect(lambda row=r: self.save_moment(row))
@@ -369,6 +371,10 @@ class EventForm(QWidget):
         self.load_moments()
 
     CONDITION_RULES = ("first", "last", "last_segment_start")
+
+    def moment_names(self, exclude=None) -> list[str]:
+        own = [m for m in (self.ev.get("moments", {}) or {}) if m != exclude] if self.name else []
+        return list(BUILTIN_MOMENTS) + own
 
     def build_moment(self):
         if self.name is None:

@@ -6,10 +6,14 @@ import fnmatch
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFocusEvent
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QComboBox,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QWidgetAction,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -42,20 +46,129 @@ OK_STYLE = ""
 BAD_STYLE = "QLineEdit { border: 1px solid #e34948; background: #fdf1f1; }"
 
 
+def _arrow_icon() -> QIcon:
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#6b6b66"))
+    p.drawPolygon(QPolygonF([QPointF(3, 6), QPointF(13, 6), QPointF(8, 11)]))
+    p.end()
+    return QIcon(pm)
+
+
+class NamePicker(QMenu):
+    """Popup with a filter box and a list of names; emits the picked name."""
+
+    picked = Signal(str)
+
+    def __init__(self, sections: dict[str, list[str]], parent=None):
+        super().__init__(parent)
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(6, 6, 6, 6)
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText("Filter… (wildcards: * ?)")
+        self.list = QListWidget()
+        self.list.setMinimumSize(280, 260)
+        for title, names in sections.items():
+            if not names:
+                continue
+            head = QListWidgetItem(title)
+            head.setFlags(Qt.NoItemFlags)
+            f = head.font()
+            f.setBold(True)
+            head.setFont(f)
+            self.list.addItem(head)
+            for n in names:
+                it = QListWidgetItem("   " + n)
+                it.setData(Qt.UserRole, n)
+                self.list.addItem(it)
+        lay.addWidget(self.filter)
+        lay.addWidget(self.list)
+        act = QWidgetAction(self)
+        act.setDefaultWidget(box)
+        self.addAction(act)
+        self.filter.textChanged.connect(self._apply)
+        self.filter.returnPressed.connect(self._pick_first)
+        self.list.itemClicked.connect(self._pick)
+        self.list.itemActivated.connect(self._pick)
+        self.aboutToShow.connect(self.filter.setFocus)
+
+    def names(self) -> list[str]:
+        return [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())
+                if self.list.item(i).data(Qt.UserRole) and not self.list.item(i).isHidden()]
+
+    def _apply(self, text):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            name = it.data(Qt.UserRole)
+            if name:
+                it.setHidden(not matches(text, name))
+
+    def _pick_first(self):
+        names = self.names()
+        if names:
+            self.picked.emit(names[0])
+            self.close()
+
+    def _pick(self, item):
+        name = item.data(Qt.UserRole)
+        if name:
+            self.picked.emit(name)
+            self.close()
+
+
 class ExprEdit(QLineEdit):
-    """Line edit that validates an expression as you type against the current signal names."""
+    """Line edit that validates an expression as you type against the current signal names.
+
+    The ▾ button at its right end opens a searchable list of signals (and any extra names,
+    e.g. moments) and inserts the picked one at the cursor."""
 
     focused = Signal(object)
 
     def __init__(self, names_fn: Callable[[], list[str]], parent=None, *, allow_empty=True, placeholder="",
-                 enums_fn: Optional[Callable[[], dict]] = None):
+                 enums_fn: Optional[Callable[[], dict]] = None,
+                 extras_fn: Optional[Callable[[], dict]] = None):
         super().__init__(parent)
         self.names_fn = names_fn
         self.enums_fn = enums_fn or (lambda: {})
+        self.extras_fn = extras_fn or (lambda: {})
         self.allow_empty = allow_empty
         self.error: Optional[str] = None
         self.setPlaceholderText(placeholder)
         self.textChanged.connect(self.check)
+        self.pick_action = QAction(_arrow_icon(), "Pick a signal", self)
+        self.pick_action.setToolTip("Pick a signal to insert")
+        self.pick_action.triggered.connect(self.open_picker)
+        self.addAction(self.pick_action, QLineEdit.TrailingPosition)
+        self.picker: Optional[NamePicker] = None
+
+    def picker_sections(self) -> dict[str, list[str]]:
+        sections = {"Signals": list(self.names_fn())}
+        sections.update(self.extras_fn() or {})
+        return sections
+
+    def open_picker(self):
+        self.picker = NamePicker(self.picker_sections(), self)
+        self.picker.picked.connect(self.insert_name)
+        self.picker.popup(self.mapToGlobal(self.rect().bottomLeft()))
+
+    def insert_name(self, name: str):
+        """Insert `name` at the cursor (replacing a selection), with spaces around it as needed."""
+        text, pos = self.text(), self.cursorPosition()
+        if self.hasSelectedText():
+            start = self.selectionStart()
+            text = text[:start] + text[start + len(self.selectedText()):]
+            pos = start
+        before, after = text[:pos], text[pos:]
+        lead = " " if before and not before.endswith((" ", "(", ",")) else ""
+        trail = " " if after and not after.startswith((" ", ")", ",")) else ""
+        self.setText(before + lead + name + trail + after)
+        self.setCursorPosition(len(before + lead + name))
+        self.setFocus()
+        self.editingFinished.emit()
 
     def focusInEvent(self, event: QFocusEvent):
         super().focusInEvent(event)

@@ -250,3 +250,31 @@ def test_condition_builder_value_changes_and_moment(qtbot, window, mf4_dir):
     moments = form.ev["moments"]
     new = list(moments)[-1]
     assert moments[new]["first"] == "rising(egoSpeed > 5)"
+
+
+def test_moment_expression_signal_picker(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.common import NamePicker
+
+    _load(qtbot, window, mf4_dir)
+    window.state.data.setdefault("events", {})["pick"] = {"start": "egoSpeed > 1",
+                                                          "moments": {"m1": {"first": "", "after": "start"}}}
+    form = window.kpi_page.event_form
+    form.load("pick")
+    cell = form.moments.cellWidget(0, 2)
+    sections = cell.picker_sections()
+    assert "egoSpeed" in sections["Signals"]
+    assert sections["Moments"][:2] == ["start", "end"] and "m1" not in sections["Moments"]
+    cell.open_picker()
+    picker = cell.picker
+    picker.filter.setText("ego*d")
+    assert picker.names() == ["egoSpeed", "egoSpeedKph"]
+    picker.filter.returnPressed.emit()  # Enter picks the first match
+    assert cell.text() == "egoSpeed"
+    assert form.ev["moments"]["m1"]["first"] == "egoSpeed"
+    cell.setText("rising( == 3)")
+    cell.setCursorPosition(len("rising("))
+    cell.insert_name("longActAccel")
+    assert cell.text() == "rising(longActAccel == 3)"
+    menu = NamePicker({"Signals": ["a", "b"], "Moments": []})
+    qtbot.addWidget(menu)
+    assert menu.list.count() == 3  # one header + two names; empty sections are left out
