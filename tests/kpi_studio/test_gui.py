@@ -528,33 +528,6 @@ def test_rename_twice_quickly_and_no_ghost_rows(qtbot, window, mf4_dir, monkeypa
     assert warnings and "LmcMotTypeSrvdLong" in state.data["signals"]
 
 
-def test_rename_everywhere_repairs_dangling_references(qtbot, window, mf4_dir, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-    from src.kpi_studio.gui.pages.signals_page import RenameDialog
-
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
-    _load(qtbot, window, mf4_dir)
-    state = window.state
-    state.data["signals"]["LmcMotTypeSrvdLong"] = {"channels": ["speedESC"]}
-    state.data["events"]["served"] = {"start": "rising(MotTypeSrvdLong == 3)", "end": "falling(MotTypeSrvdLong == 3)"}
-    state.edited(structure=True)
-    state.validate_now()
-    assert state.compiled is None
-    page = window.signals_page
-    assert "MotTypeSrvdLong" in page._unknown_names()
-
-    def fake_exec(dlg):
-        assert dlg.old.itemText(0) == "MotTypeSrvdLong"  # unknown names first
-        dlg.new.setText("LmcMotTypeSrvdLong")
-        return RenameDialog.Accepted
-
-    monkeypatch.setattr(RenameDialog, "exec", fake_exec)
-    page.rename_everywhere()
-    assert state.data["events"]["served"]["end"] == "falling(LmcMotTypeSrvdLong == 3)"
-    state.validate_now()
-    assert state.compiled is not None, [str(i) for i in state.issues]
-
-
 def test_event_fields_not_red_after_a_rename(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     state = window.state
@@ -599,3 +572,27 @@ def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
     assert "longGap" in viewer.checked() and viewer._ax_groups[viewer._axes[1]] == ["longActAccel", "longGap"]
     viewer.separate_all()
     assert len(viewer._axes) == 4
+
+
+def test_renaming_a_moment_or_kpi_updates_its_users(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "moments": {"m1": {"first": "egoSpeed > 2"},
+                                                                       "m2": {"offset": "m1", "by": 0.5}}}
+    state.data["kpis"] += [{"name": "spd", "event": "served", "value": "egoSpeed", "at": "m1"},
+                           {"name": "spd2", "event": "served", "formula": "spd * 2"}]
+    state.edited(structure=True)
+    page = window.kpi_page
+    page.event_form.load("served")
+    table = page.event_form.moments
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "m1")
+    table.item(row, 0).setText("onset")
+    assert list(state.data["events"]["served"]["moments"]) == ["onset", "m2"]
+    assert state.data["events"]["served"]["moments"]["m2"]["offset"] == "onset"
+    assert state.data["kpis"][-2]["at"] == "onset"
+    page.kpi_form.load(len(state.data["kpis"]) - 2)
+    page.kpi_form.name_edit.setText("speedAtOnset")
+    page.kpi_form.rename()
+    assert state.data["kpis"][-1]["formula"] == "speedAtOnset * 2"
+    state.validate_now()
+    assert state.compiled is not None, [str(i) for i in state.issues]

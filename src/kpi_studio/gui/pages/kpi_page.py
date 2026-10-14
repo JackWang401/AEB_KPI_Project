@@ -40,6 +40,7 @@ from src.kpi_studio.core.model import (
     derived_to_yaml,
     signal_units,
 )
+from src.kpi_studio.core.rename import rename_kpi, rename_moment
 from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import (
@@ -358,7 +359,9 @@ class EventForm(QWidget):
         if not NAME_RE.match(new) or new in moments or new in BUILTIN_MOMENTS:
             item.setText(old)
             return
-        moments[new] = moments.pop(old)
+        # keep the order, and point other moments and this event's KPIs at the new name
+        self.ev["moments"] = {(new if k == old else k): v for k, v in moments.items()}
+        rename_moment(self.state.data, self.name, old, new)
         self.state.edited(structure=True)
         self.load_moments()
 
@@ -642,10 +645,7 @@ class KpiForm(QWidget):
             return
         old = self.k.get("name")
         self.k["name"] = new
-        for p in self.state.data.get("plots", []):
-            for key in ("x", "y"):
-                if p.get(key) == old:
-                    p[key] = new
+        rename_kpi(self.state.data, self.k.get("event"), old, new)  # formulas and plots
         self.state.edited()
         self.page.refresh_kpi_labels()
 

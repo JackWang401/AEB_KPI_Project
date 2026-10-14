@@ -81,3 +81,49 @@ def rename_signal_references(data: dict, old: str, new: str) -> int:
             p["signals"] = [new if s == old else s for s in p["signals"]]
             counter[0] += 1
     return counter[0]
+
+
+def rename_moment(data: dict, event: str, old: str, new: str) -> int:
+    """Point the other moments of `event` and its KPIs at moment `new` instead of `old`."""
+    def swap(v):
+        if v == old:
+            counter[0] += 1
+            return new
+        return v
+
+    counter = [0]
+    ev = (data.get("events") or {}).get(event) or {}
+    for m in (ev.get("moments") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        for key in ("after", "before", "offset"):
+            if key in m:
+                m[key] = swap(m[key])
+        if isinstance(m.get("between"), list):
+            m["between"] = [swap(v) for v in m["between"]]
+    for k in data.get("kpis") or []:
+        if k.get("event") != event:
+            continue
+        if "at" in k:
+            k["at"] = swap(k["at"])
+        for key in ("duration", "between"):
+            if isinstance(k.get(key), (list, tuple)):
+                k[key] = [swap(v) for v in k[key]]
+    return counter[0]
+
+
+def rename_kpi(data: dict, event: str, old: str, new: str) -> int:
+    """Point formulas of the same event and the plots at KPI `new` instead of `old`."""
+    counter = [0]
+    for k in data.get("kpis") or []:
+        if k.get("event") == event and isinstance(k.get("formula"), str):
+            out = rename_in_expression(k["formula"], old, new)
+            if out != k["formula"]:
+                k["formula"] = out
+                counter[0] += 1
+    for p in data.get("plots") or []:
+        for key in ("x", "y"):
+            if p.get(key) == old:
+                p[key] = new
+                counter[0] += 1
+    return counter[0]

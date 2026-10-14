@@ -32,3 +32,33 @@ def test_profile_references_renamed():
     assert data["kpis"][1]["of"] == "abs(New)"
     assert data["plots"][0]["signals"] == ["New", "d1"] and data["plots"][1]["x"] == "Old"
     assert n == 9
+
+
+def test_rename_moment_updates_moments_and_kpis_of_that_event():
+    from src.kpi_studio.core.rename import rename_moment
+
+    data = {"events": {"e": {"moments": {"m1": {"first": "x > 1", "after": "start"},
+                                         "m2": {"offset": "m1", "by": 0.5},
+                                         "m3": {"first": "x < 0", "between": ["m1", "end"]}}},
+                       "f": {"moments": {"k": {"offset": "m1"}}}},
+            "kpis": [{"name": "a", "event": "e", "value": "x", "at": "m1"},
+                     {"name": "b", "event": "e", "duration": ["start", "m1"]},
+                     {"name": "c", "event": "e", "reduce": "max", "of": "x", "between": ["m1", "end"]},
+                     {"name": "d", "event": "f", "value": "x", "at": "m1"}]}
+    assert rename_moment(data, "e", "m1", "onset") == 5
+    ms = data["events"]["e"]["moments"]
+    assert ms["m2"]["offset"] == "onset" and ms["m3"]["between"] == ["onset", "end"]
+    assert [k.get("at") for k in data["kpis"]] == ["onset", None, None, "m1"]  # other event untouched
+    assert data["kpis"][1]["duration"] == ["start", "onset"] and data["kpis"][2]["between"] == ["onset", "end"]
+    assert data["events"]["f"]["moments"]["k"]["offset"] == "m1"
+
+
+def test_rename_kpi_updates_formulas_and_plots():
+    from src.kpi_studio.core.rename import rename_kpi
+
+    data = {"kpis": [{"name": "dist", "event": "e", "value": "x", "at": "end"},
+                     {"name": "ratio", "event": "e", "formula": "dist / 2 + distance"}],
+            "plots": [{"type": "scatter", "x": "speed", "y": "dist"}]}
+    assert rename_kpi(data, "e", "dist", "stopDist") == 2
+    assert data["kpis"][1]["formula"] == "stopDist / 2 + distance"
+    assert data["plots"][0]["y"] == "stopDist"

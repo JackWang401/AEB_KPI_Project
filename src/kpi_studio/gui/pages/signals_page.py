@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -161,11 +160,8 @@ class SignalsPage(QWidget):
         sl.addWidget(self.sig_table, 1)
         row = QHBoxLayout()
         self.del_sig_btn = QPushButton("Delete signal")
-        self.rename_btn = QPushButton("Rename everywhere…")
-        self.rename_btn.setToolTip("Replace a signal name in every derived signal, event, moment, KPI and plot")
         self.preview_btn = QPushButton("Plot selected signals ↓")
         row.addWidget(self.del_sig_btn)
-        row.addWidget(self.rename_btn)
         row.addStretch(1)
         row.addWidget(self.preview_btn)
         sl.addLayout(row)
@@ -203,7 +199,6 @@ class SignalsPage(QWidget):
         self.add_sig_btn.clicked.connect(self.add_selected_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self.del_sig_btn.clicked.connect(self.delete_signal)
-        self.rename_btn.clicked.connect(self.rename_everywhere)
         self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
@@ -588,35 +583,6 @@ class SignalsPage(QWidget):
             return False
         return True
 
-    def rename_everywhere(self):
-        """Replace a name in every expression, e.g. to repair references to a signal renamed earlier."""
-        dlg = RenameDialog(sorted(set(self.state.signal_names()) | self.state.taken_names()
-                                  | self._unknown_names()), self._unknown_names(), self)
-        if dlg.exec() != RenameDialog.Accepted:
-            return
-        old, new = dlg.values()
-        if not old or not new or old == new or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new):
-            return
-        for section in ("signals", "derived"):
-            d = self.state.data.get(section) or {}
-            if old in d:
-                if new in self.state.taken_names():
-                    QMessageBox.warning(self, "Rename", f"'{new}' is already a signal or derived signal.")
-                    return
-                self.state.data[section] = {(new if k == old else k): v for k, v in d.items()}
-        self._renamed(old, new)
-        self.state.edited(structure=True)
-        n = self.last_rename[2]
-        QMessageBox.information(self, "Rename", f"Replaced {old} → {new} in {n} place{'s' if n != 1 else ''}.")
-
-    def _unknown_names(self) -> set:
-        out = set()
-        for i in self.state.issues:
-            m = re.search(r"unknown (?:name|signal)[^']*'([A-Za-z_][A-Za-z0-9_]*)'", str(i))
-            if m:
-                out.add(m.group(1))
-        return out
-
     def _renamed(self, old: str, new: str):
         """Point every expression, moment, KPI and plot that used `old` at `new`."""
         n = rename_signal_references(self.state.data, old, new)
@@ -647,36 +613,6 @@ class SignalsPage(QWidget):
         if item:
             self.state.data["imports"] = [i for i in self.state.data.get("imports", []) if i != item.text()]
             self.state.edited(structure=True)
-
-
-class RenameDialog(QDialog):
-    def __init__(self, names: list[str], unknown: set, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Rename everywhere")
-        lay = QVBoxLayout(self)
-        info = QLabel("Replaces the name in every derived signal, event, moment, KPI and plot "
-                      "(and renames the signal itself if it exists).")
-        info.setWordWrap(True)
-        lay.addWidget(info)
-        form = QFormLayout()
-        self.old = QComboBox()
-        self.old.setEditable(True)
-        first = sorted(unknown)
-        self.old.addItems(first + [n for n in names if n not in unknown])
-        if first:
-            self.old.setToolTip("Names used in expressions that no signal defines are listed first")
-        self.new = QLineEdit()
-        self.new.setPlaceholderText("new name")
-        form.addRow("Replace", self.old)
-        form.addRow("with", self.new)
-        lay.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
-
-    def values(self) -> tuple[str, str]:
-        return self.old.currentText().strip(), self.new.text().strip()
 
 
 class EnumDialog(QDialog):
