@@ -601,3 +601,23 @@ def test_ticking_a_signal_loads_and_plots_it(qtbot, window, mf4_dir):
     item.setCheckState(Qt.Checked)  # no Load signals press needed
     qtbot.waitUntil(lambda: bool(viewer.cache) and viewer.worker is None, timeout=30000)
     assert viewer.fig.axes and viewer.fig.axes[0].get_lines()
+
+
+def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "moments": {"braking": {"first": "egoSpeed > 2"}}}
+    state.data["kpis"].append({"name": "spd", "event": "served", "value": "egoSpeed", "at": "moment1"})
+    state.edited(structure=True)
+    state.validate_now()
+    item = next(window.issues.item(i) for i in range(window.issues.count())
+                if "moment1" in window.issues.item(i).text())
+    window.issues.itemClicked.emit(item)
+    assert window.tabs.currentWidget() is window.kpi_page
+    assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
+    at = window.kpi_page.kpi_form.at
+    assert at.currentText() == "moment1" and "e34948" in at.styleSheet()  # missing moment shown in red
+    at.setCurrentText("braking")
+    assert state.data["kpis"][-1]["at"] == "braking" and at.styleSheet() == ""
+    state.validate_now()
+    assert state.compiled is not None, [str(i) for i in state.issues]

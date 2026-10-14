@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -502,6 +503,8 @@ class KpiForm(QWidget):
         self.form.currentIndexChanged.connect(self.form_changed)
         self.expr.editingFinished.connect(self.save)
         self.formula.editingFinished.connect(self.save)
+        for w in (self.at, self.m1, self.m2):  # a valid choice clears the "missing moment" mark
+            w.currentTextChanged.connect(lambda _t, w=w: self._set_moment(w, w.currentText()))
         for w in (self.at, self.m1, self.m2, self.reducer):
             w.currentTextChanged.connect(lambda *_: self.save())
         for w in (self.args, self.unit, self.desc):
@@ -523,6 +526,20 @@ class KpiForm(QWidget):
                 combo.setCurrentText(cur)
             combo.blockSignals(False)
 
+    @staticmethod
+    def _set_moment(combo: QComboBox, value: str):
+        """Select `value`; a moment the event no longer has is shown in red at the top, so it can be replaced."""
+        combo.blockSignals(True)
+        if value and combo.findText(value) < 0:
+            combo.insertItem(0, value)
+            combo.setItemData(0, QColor("#e34948"), Qt.ForegroundRole)
+            combo.setItemData(0, f"'{value}' is not a moment of this event: pick one from the list", Qt.ToolTipRole)
+        combo.setCurrentText(value)
+        missing = combo.currentIndex() == 0 and combo.itemData(0, Qt.ForegroundRole) is not None
+        combo.setStyleSheet("QComboBox { color: #e34948; border: 1px solid #e34948; }" if missing else "")
+        combo.setToolTip(f"'{value}' is not a moment of this event: pick one from the list" if missing else "")
+        combo.blockSignals(False)
+
     def load(self, index: int):
         self._loading = True
         self.index = index
@@ -539,13 +556,12 @@ class KpiForm(QWidget):
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(k.get("value") or k.get("of") or "")
         self.formula.setText(k.get("formula", ""))
-        self.at.setCurrentText(k.get("at", "start"))
         if form == "reduce":
             rng = k.get("between") or ["window_start", "window_end"]
         else:
             rng = k.get("duration") or ["start", "end"]
-        self.m1.setCurrentText(rng[0])
-        self.m2.setCurrentText(rng[1])
+        for combo, value in ((self.at, k.get("at", "start")), (self.m1, rng[0]), (self.m2, rng[1])):
+            self._set_moment(combo, value)
         self.reducer.setCurrentText(k.get("reduce", "max"))
         self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)

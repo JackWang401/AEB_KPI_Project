@@ -184,6 +184,9 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Profile check", self)
         dock.setObjectName("issues")
         self.issues = QListWidget()
+        self.issues.setToolTip("Click a problem to go to the place it is about")
+        self.issues.setCursor(Qt.PointingHandCursor)
+        self.issues.itemClicked.connect(lambda item: self.go_to(item.data(Qt.UserRole) or ""))
         holder = QWidget()
         hl = QVBoxLayout(holder)
         hl.setContentsMargins(PAGE_MARGINS[0], 0, PAGE_MARGINS[2], PAGE_MARGINS[3])
@@ -202,7 +205,42 @@ class MainWindow(QMainWindow):
         for i in errors + [i for i in self.state.issues if i.severity != "error"]:
             item = QListWidgetItem(("✖ " if i.severity == "error" else "⚠ ") + f"{i.where}: {i.message}")
             item.setForeground(Qt.red if i.severity == "error" else Qt.darkYellow)
+            item.setData(Qt.UserRole, i.where)
             self.issues.addItem(item)
+
+    def go_to(self, where: str):
+        """Open the tab and item a Profile check message is about, e.g. 'kpis.stop_gap.at'."""
+        parts = where.split(".")
+        if len(parts) < 2:
+            return
+        section, name, field = parts[0], parts[1], (parts[2] if len(parts) > 2 else "")
+        if section == "kpis":
+            kpis = self.state.data.get("kpis", [])
+            row = next((i for i, k in enumerate(kpis) if k.get("name") == name or k.get("use") == name), None)
+            if row is None and name.isdigit() and int(name) < len(kpis):
+                row = int(name)
+            if row is None:
+                return
+            self.tabs.setCurrentWidget(self.kpi_page)
+            self.kpi_page.kpis.setCurrentRow(row)
+            form = self.kpi_page.kpi_form
+            target = {"at": form.at, "duration": form.m1, "between": form.m1, "value": form.expr, "of": form.expr,
+                      "formula": form.formula, "reduce": form.reducer, "event": form.event}.get(field)
+            if target is not None and target.isVisible():
+                target.setFocus()
+        elif section == "events":
+            self.tabs.setCurrentWidget(self.kpi_page)
+            self.kpi_page.select_event(name)
+        elif section in ("signals", "derived"):
+            self.tabs.setCurrentWidget(self.signals_page)
+            table = self.signals_page.sig_table if section == "signals" else self.signals_page.der_table
+            for r in range(table.rowCount()):
+                if table.item(r, 0) is not None and table.item(r, 0).text() == name:
+                    table.setCurrentCell(r, 0)
+                    table.scrollToItem(table.item(r, 0))
+                    break
+        elif section == "plots":
+            self.tabs.setCurrentWidget(self.run_page)
 
     def _load_name(self):
         self.name_edit.setText(self.state.data.get("name", ""))
