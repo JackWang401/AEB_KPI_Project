@@ -23,7 +23,7 @@ from src.kpi_studio import __version__
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.align import build_frame
 from src.kpi_studio.core.engine import evaluate_frame
-from src.kpi_studio.core.model import Profile
+from src.kpi_studio.core.model import Profile, signal_units
 from src.kpi_studio.core.results import FileIssue, FileOutcome, Status
 from src.kpi_studio.core.validate import CompiledProfile
 from src.kpi_studio.io import profile_store
@@ -331,7 +331,8 @@ class RunService:
                                events=list(self.cp.events), run_info=run_info, profile_text=profile_text)
         self.progress("plots", 0, 1, "Rendering plots")
         figures: list = []
-        plots = render_plots(self.resolved, outcomes, out_dir / "plots", units, [r.name for r in self.recordings],
+        plot_units = {**signal_units(self.resolved), **units}  # time series panels show signal units
+        plots = render_plots(self.resolved, outcomes, out_dir / "plots", plot_units, [r.name for r in self.recordings],
                              collect=figures)
         dashboard = build_dashboard(figures, out_dir, outcomes=outcomes, kpi_order=kpi_order, units=units,
                                     profile_name=self.resolved.name, run_time=dict(run_info)["run time"],

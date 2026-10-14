@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio import toolbox
-from src.kpi_studio.core.model import BUILTIN_MOMENTS
+from src.kpi_studio.core.model import BUILTIN_MOMENTS, derived_to_yaml
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import (
     ConditionBuilder,
@@ -955,7 +955,7 @@ class KpiPage(QWidget):
         while todo:
             n = todo.pop()
             if n in derived and n not in lib["derived"]:
-                lib["derived"][n] = cp.profile.derived[n]
+                lib["derived"][n] = derived_to_yaml(cp.profile.derived[n])
                 todo += list(derived[n].deps)
             elif n in cp.profile.signals and n not in lib["signals"]:
                 lib["signals"][n] = cp.profile.signals[n].model_dump(exclude_none=True)

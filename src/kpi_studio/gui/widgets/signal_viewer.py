@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio.core.align import build_frame
 from src.kpi_studio.core.engine import FileEvaluator
+from src.kpi_studio.core.model import signal_units
 from src.kpi_studio.core.results import FileOutcome, Status
 from src.kpi_studio.gui.widgets.common import make_canvas, matches
 from src.kpi_studio.io import profile_store
@@ -76,7 +77,7 @@ class SignalLoadWorker(QThread):
             ev = FileEvaluator(self.cp, frame, outcome.file)
             ev.compute_derived(outcome)
             values = {k: v for k, v in ev.env.values.items() if k != "time"}
-            units = {n: (d.unit or "") for n, d in defs.items()}
+            units = signal_units(self.cp.profile)
             labels = {n: r.labels for n, r in raw.items() if r.labels}
             self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "units": units,
                             "labels": labels,
@@ -242,6 +243,7 @@ class SignalViewer(QWidget):
         names = self.state.signal_names()
         existing = [self.list.item(i).text() for i in range(self.list.count())]
         if existing == names:
+            self._set_name_tips()
             return
         checked = set(self.checked())
         self.list.blockSignals(True)
@@ -252,7 +254,20 @@ class SignalViewer(QWidget):
             it.setCheckState(Qt.Checked if n in checked else Qt.Unchecked)
             self.list.addItem(it)
         self.list.blockSignals(False)
+        self._set_name_tips()
         self._apply_filter()
+
+    def _set_name_tips(self):
+        """Tooltip per signal: its unit and description."""
+        r = self.state.resolved
+        defs = {**dict(r.signals), **dict(r.derived)} if r is not None else {}
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            d = defs.get(it.text())
+            tip = ""
+            if d is not None:
+                tip = "\n".join(x for x in (f"[{d.unit}]" if d.unit else "", d.description) if x)
+            it.setToolTip(tip)
 
     def _drop_stale_cache(self):
         # signal definitions changed (channels, units, derived expressions): re-read next time
@@ -504,12 +519,11 @@ class SignalViewer(QWidget):
 
     def _preview_done(self, rec, data):
         out = data["outcome"]
-        defs = self.state.compiled.profile.signals
         old = self.cache.get(rec.name, {})
         self.cache[rec.name] = {
             "file": rec.name, "time": data["time"],
             "values": {k: v for k, v in data["values"].items() if k != "time"},
-            "units": {n: (d.unit or "") for n, d in defs.items()}, "labels": old.get("labels", {}),
+            "units": signal_units(self.state.compiled.profile), "labels": old.get("labels", {}),
             "missing": old.get("missing", {}),
             "issues": [i.message for i in out.issues if i.severity != "info"]}
         self.data = self.cache[rec.name]

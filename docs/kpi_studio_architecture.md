@@ -78,6 +78,10 @@ signals:
 derived:
   egoSpeedKph: egoSpeed * 3.6
   longActAccelFlt: lowpass(longActAccel, 10)     # Butterworth, cutoff in Hz
+  egoSpeedMph:                                   # long form: unit and description are optional
+    expr: egoSpeed * 2.23694
+    unit: mph
+    description: ego speed in miles per hour
 
 events:
   aeb:

@@ -78,3 +78,19 @@ def test_builtin_files_are_valid(path):
         ps.load_compiled(prof, base_dir=ps.builtin_library_dir())
     else:
         ps.load_compiled(path)
+
+
+def test_derived_with_unit_and_description(tmp_path):
+    from src.kpi_studio.core.model import derived_to_yaml, signal_units
+
+    prof = write(tmp_path / "p.kpi.yaml", {
+        "name": "P", "signals": {"speed": {"channels": ["v"], "unit": "m/s"}},
+        "derived": {"plain": "speed * 2",
+                    "speedKph": {"expr": "speed * 3.6", "unit": "km/h", "description": "speed in km/h"}},
+    })
+    resolved, cp = ps.load_compiled(prof)
+    assert {n for n, _ in cp.derived} == {"plain", "speedKph"}
+    assert resolved.derived["speedKph"].description == "speed in km/h"
+    assert signal_units(resolved) == {"speed": "m/s", "plain": "", "speedKph": "km/h"}
+    assert derived_to_yaml(resolved.derived["plain"]) == "speed * 2"  # short form kept
+    assert derived_to_yaml(resolved.derived["speedKph"])["unit"] == "km/h"

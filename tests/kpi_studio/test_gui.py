@@ -404,3 +404,22 @@ def test_signal_panel_is_shared_by_tabs_2_and_3(window):
     for index, visible in [(0, False), (1, True), (2, True), (3, False)]:
         window.tabs.setCurrentIndex(index)
         assert window.viewer_box.isVisible() == visible
+
+
+def test_derived_unit_and_description_columns(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    window.state.data.setdefault("derived", {})["vKph"] = "egoSpeed * 3.6"
+    window.state.edited(structure=True)
+    window.state.validate_now()
+    row = next(r for r in range(page.der_table.rowCount()) if page.der_table.item(r, 0).text() == "vKph")
+    page.der_table.item(row, 2).setText("km/h")
+    page.der_table.item(row, 3).setText("ego speed")
+    assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "unit": "km/h",
+                                                    "description": "ego speed"}
+    window.state.validate_now()
+    assert window.state.compiled is not None
+    viewer = window.viewer
+    viewer.plot_signals(["vKph"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None), timeout=20000)
+    assert viewer.data["units"]["vKph"] == "km/h"

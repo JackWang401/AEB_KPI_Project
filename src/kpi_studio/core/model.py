@@ -46,6 +46,36 @@ class SignalDef(_Strict):
         return v
 
 
+class DerivedDef(_Strict):
+    """A derived signal. In YAML either `name: <expression>` or `name: {expr, unit, description}`."""
+    expr: str = ""
+    unit: Optional[str] = None
+    description: str = ""
+
+
+def derived_to_yaml(d: "DerivedDef | str | dict"):
+    """The compact YAML form: a plain expression string unless a unit or description is set."""
+    if isinstance(d, str):
+        return d
+    if isinstance(d, dict):
+        d = DerivedDef.model_validate(d)
+    if not d.unit and not d.description:
+        return d.expr
+    out = {"expr": d.expr}
+    if d.unit:
+        out["unit"] = d.unit
+    if d.description:
+        out["description"] = d.description
+    return out
+
+
+def signal_units(profile) -> dict[str, str]:
+    """Unit of every signal and derived signal of a profile ('' when none is given)."""
+    units = {n: (d.unit or "") for n, d in profile.signals.items()}
+    units.update({n: (d.unit or "") for n, d in profile.derived.items()})
+    return units
+
+
 class Timebase(_Strict):
     rate_hz: float = Field(100.0, gt=0, le=10000)
 
@@ -272,7 +302,7 @@ class _Body(_Strict):
     description: str = ""
     imports: list[str] = Field(default_factory=list)
     signals: dict[str, SignalDef] = Field(default_factory=dict)
-    derived: dict[str, str] = Field(default_factory=dict)
+    derived: dict[str, DerivedDef] = Field(default_factory=dict)
     events: dict[str, EventDef] = Field(default_factory=dict)
     kpis: list[KpiDef] = Field(default_factory=list)
 
@@ -281,6 +311,13 @@ class _Body(_Strict):
     def _signal_names(cls, v):
         for key in v:
             _check_name(key, "signal")
+        return v
+
+    @field_validator("derived", mode="before")
+    @classmethod
+    def _derived_shorthand(cls, v):
+        if isinstance(v, dict):
+            return {k: ({"expr": d} if isinstance(d, str) or d is None else d) for k, d in v.items()}
         return v
 
     @field_validator("events")

@@ -142,7 +142,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
     # ---------------- derived
     compiled_derived: dict[str, Compiled] = {}
     for name, source in profile.derived.items():
-        c = cexpr(f"derived.{name}", source)
+        c = cexpr(f"derived.{name}", source.expr)
         if c is not None:
             compiled_derived[name] = c
     order, cycle = _toposort({n: set(c.deps) for n, c in compiled_derived.items()})

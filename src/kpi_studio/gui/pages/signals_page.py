@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.kpi_studio.core.model import derived_to_yaml
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import ExprEdit, matches
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
@@ -44,6 +45,7 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
+    DER_COLS = ["Name", "Expression", "Unit", "Description"]
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
     def __init__(self, state: AppState, parent=None, viewer: SignalViewer | None = None):
@@ -126,9 +128,11 @@ class SignalsPage(QWidget):
         dl = QVBoxLayout(der_box)
         dl.setContentsMargins(0, 0, 0, 0)
         dl.addWidget(QLabel("Derived signals (expressions over signals; use the toolbox, e.g. lowpass(x, 10))"))
-        self.der_table = QTableWidget(0, 2)
-        self.der_table.setHorizontalHeaderLabels(["Name", "Expression"])
+        self.der_table = QTableWidget(0, len(self.DER_COLS))
+        self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
         self.der_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.der_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.der_table.setColumnWidth(2, 80)
         self.der_table.verticalHeader().setDefaultSectionSize(24)
         dl.addWidget(self.der_table, 1)
         drow = QHBoxLayout()
@@ -152,7 +156,7 @@ class SignalsPage(QWidget):
         self.add_der_btn.clicked.connect(self.add_derived)
         self.del_der_btn.clicked.connect(self.delete_derived)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
-        self.der_table.itemChanged.connect(self.derived_name_changed)
+        self.der_table.itemChanged.connect(self.derived_cell_changed)
         self.lib_add.clicked.connect(self.add_import)
         self.lib_remove.clicked.connect(self.remove_import)
 
@@ -335,38 +339,68 @@ class SignalsPage(QWidget):
         self.viewer.shutdown()
 
     # ------------------------------------------------------------------ derived
+    @staticmethod
+    def _der_fields(value) -> dict:
+        """{expr, unit, description} from either YAML form (plain expression or mapping)."""
+        if isinstance(value, dict):
+            return {"expr": value.get("expr", "") or "", "unit": value.get("unit") or "",
+                    "description": value.get("description", "") or ""}
+        return {"expr": value or "", "unit": "", "description": ""}
+
+    def _set_der_field(self, name, key, text):
+        derived = self.state.data.setdefault("derived", {})
+        if name not in derived:
+            return False
+        f = self._der_fields(derived[name])
+        if f[key] == text:
+            return False
+        f[key] = text
+        derived[name] = derived_to_yaml(f)
+        return True
+
     def refresh_derived(self):
         self._loading = True
         derived = self.state.data.get("derived", {}) or {}
         self.der_table.setRowCount(len(derived))
-        for r, (name, expr) in enumerate(derived.items()):
+        for r, (name, value) in enumerate(derived.items()):
+            f = self._der_fields(value)
             item = QTableWidgetItem(name)
             item.setData(Qt.UserRole, name)
+            item.setToolTip(f["description"])
             self.der_table.setItem(r, 0, item)
             edit = ExprEdit(self._names_except(name), enums_fn=self.state.enum_map)
-            edit.setText(expr)
+            edit.setText(f["expr"])
             edit.editingFinished.connect(lambda n=name, e=edit: self._derived_expr(n, e.text()))
             self.der_table.setCellWidget(r, 1, edit)
+            unit = QTableWidgetItem(f["unit"])
+            unit.setToolTip("Unit shown in the signal viewer and plots, e.g. km/h")
+            self.der_table.setItem(r, 2, unit)
+            desc = QTableWidgetItem(f["description"])
+            desc.setToolTip(f["description"] or "What this signal means (free text)")
+            self.der_table.setItem(r, 3, desc)
         self._loading = False
 
     def _names_except(self, name):
         return lambda: [n for n in self.state.signal_names() if n != name]
 
     def _derived_expr(self, name, text):
-        derived = self.state.data.setdefault("derived", {})
-        if name in derived and derived[name] != text.strip():
-            derived[name] = text.strip()
+        if self._set_der_field(name, "expr", text.strip()):
             self.state.edited()
 
-    def derived_name_changed(self, item):
-        if self._loading or item.column() != 0:
+    def derived_cell_changed(self, item):
+        if self._loading:
             return
-        old = item.data(Qt.UserRole)
-        new = item.text().strip()
-        derived = self.state.data.setdefault("derived", {})
-        if new and new != old and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new) and new not in derived:
-            derived[new] = derived.pop(old)
-            self.state.edited(structure=True)
+        name = self.der_table.item(item.row(), 0).data(Qt.UserRole)
+        if item.column() == 0:
+            new = item.text().strip()
+            derived = self.state.data.setdefault("derived", {})
+            if new and new != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new) and new not in derived:
+                derived[new] = derived.pop(name)
+                self.state.edited(structure=True)
+        elif item.column() in (2, 3):
+            key = "unit" if item.column() == 2 else "description"
+            if self._set_der_field(name, key, item.text().strip()):
+                self.state.edited()
 
     def add_derived(self):
         name, ok = QInputDialog.getText(self, "Derived signal", "Name:")
