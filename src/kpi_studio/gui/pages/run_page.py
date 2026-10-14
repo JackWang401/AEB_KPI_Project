@@ -137,9 +137,14 @@ class RunPage(QWidget):
         rbox = QGroupBox("Run")
         rl = QVBoxLayout(rbox)
         orow = QHBoxLayout()
-        orow.addWidget(QLabel("Output folder"))
+        orow.addWidget(QLabel("Output"))
+        self.out_mode = QComboBox()
+        self.out_mode.addItem("Next to the input data (replaced each run)", "input")
+        self.out_mode.addItem("Custom folder (new timestamped folder each run)", "custom")
+        self.out_mode.setCurrentIndex(0 if settings.value("run/output_mode", "input") == "input" else 1)
+        orow.addWidget(self.out_mode)
         self.out_dir = QLineEdit(str(settings.value("run/output_dir", str(Path.home() / "kpi_studio_output"))))
-        browse = QPushButton("Browse…")
+        self.browse = browse = QPushButton("Browse…")
         orow.addWidget(self.out_dir, 1)
         orow.addWidget(browse)
         orow.addWidget(QLabel("Parallel files"))
@@ -148,6 +153,10 @@ class RunPage(QWidget):
         self.workers.setValue(int(settings.value("run/workers", default_workers())))
         orow.addWidget(self.workers)
         rl.addLayout(orow)
+        self.out_hint = QLabel()
+        self.out_hint.setObjectName("hint")
+        self.out_hint.setWordWrap(True)
+        rl.addWidget(self.out_hint)
         brow = QHBoxLayout()
         self.check_btn = QPushButton("Check files")
         self.run_btn = QPushButton("RUN")
@@ -174,6 +183,8 @@ class RunPage(QWidget):
         lay.addWidget(rbox, 2)
 
         browse.clicked.connect(self.pick_out)
+        self.out_mode.currentIndexChanged.connect(lambda *_: self.update_output_hint())
+        state.files_changed.connect(self.update_output_hint)
         self.add_plot.clicked.connect(self.new_plot)
         self.del_plot.clicked.connect(self.delete_plot)
         self.check_btn.clicked.connect(self.check)
@@ -185,6 +196,7 @@ class RunPage(QWidget):
         self.plots.itemChanged.connect(self.plot_cell_changed)
         state.profile_changed.connect(self.refresh_plots)
         self.refresh_plots()
+        self.update_output_hint()
 
     # ------------------------------------------------------------------ plots
     def refresh_plots(self):
@@ -305,6 +317,26 @@ class RunPage(QWidget):
             self.state.edited(structure=True)
 
     # ------------------------------------------------------------------ run
+    def output_root(self):
+        """None = next to the input data; else the custom folder."""
+        return None if self.out_mode.currentData() == "input" else self.out_dir.text()
+
+    def update_output_hint(self):
+        custom = self.out_mode.currentData() == "custom"
+        self.out_dir.setEnabled(custom)
+        self.browse.setEnabled(custom)
+        if custom:
+            self.out_hint.setText("Each run writes a new folder named after the profile and the time.")
+            return
+        from src.kpi_studio.app.run_service import input_results_dir
+
+        if not self.state.files:
+            self.out_hint.setText("Results go to a 'kpi_results' folder next to the input files.")
+            return
+        target = input_results_dir(self.state.files)
+        self.out_hint.setText(f"Results go to {target}"
+                              + (" (replaces the existing result)" if target.exists() else ""))
+
     def pick_out(self):
         d = QFileDialog.getExistingDirectory(self, "Output folder", self.out_dir.text())
         if d:
@@ -334,9 +366,10 @@ class RunPage(QWidget):
             if self.state.compiled is None:
                 return
         self.settings.setValue("run/output_dir", self.out_dir.text())
+        self.settings.setValue("run/output_mode", self.out_mode.currentData())
         self.settings.setValue("run/workers", self.workers.value())
         self.log.appendPlainText("— run started —")
-        self.worker = RunWorker(self.state.resolved, list(self.state.files), self.out_dir.text(),
+        self.worker = RunWorker(self.state.resolved, list(self.state.files), self.output_root(),
                                 self.workers.value(), base_dir=self.state.base_dir,
                                 indexes=dict(self.state.indexes), combine=self.state.combine, parent=self)
         self.worker.progress.connect(self.on_progress)
@@ -363,7 +396,9 @@ class RunPage(QWidget):
         self.result = result
         ok = result.n_ok
         self.log.appendPlainText(f"Finished: {ok}/{len(result.outcomes)} recording(s) OK"
-                                 + (" (cancelled)" if result.cancelled else "") + f"\nExcel: {result.excel}")
+                                 + (" (cancelled; the previous result was kept)" if result.cancelled and not result.excel
+                                    else " (cancelled)" if result.cancelled else "")
+                                 + (f"\nExcel: {result.excel}" if result.excel else ""))
         for b in (self.open_excel, self.open_folder):
             b.setEnabled(True)
         self.open_dash.setEnabled(bool(result.dashboard))

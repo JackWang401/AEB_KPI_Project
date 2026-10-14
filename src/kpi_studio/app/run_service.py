@@ -9,6 +9,7 @@ import datetime as _dt
 import logging
 import multiprocessing
 import os
+import shutil
 import platform
 import re
 import threading
@@ -165,8 +166,26 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")[:60] or "profile"
 
 
+RESULTS_DIRNAME = "kpi_results"
+OUTPUT_MARKER = ".kpi_studio_output"  # written into every output folder; only such folders are replaced
+
+
+def input_results_dir(files: list) -> Path:
+    """`kpi_results` in the folder holding the input files (their common folder if they are spread out)."""
+    parents = [str(Path(f).resolve().parent) for f in files]
+    if not parents:
+        raise ValueError("no input files")
+    return Path(os.path.commonpath(parents)) / RESULTS_DIRNAME
+
+
+def _is_ours(folder: Path) -> bool:
+    return (folder / OUTPUT_MARKER).exists() or (folder / "kpi_results.xlsx").exists()
+
+
 class RunService:
-    def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path],
+    """`output_root=None`: write to `kpi_results` next to the input data, replacing the previous result."""
+
+    def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path, None],
                  *, workers: int = 1, progress: Optional[ProgressFn] = None,
                  cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None,
                  combine: bool = True):
@@ -175,7 +194,7 @@ class RunService:
             base_dir = base_dir or Path(profile).parent
         self.resolved, self.cp = profile_store.load_compiled(profile, base_dir=base_dir)
         self.files = [str(Path(f)) for f in files]
-        self.output_root = Path(output_root)
+        self.output_root = Path(output_root) if output_root else None
         self.workers = max(1, int(workers))
         self.progress = progress or (lambda *a: None)
         self.cancel = cancel or threading.Event()
@@ -228,10 +247,58 @@ class RunService:
             self.progress("process", len(outcomes), total, "Recordings processed")
         return [outcomes[r.name] for r in recs if r.name in outcomes]
 
+    def target_dir(self) -> Path:
+        """Where the result ends up (the timestamped folder name is decided at run time)."""
+        return input_results_dir(self.files) if self.output_root is None else self.output_root
+
     def run(self, output_dir: Optional[Path] = None) -> RunResult:
-        stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = Path(output_dir) if output_dir else self.output_root / f"{_slug(self.resolved.name)}_{stamp}"
+        final_dir = None
+        if output_dir:
+            out_dir = Path(output_dir)
+        elif self.output_root is None:
+            # build next to the old result, then swap, so a failed run never leaves a half-written folder
+            final_dir = input_results_dir(self.files)
+            if final_dir.exists() and not _is_ours(final_dir):
+                raise RuntimeError(f"{final_dir} exists but was not written by KPI Studio; "
+                                   "rename or move it, or choose a custom output folder")
+            out_dir = final_dir.with_name(f"{final_dir.name}.tmp-{os.getpid()}")
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+        else:
+            stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = self.output_root / f"{_slug(self.resolved.name)}_{stamp}"
         out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / OUTPUT_MARKER).write_text("Written by KPI Studio; replaced by the next run.\n", encoding="utf-8")
+        result = self._run_into(out_dir)
+        if final_dir is not None:
+            if result.cancelled:  # keep the previous complete result rather than a partial one
+                shutil.rmtree(out_dir, ignore_errors=True)
+                return RunResult(final_dir, None, {}, None, result.outcomes, True)
+            result = self._swap_into(out_dir, final_dir, result)
+        return result
+
+    @staticmethod
+    def _swap_into(tmp: Path, final: Path, result: "RunResult") -> "RunResult":
+        old = None
+        if final.exists():
+            old = final.with_name(f"{final.name}.old-{os.getpid()}")
+            if old.exists():
+                shutil.rmtree(old)
+            final.rename(old)
+        tmp.rename(final)
+        if old is not None:
+            shutil.rmtree(old, ignore_errors=True)
+
+        def moved(p):
+            return None if p is None else str(final / Path(p).relative_to(tmp))
+
+        result.output_dir = final
+        result.excel = None if result.excel is None else Path(moved(result.excel))
+        result.dashboard = moved(result.dashboard)
+        result.plots = {k: moved(v) for k, v in result.plots.items()}
+        return result
+
+    def _run_into(self, out_dir: Path) -> RunResult:
 
         outcomes = self._process_all()
         cancelled = self.cancel.is_set()

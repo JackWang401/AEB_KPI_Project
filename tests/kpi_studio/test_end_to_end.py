@@ -54,3 +54,30 @@ def test_cli_validate_and_run(mf4_dir, tmp_path, capsys):
     assert main(["validate", str(PROFILE)]) == 0
     assert main(["run", str(PROFILE), str(folder), "-o", str(tmp_path / "o")]) == 0
     assert "Recordings OK: 2/2" in capsys.readouterr().out
+
+
+def test_results_next_to_input_are_replaced(mf4_dir):
+    from src.kpi_studio.app.run_service import OUTPUT_MARKER, input_results_dir
+
+    folder, _ = mf4_dir
+    files = [str(folder / "a.mf4"), str(folder / "b.mf4")]
+    target = input_results_dir(files)
+    assert target == folder.resolve() / "kpi_results"
+    first = RunService(PROFILE, files, None).run()
+    assert first.output_dir == target and (target / "kpi_results.xlsx").exists()
+    assert (target / OUTPUT_MARKER).exists() and first.dashboard.startswith(str(target))
+    (target / "stale.txt").write_text("from the previous run")
+    second = RunService(PROFILE, files, None).run()
+    assert second.output_dir == target and not (target / "stale.txt").exists()  # replaced, not merged
+    assert sorted(p.name for p in folder.iterdir() if p.name.startswith("kpi_results")) == ["kpi_results"]
+
+
+def test_foreign_folder_named_kpi_results_is_not_deleted(mf4_dir):
+    folder, _ = mf4_dir
+    files = [str(folder / "a.mf4")]
+    mine = folder / "kpi_results"
+    mine.mkdir()
+    (mine / "notes.txt").write_text("user data")
+    with pytest.raises(RuntimeError, match="not written by KPI Studio"):
+        RunService(PROFILE, files, None).run()
+    assert (mine / "notes.txt").exists()

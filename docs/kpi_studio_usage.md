@@ -26,8 +26,10 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    The ▾ list of every condition field (start, end, moments) starts with the same
    *Build condition…*, so one method serves all three. *Run preview* evaluates the profile on one file and draws the
    window and moments. *Save KPI to library* shares a KPI between profiles.
-4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. The output
-   folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved
+4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. By default the
+   result goes to `kpi_results/` next to the input MF4 files and replaces the previous
+   result there (one result per data folder); pick *Custom folder* for timestamped runs.
+   The output folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved
    profile used for the run.
 
 ## Command line
@@ -41,6 +43,8 @@ python -m src.kpi_studio.cli tools     [--kind moment]
 ```
 
 Example: `python -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi.yaml rec1.mf4 rec2.mf4`
+writes `kpi_results/` next to the MF4 files (replaced each run); `-o OUT` writes a new
+timestamped folder under OUT instead.
 
 ## Toolbox
 

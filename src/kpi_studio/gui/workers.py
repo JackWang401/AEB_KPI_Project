@@ -79,7 +79,7 @@ class RunWorker(QThread):
     finished_ok = Signal(object)  # RunResult
     failed = Signal(str)
 
-    def __init__(self, profile, files: list[str], output_root: str, workers: int, base_dir=None,
+    def __init__(self, profile, files: list[str], output_root, workers: int, base_dir=None,
                  indexes=None, combine: bool = True, parent=None):
         super().__init__(parent)
         self.profile = profile
