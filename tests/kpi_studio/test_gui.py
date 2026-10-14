@@ -444,3 +444,22 @@ def test_add_derived_through_the_builder(qtbot, window, mf4_dir, monkeypatch):
     assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "unit": "km/h"}
     window.state.validate_now()
     assert "vKph" in {n for n, _ in window.state.compiled.derived}
+
+
+def test_renaming_a_signal_updates_events_and_kpis(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["signals"]["motType"] = {"channels": ["speedESC"]}
+    state.data["events"]["served"] = {"start": "rising(motType == 3)", "end": "falling(motType == 3)",
+                                      "moments": {"m1": {"first": "rising(motType == 3)"}}}
+    state.data["kpis"].append({"name": "spd", "event": "served", "value": "motType", "at": "m1"})
+    state.edited(structure=True)
+    state.validate_now()
+    page = window.signals_page
+    row = next(r for r in range(page.sig_table.rowCount()) if page.sig_table.item(r, 0).text() == "motType")
+    page.sig_table.item(row, 0).setText("motTypeSrvd")
+    ev = state.data["events"]["served"]
+    assert ev["start"] == "rising(motTypeSrvd == 3)" and ev["moments"]["m1"]["first"] == "rising(motTypeSrvd == 3)"
+    assert state.data["kpis"][-1]["value"] == "motTypeSrvd"
+    state.validate_now()
+    assert state.compiled is not None, [str(i) for i in state.issues]

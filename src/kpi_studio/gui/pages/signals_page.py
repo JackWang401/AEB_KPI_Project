@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio.core.model import derived_to_yaml, signal_units
+from src.kpi_studio.core.rename import rename_signal_references
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import ExprEdit, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
@@ -171,6 +172,7 @@ class SignalsPage(QWidget):
         state.profile_changed.connect(self.refresh_all)
         state.validated.connect(self.refresh_signals_if_imports)
         self._shown_resolved_sig = None
+        self.last_rename = None
         self.refresh_all()
 
     # ------------------------------------------------------------------ channels
@@ -299,8 +301,10 @@ class SignalsPage(QWidget):
         d = sigs[name]
         col, text = item.column(), item.text().strip()
         if col == 0:
-            if text and text != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", text) and text not in sigs:
-                sigs[text] = sigs.pop(name)
+            if text and text != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", text) \
+                    and text not in self.state.signal_names():
+                self.state.data["signals"] = {(text if k == name else k): v for k, v in sigs.items()}  # keep order
+                self._renamed(name, text)
             self.state.edited(structure=True)
             return
         if col == 1:
@@ -402,8 +406,10 @@ class SignalsPage(QWidget):
         if item.column() == 0:
             new = item.text().strip()
             derived = self.state.data.setdefault("derived", {})
-            if new and new != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new) and new not in derived:
-                derived[new] = derived.pop(name)
+            if new and new != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new) \
+                    and new not in self.state.signal_names():
+                self.state.data["derived"] = {(new if k == name else k): v for k, v in derived.items()}
+                self._renamed(name, new)
                 self.state.edited(structure=True)
         elif item.column() in (2, 3):
             key = "unit" if item.column() == 2 else "description"
@@ -447,7 +453,18 @@ class SignalsPage(QWidget):
         # keep the table order when renaming
         self.state.data["derived"] = {(v["name"] if k == name else k): (derived_to_yaml(v) if k == name else d)
                                       for k, d in derived.items()}
+        if v["name"] != name:
+            self._renamed(name, v["name"])
         self.state.edited(structure=True)
+
+    def _renamed(self, old: str, new: str):
+        """Point every expression, moment, KPI and plot that used `old` at `new`."""
+        n = rename_signal_references(self.state.data, old, new)
+        self.last_rename = (old, new, n)
+        win = self.window()
+        if n and hasattr(win, "statusBar"):
+            win.statusBar().showMessage(f"Renamed {old} → {new}: updated {n} place{'s' if n != 1 else ''} "
+                                        f"in derived signals, events, KPIs and plots", 10000)
 
     def delete_derived(self):
         rows = sorted({i.row() for i in self.der_table.selectedIndexes()}, reverse=True)
