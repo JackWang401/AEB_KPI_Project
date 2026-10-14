@@ -203,6 +203,39 @@ def resolve_imports(profile: Profile, base_dir: Optional[Path]) -> Profile:
         raise ProfileError(_validation_issues(exc, "resolved profile")) from None
 
 
+def inline_libraries(data: dict, base_dir: Optional[Path]) -> dict:
+    """Copy everything a profile takes from libraries into the profile itself.
+
+    The result has no `imports` and no `use:` entries; library events lose their
+    '<library>.' prefix (kept only when two would clash). Libraries that cannot be
+    found are dropped together with their `use:` entries."""
+    data = copy.deepcopy(data)
+    if not data.get("imports") and not any(isinstance(k, dict) and k.get("use") for k in data.get("kpis") or []):
+        return data
+    try:
+        resolved = resolve_imports(parse_profile(data, "profile"), base_dir)
+        flat = resolved.model_dump(by_alias=True, exclude_none=True)
+        flat = {k: flat[k] for k in ("signals", "derived", "events", "kpis") if k in flat}
+    except ProfileError:
+        flat = {"kpis": [k for k in data.get("kpis") or [] if not (isinstance(k, dict) and k.get("use"))]}
+    data.update(flat)
+    data["imports"] = []
+    events = data.get("events") or {}
+    plain: dict[str, str] = {}
+    for name in list(events):
+        if "." in name:
+            short = name.split(".", 1)[1]
+            if short in events or short in plain.values():
+                short = name.replace(".", "_")
+            plain[name] = short
+    if plain:
+        data["events"] = {plain.get(k, k): v for k, v in events.items()}
+        for item in (data.get("kpis") or []) + (data.get("plots") or []):
+            if isinstance(item, dict) and item.get("event") in plain:
+                item["event"] = plain[item["event"]]
+    return data
+
+
 # ----------------------------------------------------------------------------- profiles
 def parse_profile(data: dict, where: str = "profile") -> Profile:
     data = _migrate(copy.deepcopy(data), where)

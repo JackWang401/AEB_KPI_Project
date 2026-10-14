@@ -26,16 +26,16 @@ def _load(qtbot, w, mf4_dir):
     folder, _ = mf4_dir
     w.files_page.add_files([str(folder / "a.mf4"), str(folder / "b.mf4")])
     qtbot.waitUntil(lambda: len(w.state.indexes) == 2, timeout=10000)
-    w.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")
+    w.open_profile(profile_store.builtin_profile_dir() / "aeb_example.kpi.yaml")
 
 
 def test_load_profile_and_files(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
     assert window.signals_page.tree.topLevelItemCount() > 0
-    assert window.kpi_page.kpis.item(1).text() == "aeb_core.aeb.peakDecel"  # event.kpi
-    assert window.signals_page.sig_table.rowCount() >= 9  # library signals shown
-    assert window.kpi_page.kpis.count() == 2  # use: aeb_core.* + peakDecel
+    assert window.kpi_page.kpis.count() == 26
+    assert window.kpi_page.kpis.item(25).text() == "aeb.peakDecel"  # event.kpi
+    assert window.signals_page.sig_table.rowCount() >= 9
 
 
 def test_edit_event_and_kpi_validates(qtbot, window, mf4_dir):
@@ -61,7 +61,7 @@ def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     _load(qtbot, window, mf4_dir)
     viewer = window.viewer
     assert window.kpi_page.viewer is viewer and window.signals_page.viewer is viewer
-    viewer.set_event("aeb_core.aeb")
+    viewer.set_event("aeb")
     viewer.run_preview()
     qtbot.waitUntil(lambda: bool(viewer.preview is not None and viewer.preview_worker is None
                                  and viewer.worker is None), timeout=20000)
@@ -132,7 +132,7 @@ def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
     files = _split_recording(tmp_path)
     window.files_page.add_files(files)
     qtbot.waitUntil(lambda: len(window.state.indexes) == 2, timeout=10000)
-    window.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")
+    window.open_profile(profile_store.builtin_profile_dir() / "aeb_example.kpi.yaml")
     assert len(window.state.recordings()) == 1
     assert window.files_page.table.item(0, 1).text() == "AADT-1_002"
     viewer = window.signals_page.viewer
@@ -623,7 +623,11 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert state.compiled is not None, [str(i) for i in state.issues]
 
 
-def test_no_libraries_controls(qtbot, window, mf4_dir):
-    _load(qtbot, window, mf4_dir)  # the example imports vehicle + aeb_core: still loaded, no controls shown
-    assert window.signals_page.lib_row.isHidden() and window.kpi_page.lib_btn.isHidden()
-    assert window.state.compiled is not None
+def test_library_profile_opens_self_contained(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")  # imports vehicle + aeb_core
+    data = window.state.data
+    assert data["imports"] == [] and not any("use" in k for k in data["kpis"])
+    assert "aeb" in data["events"] and len(data["kpis"]) == 26 and "egoSpeed" in data["signals"]
+    assert window.state.dirty  # saving writes the copied-in definitions
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]

@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import copy
 import re
-from pathlib import Path
 
-import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
-    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -23,7 +18,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -32,8 +26,6 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -42,7 +34,6 @@ from src.kpi_studio import toolbox
 from src.kpi_studio.core.model import (
     BUILTIN_MOMENTS,
     KpiDef,
-    derived_to_yaml,
     signal_units,
 )
 from src.kpi_studio.core.rename import rename_kpi, rename_moment
@@ -56,7 +47,6 @@ from src.kpi_studio.gui.widgets.common import (
     format_options,
     parse_options,
 )
-from src.kpi_studio.io import profile_store
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
@@ -680,60 +670,6 @@ class KpiForm(QWidget):
         self.status.setText("<span style='color:#e34948'>" + "<br>".join(msgs) + "</span>" if msgs else "")
 
 
-# ============================================================================ library dialogs
-class LibraryPicker(QDialog):
-    def __init__(self, base_dir, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add KPIs from a library")
-        self.resize(560, 520)
-        lay = QVBoxLayout(self)
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["KPI", "Event", "Description"])
-        lay.addWidget(self.tree)
-        dirs = [profile_store.builtin_library_dir()] + ([Path(base_dir)] if base_dir else [])
-        seen = set()
-        for d in dirs:
-            for path in sorted(d.glob("*" + profile_store.LIBRARY_SUFFIX)):
-                try:
-                    lib = profile_store.load_library(path)
-                except Exception:  # noqa: BLE001
-                    continue
-                if lib.name in seen or not lib.kpis:
-                    continue
-                seen.add(lib.name)
-                top = QTreeWidgetItem([lib.name, "", lib.description])
-                top.setFlags(top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
-                top.setCheckState(0, Qt.Unchecked)
-                top.setData(0, Qt.UserRole, (lib.name, str(path), None))
-                for k in lib.kpis:
-                    item = QTreeWidgetItem([k.name, k.event or "", k.description])
-                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                    item.setCheckState(0, Qt.Unchecked)
-                    item.setData(0, Qt.UserRole, (lib.name, str(path), k.name))
-                    top.addChild(item)
-                self.tree.addTopLevelItem(top)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
-
-    def selection(self) -> list[tuple[str, str, str]]:
-        """[(library, path, kpi or '*')]"""
-        out = []
-        for i in range(self.tree.topLevelItemCount()):
-            top = self.tree.topLevelItem(i)
-            lib, path, _ = top.data(0, Qt.UserRole)
-            if top.checkState(0) == Qt.Checked:
-                out.append((lib, path, "*"))
-                continue
-            for j in range(top.childCount()):
-                ch = top.child(j)
-                if ch.checkState(0) == Qt.Checked:
-                    out.append((lib, path, ch.data(0, Qt.UserRole)[2]))
-        return out
-
-
-# ============================================================================ page
 class KpiPage(QWidget):
     def __init__(self, state: AppState, parent=None, viewer=None):
         super().__init__(parent)
@@ -774,15 +710,6 @@ class KpiPage(QWidget):
         self.up, self.down = QPushButton("↑"), QPushButton("↓")
         krow = header("KPIs", [(self.add_kpi, "Add a KPI"), (self.del_kpi, "Delete the selected KPI"),
                                (self.up, "Move up"), (self.down, "Move down")])
-        self.lib_btn = QPushButton("Library")
-        self.lib_btn.setFixedHeight(26)
-        self.lib_btn.setStyleSheet("QPushButton { padding: 0 8px; }")
-        lib_menu = QMenu(self.lib_btn)
-        self.from_lib = lib_menu.addAction("Add KPIs from a library…")
-        self.to_lib = lib_menu.addAction("Save the selected KPI to a library…")
-        self.lib_btn.setMenu(lib_menu)
-        krow.insertWidget(2, self.lib_btn)
-        self.lib_btn.setVisible(False)  # libraries are not offered in the GUI
         ll.addLayout(krow)
         self.kpis = QListWidget()
         self.kpis.setMinimumHeight(60)
@@ -832,8 +759,6 @@ class KpiPage(QWidget):
         self.del_kpi.clicked.connect(self.delete_kpi)
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
-        self.from_lib.triggered.connect(self.add_from_library)
-        self.to_lib.triggered.connect(self.save_to_library)
 
         state.profile_changed.connect(self.refresh)
         state.validated.connect(self.on_validated)
@@ -975,80 +900,6 @@ class KpiPage(QWidget):
             target.insert_text(snippet)
             target.setFocus()
             target.editingFinished.emit()
-
-    # ------------------------------------------------------------------ libraries
-    def add_from_library(self):
-        dlg = LibraryPicker(self.state.base_dir, self)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        imports = self.state.data.setdefault("imports", [])
-        kpis = self.state.data.setdefault("kpis", [])
-        for lib, path, kname in dlg.selection():
-            ref = lib if Path(path).parent == profile_store.builtin_library_dir() else path
-            if ref not in imports:
-                imports.append(ref)
-            if lib != "vehicle" and "vehicle" not in imports and Path(path).parent == profile_store.builtin_library_dir():
-                imports.insert(0, "vehicle")
-            use = f"{lib}.{kname}"
-            if not any(k.get("use") == use for k in kpis):
-                kpis.append({"use": use})
-        self.state.edited(structure=True)
-
-    def save_to_library(self):
-        row = self.kpis.currentRow()
-        cp = self.state.compiled
-        if row < 0 or self.state.data["kpis"][row].get("use"):
-            QMessageBox.information(self, "Save to library", "Select one of your own KPIs first.")
-            return
-        if cp is None:
-            QMessageBox.warning(self, "Save to library", "Fix the profile errors first (see the issues panel).")
-            return
-        kdict = copy.deepcopy(self.state.data["kpis"][row])
-        start = str(self.state.base_dir or Path.home())
-        path, _ = QFileDialog.getSaveFileName(self, "Save KPI to library", start,
-                                              "KPI library (*.kpi-lib.yaml)")
-        if not path:
-            return
-        if not path.endswith(profile_store.LIBRARY_SUFFIX):
-            path += profile_store.LIBRARY_SUFFIX
-        p = Path(path)
-        lib = yaml.safe_load(p.read_text()) if p.exists() else {"schema_version": 1, "name": p.name.split(".")[0]}
-        lib.setdefault("signals", {})
-        lib.setdefault("derived", {})
-        lib.setdefault("events", {})
-        lib.setdefault("kpis", [])
-        ev_name = kdict.get("event", "")
-        if "." in ev_name:
-            QMessageBox.warning(self, "Save to library", "This KPI uses an event from another library; "
-                                                         "only KPIs on your own events can be saved.")
-            return
-        ev = cp.events[ev_name]
-        deps = set()
-        for c in [ev.start, ev.end, *ev.preset_inputs] + [m.expr for m in ev.moments.values()]:
-            if c is not None:
-                deps |= set(c.deps)
-        ck = next(k for k in cp.kpis if k.defn.name == kdict["name"])
-        for c in (ck.value, ck.of):
-            if c is not None and ck.defn.form != "formula":
-                deps |= set(c.deps)
-        derived = dict(cp.derived)
-        todo = list(deps)
-        while todo:
-            n = todo.pop()
-            if n in derived and n not in lib["derived"]:
-                lib["derived"][n] = derived_to_yaml(cp.profile.derived[n])
-                todo += list(derived[n].deps)
-            elif n in cp.profile.signals and n not in lib["signals"]:
-                lib["signals"][n] = cp.profile.signals[n].model_dump(exclude_none=True)
-        lib["events"][ev_name] = copy.deepcopy(self.state.data["events"][ev_name])
-        lib["kpis"] = [k for k in lib["kpis"] if k.get("name") != kdict["name"]] + [kdict]
-        try:
-            profile_store.atomic_write_text(p, yaml.safe_dump(lib, sort_keys=False))
-            profile_store.load_library(p)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Save to library", f"Saved, but the library does not validate: {exc}")
-            return
-        QMessageBox.information(self, "Save to library", f"Saved '{kdict['name']}' to {p.name}.")
 
     def on_validated(self):
         if self.stack.currentWidget() is self.kpi_form:

@@ -1,0 +1,321 @@
+# Example profile: AEB activations - trigger speed, latency, stopping and driver inputs.
+# Run:  python -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_example.kpi.yaml <files or folder>
+schema_version: 1
+name: AEB example
+description: AEB activations - trigger speed, latency, stopping and driver inputs
+timebase:
+  rate_hz: 100.0
+signals:
+  egoSpeed:
+    channels:
+    - vehicleIOActuationFeedback::speedESC
+    - VehicleSpeed
+    - egoSpeed
+    unit: m/s
+    kind: continuous
+    required: true
+  longActAccel:
+    channels:
+    - imuFrame::acceleration[0]
+    - A2
+    - longActAccel
+    unit: m/s^2
+    kind: continuous
+    required: true
+  latActAccel:
+    channels:
+    - imuFrame::acceleration[1]
+    - A1
+    - latActAccel
+    unit: m/s^2
+    kind: continuous
+    required: false
+  throttleValue:
+    channels:
+    - vehicleIOActuationFeedback::throttle_value
+    - PedalPosPro
+    - throttleValue
+    unit: '%'
+    kind: continuous
+    required: false
+  steerWheelAngle:
+    channels:
+    - vehicleIOActuationFeedback::steering_wheel_angle
+    - SteeringWheelAngle
+    - steerWheelAngle
+    unit: rad
+    kind: continuous
+    required: false
+  steerWheelAngleSpeed:
+    channels:
+    - vehicleIOstate::steering_wheel_angle_speed
+    - SteeringWheelAngleSpeed
+    - steerWheelAngleSpeed
+    unit: rad/s
+    kind: continuous
+    required: false
+  yawRate:
+    channels:
+    - imuFrame::turnrate[2]
+    - YawRate
+    - yawRate
+    unit: rad/s
+    kind: continuous
+    required: false
+  aebTargetDecel:
+    channels:
+    - vehicleIOASILCommandE2EWrapper::payload/long_ctrl_accel_request
+    - DADCAxLmtIT4
+    - aebTargetDecel
+    unit: m/s^2
+    kind: continuous
+    required: false
+  longGap:
+    channels:
+    - aebStateInfo::aeb_state_info/aeb_full_state_info/longitudinal_clearance
+    - longGap
+    unit: m
+    kind: continuous
+    required: false
+derived:
+  egoSpeedKph:
+    expr: to_kph(egoSpeed)
+  longActAccelFlt:
+    expr: lowpass(longActAccel, 10)
+  latActAccelFlt:
+    expr: lowpass(latActAccel, 10)
+  longJerk:
+    expr: jerk(longActAccelFlt)
+  steerWheelAngleDeg:
+    expr: to_deg(steerWheelAngle)
+  steerWheelAngleSpeedDeg:
+    expr: to_deg(steerWheelAngleSpeed)
+  yawRateDeg:
+    expr: to_deg(yawRate)
+events:
+  aeb:
+    description: Target decel request below PB level until release or vehicle stop (find_aeb_intv_start/end)
+    preset:
+      name: target_decel_window
+      of:
+      - aebTargetDecel
+      - egoSpeed
+      start_level: -6.0
+      tol: 0.1
+      end_level: -4.9
+      stop_speed: 0.0
+    min_duration: 0.0
+    merge_gap: 0.0
+    window:
+      pre: 3.0
+      post: 10.0
+    moments:
+      veh_response:
+        decel_onset: longJerk
+        threshold: -25.0
+        after: start
+        within: 0.3
+      stop:
+        vehicle_stop: egoSpeed
+        threshold: 0.0
+        after: start
+      first_det:
+        first_nonzero: longGap
+        before: end
+      stable_det:
+        last_segment_start: longGap != 0
+        before: end
+kpis:
+- name: aebIntvStartTime
+  event: aeb
+  unit: s
+  value: time
+  at: start
+- name: aebIntvEndTime
+  event: aeb
+  unit: s
+  value: time
+  at: end
+- name: intvDur
+  event: aeb
+  unit: s
+  duration:
+  - start
+  - end
+- name: isVehStopped
+  event: aeb
+  reduce: any
+  of: egoSpeed <= 0
+  between:
+  - start
+  - end
+- name: vehSpd
+  event: aeb
+  unit: km/h
+  value: egoSpeedKph
+  at: start
+- name: firstDetDist
+  event: aeb
+  unit: m
+  value: longGap
+  at: first_det
+- name: stableDetDist
+  event: aeb
+  unit: m
+  value: longGap
+  at: stable_det
+- name: aebIntvDist
+  event: aeb
+  unit: m
+  value: longGap
+  at: start
+- name: aebStopGap
+  event: aeb
+  unit: m
+  value: longGap
+  at: end
+- name: pedalPosAtStart
+  event: aeb
+  unit: '%'
+  value: throttleValue
+  at: start
+- name: pedalPosMax
+  event: aeb
+  unit: '%'
+  reduce: max
+  of: throttleValue
+  between:
+  - start
+  - window_end
+- name: pedalPosInc
+  event: aeb
+  unit: '%'
+  formula: pedalPosMax - pedalPosAtStart
+- name: isPedalOnAtStrt
+  event: aeb
+  formula: pedalPosAtStart != 0
+- name: absSteerMaxDeg
+  event: aeb
+  unit: deg
+  reduce: abs_max
+  of: steerWheelAngleDeg
+- name: absSteerRateMaxDeg
+  event: aeb
+  unit: deg/s
+  reduce: abs_max
+  of: steerWheelAngleSpeedDeg
+- name: absYawRateMaxDeg
+  event: aeb
+  unit: deg/s
+  reduce: abs_max
+  of: yawRateDeg
+- name: absLatAccelMax
+  event: aeb
+  unit: m/s^2
+  reduce: abs_max
+  of: latActAccelFlt
+- name: isPBOn
+  event: aeb
+  reduce: any
+  of: in_band(aebTargetDecel, -6.0, 0.2)
+  between:
+  - start
+  - window_end
+- name: isFBOn
+  event: aeb
+  reduce: any
+  of: in_band(aebTargetDecel, -15.0, 0.2)
+  between:
+  - start
+  - window_end
+- name: pbTime
+  event: aeb
+  unit: s
+  reduce: time_true
+  of: in_band(aebTargetDecel, -6.0, 0.2)
+  between:
+  - start
+  - window_end
+- name: fbTime
+  event: aeb
+  unit: s
+  reduce: time_true
+  of: in_band(aebTargetDecel, -15.0, 0.2)
+  between:
+  - start
+  - window_end
+- name: aebSysRespTime
+  event: aeb
+  unit: s
+  value: time
+  at: veh_response
+- name: aebDeadTime
+  event: aeb
+  unit: s
+  duration:
+  - start
+  - veh_response
+- name: aebAverageAccel
+  event: aeb
+  unit: m/s^2
+  reduce: time_mean
+  of: longActAccel
+  between:
+  - veh_response
+  - stop
+- name: aebStopDistance
+  event: aeb
+  unit: m
+  reduce: distance
+  of: egoSpeed
+  between:
+  - veh_response
+  - stop
+- name: peakDecel
+  event: aeb
+  unit: m/s^2
+  reduce: min
+  of: longActAccelFlt
+  between:
+  - start
+  - end
+plots:
+- type: scatter
+  title: Stop distance vs trigger speed
+  x: vehSpd
+  y: aebStopDistance
+  color_by: file
+  group_by: file
+  show_window: true
+  show_moments: true
+  max_figures: 50
+- type: scatter
+  title: Dead time vs trigger speed
+  x: vehSpd
+  y: aebDeadTime
+  color_by: file
+  group_by: file
+  show_window: true
+  show_moments: true
+  max_figures: 50
+- type: box
+  title: Average decel per file
+  y: aebAverageAccel
+  color_by: file
+  group_by: file
+  show_window: true
+  show_moments: true
+  max_figures: 50
+- type: timeseries
+  title: AEB activation
+  color_by: file
+  group_by: file
+  event: aeb
+  signals:
+  - egoSpeedKph
+  - aebTargetDecel
+  - longActAccelFlt
+  - longJerk
+  show_window: true
+  show_moments: true
+  max_figures: 30

@@ -9,14 +9,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -34,7 +32,6 @@ from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
-from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
 
 LIB_COLOR = QColor("#6b6b66")
@@ -139,32 +136,11 @@ class SignalsPage(QWidget):
         ll.addWidget(self.tree, 1)
         split.addWidget(left)
 
-        # ---- right: libraries, profile signals, derived signals
+        # ---- right: profile signals, derived signals
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
-
-        # libraries are not offered in the GUI (a profile that imports one still loads it); never shown
-        self.lib_row = QWidget()
-        imp = QHBoxLayout(self.lib_row)
-        imp.setContentsMargins(0, 0, 0, 0)
-        imp.addWidget(title("Libraries", "Libraries this profile imports; select one and press Remove"))
-        self.imports = QListWidget()
-        self.imports.setFixedHeight(28)
-        self.imports.setFlow(QListWidget.LeftToRight)
-        self.imports.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.imports.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.imports.setStyleSheet("QListWidget::item { padding: 1px 8px; }")
-        imp.addWidget(self.imports, 1)
-        self.lib_combo = QComboBox()
-        self.lib_combo.addItems(sorted(p.name.split(".")[0] for p in profile_store.builtin_library_dir().glob("*.kpi-lib.yaml")))
-        self.lib_add = QPushButton("Import")
-        self.lib_remove = QPushButton("Remove")
-        self.lib_combo.setVisible(False)
-        self.lib_add.setVisible(False)
-        imp.addWidget(self.lib_remove)
-        rl.addWidget(self.lib_row)
 
         vsplit = QSplitter(Qt.Vertical)
         rl.addWidget(vsplit, 1)
@@ -174,10 +150,7 @@ class SignalsPage(QWidget):
         sl.setContentsMargins(0, 0, 0, 0)
         sl.setSpacing(4)
         row = QHBoxLayout()
-        row.addWidget(title("Signals", "Grey rows come from an imported library; editing one overrides it here"))
-        hint = QLabel("grey rows come from a library")
-        hint.setObjectName("hint")
-        row.addWidget(hint)
+        row.addWidget(title("Signals", "Signals this profile reads from the files"))
         row.addStretch(1)
         self.del_sig_btn = QPushButton("Delete")
         self.del_sig_btn.setToolTip("Delete the selected signals")
@@ -237,8 +210,6 @@ class SignalsPage(QWidget):
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
         self.sig_table.itemDoubleClicked.connect(self._enum_double_clicked)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
-        self.lib_add.clicked.connect(self.add_import)
-        self.lib_remove.clicked.connect(self.remove_import)
 
         state.files_changed.connect(self.refresh_channels)
         state.files_changed.connect(self.refresh_signals)
@@ -356,9 +327,6 @@ class SignalsPage(QWidget):
     # ------------------------------------------------------------------ signals table
     def refresh_all(self):
         self._loading = True
-        self.imports.clear()
-        self.imports.addItems(self.state.data.get("imports", []) or [])
-        self.lib_row.setVisible(False)  # libraries are not offered in the GUI
         self._loading = False
         self.refresh_signals()
         self.refresh_derived()
@@ -630,20 +598,6 @@ class SignalsPage(QWidget):
         for r in rows:
             derived.pop(self.der_table.item(r, 0).data(Qt.UserRole), None)
         if rows:
-            self.state.edited(structure=True)
-
-    # ------------------------------------------------------------------ imports
-    def add_import(self):
-        lib = self.lib_combo.currentText()
-        imports = self.state.data.setdefault("imports", [])
-        if lib and lib not in imports:
-            imports.append(lib)
-            self.state.edited(structure=True)
-
-    def remove_import(self):
-        item = self.imports.currentItem()
-        if item:
-            self.state.data["imports"] = [i for i in self.state.data.get("imports", []) if i != item.text()]
             self.state.edited(structure=True)
 
 

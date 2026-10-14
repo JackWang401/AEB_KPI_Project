@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
 
     def open_example(self):
         if self._confirm_discard():
-            self.open_profile(profile_store.builtin_profile_dir() / "aeb_basic.kpi.yaml")
+            self.open_profile(profile_store.builtin_profile_dir() / "aeb_example.kpi.yaml")
             self.state.path = None  # save-as to keep the example untouched
             self._update_title()
 

@@ -78,11 +78,12 @@ class AppState(QObject):
             profile_store.parse_profile(data, str(path))
         except ProfileError as exc:  # an unfinished draft: open it, the issues show in Profile check
             self.load_error = str(exc)
+        flat = profile_store.inline_libraries(data, path.parent)  # KPI Studio has no libraries
         merged = copy.deepcopy(NEW_PROFILE)
-        merged.update(data)
+        merged.update(flat)
         self.data = merged
         self.path = path
-        self._set_dirty(False)
+        self._set_dirty(flat != data)
         self.profile_changed.emit()
         self.validate_now()
 
