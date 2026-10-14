@@ -309,3 +309,20 @@ def test_moment_rule_options_and_build_action(qtbot, window, mf4_dir, monkeypatc
     cell.picker._pick(first)
     m1 = form.ev["moments"]["m1"]
     assert m1.get("first") == "rising(egoSpeed == 3)" and "level" not in m1 and m1["after"] == "start"
+
+
+def test_unfinished_profile_saves_as_draft_and_reopens(qtbot, window, tmp_path):
+    state = window.state
+    state.data["kpis"] = [{"name": "kpi2", "event": "missing_event"}]  # no value/duration/... yet
+    path = tmp_path / "draft.kpi.yaml"
+    import pytest
+
+    from src.kpi_studio.core.validate import ProfileError
+
+    with pytest.raises(ProfileError):
+        state.save(path)
+    state.save_draft(path)
+    assert path.read_text().startswith("# Draft") and not state.dirty
+    window.open_profile(path, quiet=True)
+    assert state.load_error and "kpi2" in state.load_error
+    assert state.data["kpis"][0]["name"] == "kpi2" and state.compiled is None

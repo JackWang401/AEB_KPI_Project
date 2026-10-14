@@ -220,6 +220,9 @@ class MainWindow(QMainWindow):
     def open_profile(self, path, quiet=False):
         try:
             self.state.load(path)
+            if self.state.load_error and not quiet:
+                QMessageBox.information(self, "Open profile", "Opened an unfinished profile (draft). "
+                                        "Fix these to run it:\n\n" + self.state.load_error)
         except ProfileError as exc:
             if not quiet:
                 QMessageBox.warning(self, "Open profile", str(exc))
@@ -253,9 +256,17 @@ class MainWindow(QMainWindow):
         try:
             self.state.save(path)
         except ProfileError as exc:
-            QMessageBox.warning(self, "Save profile",
-                                "The profile cannot be saved until these are fixed:\n\n" + str(exc))
-            return False
+            box = QMessageBox(QMessageBox.Warning, "Save profile",
+                              "The profile is not finished yet:\n\n" + str(exc) +
+                              "\n\nSave it as a draft? You can reopen it and keep editing; "
+                              "Run stays blocked until these are fixed.", parent=self)
+            draft = box.addButton("Save draft", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(draft)
+            box.exec()
+            if box.clickedButton() is not draft:
+                return False
+            self.state.save_draft(path)
         self.settings.setValue("profile/last", str(path))
         self._update_title()
         return True

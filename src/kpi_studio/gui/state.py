@@ -41,6 +41,7 @@ class AppState(QObject):
         self.dirty = False
         self.files: list[str] = []
         self.indexes: dict[str, RecordingIndex] = {}
+        self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
         self.combine = True   # read files of the same recording (one per logger/bus) together
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
@@ -66,7 +67,13 @@ class AppState(QObject):
         path = Path(path)
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        profile_store.parse_profile(data, str(path))  # raises ProfileError on schema problems
+        if not isinstance(data, dict):
+            raise ProfileError(f"{path}: not a KPI profile (expected a mapping at the top level)")
+        self.load_error = None
+        try:
+            profile_store.parse_profile(data, str(path))
+        except ProfileError as exc:  # an unfinished draft: open it, the issues show in Profile check
+            self.load_error = str(exc)
         merged = copy.deepcopy(NEW_PROFILE)
         merged.update(data)
         self.data = merged
@@ -81,6 +88,17 @@ class AppState(QObject):
             raise ValueError("no file name")
         profile = self.as_profile()
         profile_store.save_profile(profile, path)
+        self.path = path
+        self._set_dirty(False)
+
+    def save_draft(self, path: Optional[str | Path] = None):
+        """Write the profile as it is, unfinished parts included (Run stays blocked until fixed)."""
+        path = Path(path) if path else self.path
+        if path is None:
+            raise ValueError("no file name")
+        text = "# Draft: this profile still has errors; KPI Studio shows them in Profile check.\n" + \
+            yaml.safe_dump(self.clean_data(), sort_keys=False, allow_unicode=True)
+        profile_store.atomic_write_text(path, text)
         self.path = path
         self._set_dirty(False)
 
