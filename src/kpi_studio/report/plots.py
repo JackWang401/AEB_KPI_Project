@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -131,15 +132,25 @@ def kpi_figure(p: PlotDef, wide: pd.DataFrame, units: dict, files: list[str]) ->
 
 
 def _axes(fig: go.Figure, p: PlotDef) -> None:
-    """User axis titles and ranges override the defaults."""
-    if p.x_label:
-        fig.update_xaxes(title_text=p.x_label)
-    if p.y_label:
-        fig.update_yaxes(title_text=p.y_label)
-    if p.x_range:
-        fig.update_xaxes(range=list(p.x_range))
-    if p.y_range:
-        fig.update_yaxes(range=list(p.y_range))
+    """Apply user ranges; an end left empty is taken from the plotted data (with 5 % margin)."""
+    for axis, rng in (("x", p.x_range), ("y", p.y_range)):
+        if not rng or rng == [None, None]:
+            continue
+        lo, hi = rng
+        if lo is None or hi is None:
+            vals = np.concatenate([np.asarray(getattr(t, axis), dtype=float) for t in fig.data
+                                   if getattr(t, axis, None) is not None] or [np.array([])])
+            vals = vals[np.isfinite(vals)]
+            if not vals.size:
+                continue
+            dmin, dmax = float(vals.min()), float(vals.max())
+            pad = 0.05 * ((max(dmax, hi if hi is not None else dmax) - min(dmin, lo if lo is not None else dmin))
+                          or 1.0)
+            lo = dmin - pad if lo is None else lo
+            hi = dmax + pad if hi is None else hi
+            if not lo < hi:
+                continue
+        (fig.update_xaxes if axis == "x" else fig.update_yaxes)(range=[lo, hi])
 
 
 def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, units: dict) -> go.Figure:

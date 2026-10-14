@@ -348,15 +348,19 @@ def test_plot_axes_dropdowns_and_ranges(qtbot, window, mf4_dir, tmp_path):
 
     dlg = AxesDialog(plot)
     qtbot.addWidget(dlg)
-    dlg.x_label.setText("Stop gap [m]")
+    assert not hasattr(dlg, "x_label")  # titles come from the KPIs
     dlg.ranges["y_range"][0].setText("0")
     dlg.ranges["y_range"][1].setText("50")
+    dlg.ranges["x_range"][0].setText("5")  # max left empty: fits the data
     page.apply_axes(0, dlg.values())
-    assert plot["x_label"] == "Stop gap [m]" and plot["y_range"] == [0.0, 50.0] and "x_range" not in plot
-    dlg.ranges["x_range"][0].setText("5")
+    assert plot["y_range"] == [0.0, 50.0] and plot["x_range"] == [5.0, None]
+    dlg.ranges["x_range"][1].setText("1")
     import pytest
 
-    with pytest.raises(ValueError, match="both min and max"):
+    with pytest.raises(ValueError, match="min must be below max"):
+        dlg.values()
+    dlg.ranges["x_range"][1].setText("abc")
+    with pytest.raises(ValueError, match="not a number"):
         dlg.values()
     window.state.validate_now()
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
@@ -364,15 +368,17 @@ def test_plot_axes_dropdowns_and_ranges(qtbot, window, mf4_dir, tmp_path):
 
 def test_plot_axes_applied_to_figure():
     import pandas as pd
+    import pytest
 
     from src.kpi_studio.core.model import PlotDef
     from src.kpi_studio.report.plots import kpi_figure
 
-    p = PlotDef(type="scatter", x="a", y="b", x_label="Gap [m]", y_range=[0, 10])
-    wide = pd.DataFrame({"file": ["f"], "event": ["e"], "occurrence": [1], "a": [1.0], "b": [2.0]})
-    fig = kpi_figure(p, wide, {}, ["f"])
-    assert fig.layout.xaxis.title.text == "Gap [m]" and list(fig.layout.yaxis.range) == [0, 10]
-    import pytest
-
+    wide = pd.DataFrame({"file": ["f", "f"], "event": ["e", "e"], "occurrence": [1, 2],
+                         "a": [1.0, 3.0], "b": [2.0, 4.0]})
+    fig = kpi_figure(PlotDef(type="scatter", x="a", y="b", y_range=[0, 10], x_range=[None, 5]), wide, {}, ["f"])
+    assert fig.layout.xaxis.title.text.startswith("a")  # title from the KPI
+    assert list(fig.layout.yaxis.range) == [0, 10]
+    lo, hi = fig.layout.xaxis.range
+    assert hi == 5 and lo < 1.0  # min fitted to the data with a margin
     with pytest.raises(ValueError):
         PlotDef(type="scatter", x="a", y="b", x_range=[5, 1])

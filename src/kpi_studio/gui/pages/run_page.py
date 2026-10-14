@@ -39,24 +39,27 @@ GROUP_BY = ["file", "event"]
 
 
 class AxesDialog(QDialog):
-    """Axis titles and ranges of one plot; empty fields keep the automatic default."""
+    """Axis ranges of one plot. Titles come from the X / Y KPIs; an empty min or max adapts to the data."""
 
     def __init__(self, plot: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Axes")
+        self.setWindowTitle("Axis ranges")
         form = QFormLayout(self)
-        self.x_label, self.y_label = QLineEdit(plot.get("x_label", "")), QLineEdit(plot.get("y_label", ""))
-        self.x_label.setPlaceholderText(f"default: {plot.get('x') or 'KPI name'} [unit]")
-        self.y_label.setPlaceholderText(f"default: {plot.get('y') or 'KPI name'} [unit]")
         self.ranges = {}
-        form.addRow("X axis title", self.x_label)
-        form.addRow("Y axis title", self.y_label)
-        for key, label in (("x_range", "X range"), ("y_range", "Y range")):
+        hint = QLabel("Leave min or max empty to fit the data.")
+        hint.setObjectName("hint")
+        form.addRow(hint)
+        for key, axis in (("x_range", "x"), ("y_range", "y")):
+            label = f"{axis.upper()}: {plot.get(axis) or '(no KPI)'}"
             lo, hi = (plot.get(key) or [None, None])
             row = QHBoxLayout()
             edits = (QLineEdit("" if lo is None else str(lo)), QLineEdit("" if hi is None else str(hi)))
             edits[0].setPlaceholderText("min (auto)")
             edits[1].setPlaceholderText("max (auto)")
+            if axis == "x" and plot.get("type") in ("box", "bar"):
+                for e in edits:
+                    e.setEnabled(False)
+                    e.setPlaceholderText("n/a")
             row.addWidget(edits[0])
             row.addWidget(QLabel("to"))
             row.addWidget(edits[1])
@@ -71,19 +74,22 @@ class AxesDialog(QDialog):
         form.addRow(buttons)
 
     def values(self) -> dict:
-        """{key: value or None}; raises ValueError for a half-filled or inverted range."""
-        out = {"x_label": self.x_label.text().strip() or None, "y_label": self.y_label.text().strip() or None}
+        """{key: [min, max] or None}; an empty end is None. Raises ValueError for bad numbers."""
+        out = {}
         for key, (lo, hi) in self.ranges.items():
-            a, b = lo.text().strip(), hi.text().strip()
-            if not a and not b:
+            ends = []
+            for e, what in ((lo, "min"), (hi, "max")):
+                text = e.text().strip()
+                try:
+                    ends.append(float(text) if text else None)
+                except ValueError:
+                    raise ValueError(f"{key[0].upper()} {what}: '{text}' is not a number") from None
+            if ends == [None, None]:
                 out[key] = None
                 continue
-            if not (a and b):
-                raise ValueError(f"{key.replace('_', ' ')}: give both min and max, or neither")
-            a, b = float(a), float(b)
-            if not a < b:
-                raise ValueError(f"{key.replace('_', ' ')}: min must be below max")
-            out[key] = [a, b]
+            if None not in ends and not ends[0] < ends[1]:
+                raise ValueError(f"{key[0].upper()} range: min must be below max")
+            out[key] = ends
         return out
 
     def _accept(self):
@@ -97,7 +103,7 @@ class AxesDialog(QDialog):
 
 class RunPage(QWidget):
     PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
-                 "Signals (timeseries)", "Axes"]
+                 "Signals (timeseries)", "Axis ranges"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -116,7 +122,7 @@ class RunPage(QWidget):
         self.plots.setHorizontalHeaderLabels(self.PLOT_COLS)
         self.plots.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.plots.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
-        for col, width in ((0, 110), (2, 190), (3, 190), (4, 130), (5, 170), (7, 80)):
+        for col, width in ((0, 110), (2, 190), (3, 190), (4, 130), (5, 170), (7, 100)):
             self.plots.setColumnWidth(col, width)
         pl.addWidget(self.plots)
         prow = QHBoxLayout()
@@ -211,8 +217,8 @@ class RunPage(QWidget):
                 self.plots.removeCellWidget(r, 4)
                 item = QTableWidgetItem("")
                 self.plots.setItem(r, 4, item)
-            axes = QPushButton("Axes…")
-            axes.setToolTip("Axis titles and ranges")
+            axes = QPushButton("Ranges…")
+            axes.setToolTip("Axis ranges (axis titles come from the X / Y KPIs)")
             axes.setEnabled(ptype != "timeseries")
             axes.clicked.connect(lambda *_, row=r: self.edit_axes(row))
             self.plots.setCellWidget(r, 7, axes)
@@ -239,6 +245,8 @@ class RunPage(QWidget):
 
     def apply_axes(self, row: int, values: dict):
         plot = self.state.data["plots"][row]
+        plot.pop("x_label", None)
+        plot.pop("y_label", None)
         for k, v in values.items():
             if v is None:
                 plot.pop(k, None)
