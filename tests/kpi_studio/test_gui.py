@@ -660,3 +660,28 @@ def test_right_click_edits_derived(qtbot, window, mf4_dir):
     table.selectAll()
     menu = page.row_menu(table, pos, page.delete_derived, edit=edited.append)
     assert [a.text() for a in menu.actions()] == [f"Delete {table.rowCount()} rows"]  # Edit is for one row
+
+
+def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
+    from src.kpi_studio.gui.widgets import common
+
+    _load(qtbot, window, mf4_dir)
+    window.state.data.setdefault("events", {})["vc"] = {
+        "start": "egoSpeed > 1", "moments": {"m1": {"first": "egoSpeed > 2", "after": "start"}}}
+    form = window.kpi_page.event_form
+    form.load("vc")
+    table = form.moments
+    texts = lambda m: [a.text() for a in m.actions()]  # noqa: E731
+    from PySide6.QtCore import QPoint
+    blank = form.moment_menu(table.viewport().rect().bottomLeft() + QPoint(5, -5))
+    assert texts(blank) == ["Add moment"]
+    blank.actions()[0].trigger()
+    assert len(form.ev["moments"]) == 2
+    row_menu = form.moment_menu(row=0)
+    assert texts(row_menu) == ["Build condition…", "Delete moment", "", "Add moment"]
+    monkeypatch.setattr(common.ConditionBuilder, "exec", lambda self: common.QDialog.Accepted)
+    monkeypatch.setattr(common.ConditionBuilder, "expression", lambda self: "rising(egoSpeed == 3)")
+    row_menu.actions()[0].trigger()
+    assert form.ev["moments"]["m1"]["first"] == "rising(egoSpeed == 3)"
+    form.moment_menu(row=0).actions()[1].trigger()
+    assert "m1" not in form.ev["moments"] and len(form.ev["moments"]) == 1

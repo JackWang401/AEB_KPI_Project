@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -151,16 +152,6 @@ class EventForm(QWidget):
         hint.setWordWrap(True)
         hint.setObjectName("hint")
         bl.addWidget(hint)
-        mrow = QHBoxLayout()
-        add_m, del_m = QPushButton("Add moment"), QPushButton("Delete moment")
-        build_m = QPushButton("Build condition…")
-        build_m.setToolTip("Build the condition of the selected moment (e.g. 'signal changes to 3'); "
-                           "with no moment selected a new one is added")
-        mrow.addWidget(add_m)
-        mrow.addWidget(del_m)
-        mrow.addWidget(build_m)
-        mrow.addStretch(1)
-        bl.addLayout(mrow)
         lay.addWidget(box, 1)
 
         self.name_edit.editingFinished.connect(self.rename)
@@ -177,9 +168,14 @@ class EventForm(QWidget):
             w.valueChanged.connect(lambda v, k=key: self.set(k, v))
         self.pre.valueChanged.connect(lambda v: self.set_window("pre", v))
         self.post.valueChanged.connect(lambda v: self.set_window("post", v))
-        add_m.clicked.connect(self.add_moment)
-        del_m.clicked.connect(self.delete_moment)
-        build_m.clicked.connect(self.build_moment)
+        # right-click: on a moment, Build condition… / Delete moment; on the blank space, Add moment
+        self.moments.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.moments.customContextMenuRequested.connect(
+            lambda pos: self._exec_menu(self.moment_menu(pos), self.moments.viewport().mapToGlobal(pos)))
+        vh = self.moments.verticalHeader()
+        vh.setContextMenuPolicy(Qt.CustomContextMenu)
+        vh.customContextMenuRequested.connect(
+            lambda pos: self._exec_menu(self.moment_menu(row=vh.logicalIndexAt(pos)), vh.mapToGlobal(pos)))
         self.moments.itemChanged.connect(self.moment_renamed)
         for w in (self.start, self.end):
             w.focused.connect(page.set_target)
@@ -410,21 +406,37 @@ class EventForm(QWidget):
         edit.setText(format_options(opts))
         self.save_moment(row)
 
+    @staticmethod
+    def _exec_menu(menu, global_pos):
+        if menu is not None:
+            menu.exec(global_pos)
+
+    def moment_menu(self, pos=None, row=None):
+        """The right-click menu of the moments table at viewport `pos` (or for `row`)."""
+        if self.name is None:
+            return None
+        if row is None:
+            index = self.moments.indexAt(pos)
+            row = index.row() if index.isValid() else -1
+        menu = QMenu(self.moments)
+        if row < 0:
+            menu.addAction("Add moment").triggered.connect(self.add_moment)
+            return menu
+        if not self.moments.selectionModel().isRowSelected(row, self.moments.rootIndex()):
+            self.moments.selectRow(row)
+        rows = {i.row() for i in self.moments.selectedIndexes()}
+        if len(rows) == 1:
+            menu.addAction("Build condition…").triggered.connect(lambda: self.build_moment_row(row))
+        menu.addAction("Delete moment" if len(rows) == 1 else f"Delete {len(rows)} moments").triggered.connect(
+            self.delete_moment)
+        menu.addSeparator()  # for when the moments fill the table and there is no blank space left
+        menu.addAction("Add moment").triggered.connect(self.add_moment)
+        return menu
+
     def build_moment_row(self, row: int):
         dlg = ConditionBuilder(self.state.signal_names(), self, initial=self.moments.cellWidget(row, 2).text())
         if dlg.exec() == QDialog.Accepted and dlg.expression():
             self.apply_moment_condition(row, dlg.expression())
-
-    def build_moment(self):
-        if self.name is None:
-            return
-        rows = sorted({i.row() for i in self.moments.selectedIndexes()})
-        row = rows[0] if rows else (self.moments.currentRow() if self.moments.currentRow() >= 0 else None)
-        initial = self.moments.cellWidget(row, 2).text() if row is not None else ""
-        dlg = ConditionBuilder(self.state.signal_names(), self, initial=initial)
-        if dlg.exec() != QDialog.Accepted or not dlg.expression():
-            return
-        self.apply_moment_condition(row, dlg.expression())
 
     def apply_moment_condition(self, row, expression: str):
         """Put `expression` in moment `row` (a new moment when None), using a condition rule."""
