@@ -146,6 +146,19 @@ class FileEvaluator:
             intervals = edges_to_intervals(self.time, start, end)
         return clean_intervals(intervals, ev.defn.merge_gap, ev.defn.min_duration)
 
+    def _why_none(self, ev: CompiledEvent) -> str:
+        """A hint for 'no occurrences': was the start condition ever true?"""
+        if ev.preset is not None or ev.start is None:
+            return ""
+        try:
+            hits = int(as_bool(self.full(ev.start)).sum())
+        except Exception:  # noqa: BLE001
+            return ""
+        if hits == 0:
+            return (f" (the start condition '{ev.defn.start}' is never true in this file; "
+                    f"'==' needs an exact value, use < or > for continuous signals)")
+        return f" (start condition true on {hits} samples, but shorter than 'ignore shorter than')"
+
     # ---- moments
     def resolve_moments(self, ev: CompiledEvent, occ: Occurrence) -> dict[str, object]:
         """name -> time (float) or _MomentFailure."""
@@ -275,7 +288,7 @@ class FileEvaluator:
                 log.debug("event detection failed\n%s", traceback.format_exc())
                 continue
             if not intervals:
-                outcome.issues.append(FileIssue("info", f"event '{ename}': no occurrences"))
+                outcome.issues.append(FileIssue("info", f"event '{ename}': no occurrences" + self._why_none(ev)))
             cap = self.capture.get(ename)
             for i, (s, e) in enumerate(intervals, start=1):
                 w = ev.defn.window

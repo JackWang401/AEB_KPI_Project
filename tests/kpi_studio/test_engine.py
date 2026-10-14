@@ -133,3 +133,21 @@ def test_text_enum_samples_are_decoded():
     fr, issues, _ = build_frame(raw, defs, 1, {"E": {"E_NONE": 0, "E_FULL": 2}})
     assert fr.values["r"][:2].tolist() == [0.0, 2.0] and np.isnan(fr.values["r"][2])
     assert any("could not be mapped" in i.message for i in issues)
+
+
+def test_no_occurrences_says_why():
+    import numpy as np
+
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.core.engine import evaluate_frame
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({"name": "p", "signals": {"ax": {"channels": ["ax"]}},
+                          "events": {"e": {"start": "rising(ax == 3)"}}}, "t")
+    cp = compile_profile(prof)
+    t = np.arange(0, 1, 0.1)
+    frame = SignalFrame(time=t, values={"ax": np.linspace(4, -10, t.size)})
+    out = evaluate_frame(cp, frame, "f")
+    msg = [i.message for i in out.issues if "no occurrences" in i.message][0]
+    assert "never true" in msg and "rising(ax == 3)" in msg
