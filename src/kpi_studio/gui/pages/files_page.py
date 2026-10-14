@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets.common import PAGE_MARGINS
 from src.kpi_studio.gui.workers import IndexWorker
 
 
@@ -34,6 +35,8 @@ class FilesPage(QWidget):
         self.setAcceptDrops(True)
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(*PAGE_MARGINS)
+        lay.setSpacing(12)
         intro = QLabel("Add the MF4 recordings to process (two or more is typical). Drag and drop works too. "
                        "Headers are read in the background so channel names are available in the next step.")
         intro.setWordWrap(True)

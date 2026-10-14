@@ -30,6 +30,9 @@ from PySide6.QtWidgets import (
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.expr import ExprError, compile_expr
 
+# outer padding of every page (left, top, right, bottom), macOS-style generous margins
+PAGE_MARGINS = (20, 16, 20, 16)
+
 def matches(needle: str, text: str) -> bool:
     """Case-insensitive search: plain text matches anywhere; with * or ? it is a wildcard
     pattern, also anywhere in the text ('lmc*it' finds 'LmcAxTrgtLimit')."""

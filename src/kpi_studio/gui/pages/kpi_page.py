@@ -34,10 +34,16 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio import toolbox
-from src.kpi_studio.core.model import BUILTIN_MOMENTS, KpiDef, derived_to_yaml, signal_units
+from src.kpi_studio.core.model import (
+    BUILTIN_MOMENTS,
+    KpiDef,
+    derived_to_yaml,
+    signal_units,
+)
 from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import (
+    PAGE_MARGINS,
     ConditionBuilder,
     ExprEdit,
     ToolPalette,
@@ -714,7 +720,7 @@ class KpiPage(QWidget):
         self.target: ExprEdit | None = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(*PAGE_MARGINS)
         top = QSplitter(Qt.Horizontal)
         outer.addWidget(top)
 
@@ -722,6 +728,7 @@ class KpiPage(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(8)
         ll.addWidget(QLabel("Events"))
         self.events = QListWidget()
         ll.addWidget(self.events, 1)
@@ -811,7 +818,7 @@ class KpiPage(QWidget):
             if k.get("use"):
                 label = f"⧉ {k['use']}" + (f" as {k['as']}" if k.get("as") else "")
             else:
-                label = f"{k.get('name', '?')}   ·  {k.get('event', '')}"
+                label = f"{k.get('event') or '?'}.{k.get('name') or '?'}"
             self.kpis.addItem(label)
         self.kpis.setCurrentRow(row)
         self.kpis.blockSignals(False)

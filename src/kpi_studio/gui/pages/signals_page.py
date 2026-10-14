@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from src.kpi_studio.core.model import derived_to_yaml, signal_units
 from src.kpi_studio.core.rename import rename_signal_references
 from src.kpi_studio.gui.state import AppState
-from src.kpi_studio.gui.widgets.common import ExprEdit, matches
+from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
@@ -98,6 +98,8 @@ class SignalsPage(QWidget):
 
         split = QSplitter(Qt.Horizontal)
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(*PAGE_MARGINS)
+        outer.setSpacing(12)
         intro = QLabel("Pick the channels you need and give each a short name. When files name the same signal "
                        "differently, list all channel names; the first one found in a file is used.")
         intro.setWordWrap(True)

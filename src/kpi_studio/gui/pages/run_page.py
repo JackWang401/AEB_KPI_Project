@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio.app.run_service import default_workers, preflight
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets.common import PAGE_MARGINS
 from src.kpi_studio.gui.workers import RunWorker
 
 PLOT_TYPES = ["scatter", "box", "bar", "histogram", "timeseries"]
@@ -114,6 +115,8 @@ class RunPage(QWidget):
         self._loading = False
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(*PAGE_MARGINS)
+        lay.setSpacing(12)
 
         # ---- plots
         pbox = QGroupBox("Plots (written as interactive HTML next to the Excel file)")

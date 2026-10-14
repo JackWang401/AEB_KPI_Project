@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
     QToolBar,
     QVBoxLayout,
     QWidget,
-    QHBoxLayout,
 )
 
 from src.kpi_studio import __version__, toolbox
@@ -31,33 +31,54 @@ from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
-from src.kpi_studio.gui.widgets.common import ExprEdit
+from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 
 # Used with the Fusion style (set in app.py) so the window looks the same on macOS, Windows and Linux.
 STYLE = """
-QWidget { font-size: 12px; color: #1f1f1e; }
-QMainWindow { background: #f6f6f3; }
-QTabWidget::pane { background: #f6f6f3; border: none; border-top: 1px solid #dcdad2; }
-QTabWidget::tab-bar { alignment: left; }
-QTabBar::tab { padding: 8px 18px; font-weight: 600; color: #5f5e5a; background: transparent;
+QWidget { font-size: 13px; color: #1d1d1f; }
+QMainWindow, QTabWidget::pane, QStackedWidget { background: #f5f5f7; }
+QTabWidget::pane { border: none; border-top: 1px solid #e5e5ea; }
+QTabWidget::tab-bar { alignment: left; left: 12px; }
+QTabBar::tab { padding: 10px 20px; font-weight: 600; color: #6e6e73; background: transparent;
                border: none; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #2a78d6; border-bottom: 2px solid #2a78d6; }
-QTabBar::tab:hover { color: #1f1f1e; }
-QPushButton { padding: 5px 12px; border: 1px solid #cfcdc4; border-radius: 6px; background: #ffffff; }
-QPushButton:hover { background: #f0f4fb; }
-QPushButton:disabled { color: #a8a7a1; }
-QPushButton#primary { background: #2a78d6; color: white; border: none; font-weight: 700; padding: 6px 20px; }
-QPushButton#primary:hover { background: #1f68c0; }
-QPushButton#primary:disabled { background: #9ec5f4; }
-QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { min-height: 22px; background: #ffffff; }
-QGroupBox { font-weight: 600; border: 1px solid #dcdad2; border-radius: 6px; margin-top: 10px; padding-top: 6px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
-QLabel#hint { color: #6b6b66; }
+QTabBar::tab:selected { color: #007aff; border-bottom: 2px solid #007aff; }
+QTabBar::tab:hover { color: #1d1d1f; }
+QPushButton { padding: 5px 14px; border: 1px solid #d2d2d7; border-radius: 7px; background: #ffffff; }
+QPushButton:hover { background: #f2f6fd; }
+QPushButton:pressed { background: #e6eefb; }
+QPushButton:disabled { color: #aeaeb2; }
+QPushButton#primary { background: #007aff; color: white; border: none; font-weight: 600; padding: 7px 22px; }
+QPushButton#primary:hover { background: #0068d9; }
+QPushButton#primary:disabled { background: #a6cdfb; }
+QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit {
+    min-height: 24px; padding: 2px 8px; background: #ffffff;
+    border: 1px solid #d2d2d7; border-radius: 6px; }
+QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus {
+    border: 1px solid #007aff; }
+QListWidget, QTableWidget, QTableView, QTreeWidget, QTreeView {
+    background: #ffffff; border: 1px solid #e5e5ea; border-radius: 8px; outline: none;
+    alternate-background-color: #fafafc; selection-background-color: #007aff; selection-color: white; }
+QListWidget::item { padding: 5px 8px; border-radius: 5px; }
+QListWidget::item:selected { background: #007aff; color: white; }
+QGroupBox { font-weight: 600; background: #ffffff; border: 1px solid #e5e5ea; border-radius: 10px;
+            margin-top: 22px; padding: 10px 8px 8px 8px; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 4px; padding: 0 0 4px 0;
+                   color: #1d1d1f; }
+QLabel { background: transparent; }
+QLabel#hint { color: #6e6e73; }
 QLabel#sectionTitle { font-weight: 700; }
-QToolBar { spacing: 4px; padding: 3px; border-bottom: 1px solid #dcdad2; }
-QHeaderView::section { padding: 4px; }
+QToolBar { spacing: 6px; padding: 6px 12px; background: #f5f5f7; border: none; border-bottom: 1px solid #e5e5ea; }
+QToolBar QToolButton { padding: 4px 10px; border-radius: 6px; }
+QToolBar QToolButton:hover { background: #e8e8ed; }
+QHeaderView::section { padding: 6px 8px; background: #fafafc; border: none; border-bottom: 1px solid #e5e5ea;
+                       color: #6e6e73; font-weight: 600; }
+QSplitter::handle { background: transparent; }
+QSplitter::handle:horizontal { width: 14px; }
+QSplitter::handle:vertical { height: 12px; }
+QDockWidget { font-weight: 600; }
+QDockWidget::title { padding: 8px 20px; }
 """
 
 
@@ -90,12 +111,17 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.run_page, "4  Plots && Run")
         self.viewer_box = QGroupBox("Signal viewer && preview")
         vb = QVBoxLayout(self.viewer_box)
-        vb.setContentsMargins(6, 6, 6, 6)
+        vb.setContentsMargins(10, 10, 10, 10)
         vb.addWidget(self.viewer)
+        # the viewer sits in its own padded frame so it lines up with the page margins above
+        self.viewer_wrap = QWidget()
+        wl = QVBoxLayout(self.viewer_wrap)
+        wl.setContentsMargins(PAGE_MARGINS[0], 0, PAGE_MARGINS[2], PAGE_MARGINS[3])
+        wl.addWidget(self.viewer_box)
         self.central_split = QSplitter(Qt.Vertical)
         self.central_split.setChildrenCollapsible(False)
         self.central_split.addWidget(self.tabs)
-        self.central_split.addWidget(self.viewer_box)
+        self.central_split.addWidget(self.viewer_wrap)
         self.central_split.setStretchFactor(0, 1)
         self.central_split.setStretchFactor(1, 1)
         self.central_split.setSizes([430, 470])
@@ -140,7 +166,8 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         box = QWidget()
         lay = QHBoxLayout(box)
-        lay.setContentsMargins(8, 0, 8, 0)
+        lay.setContentsMargins(12, 0, 12, 0)
+        lay.setSpacing(8)
         lay.addWidget(QLabel("Profile name"))
         self.name_edit = QLineEdit()
         self.name_edit.setMinimumWidth(260)
@@ -157,7 +184,11 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Profile check", self)
         dock.setObjectName("issues")
         self.issues = QListWidget()
-        dock.setWidget(self.issues)
+        holder = QWidget()
+        hl = QVBoxLayout(holder)
+        hl.setContentsMargins(PAGE_MARGINS[0], 0, PAGE_MARGINS[2], PAGE_MARGINS[3])
+        hl.addWidget(self.issues)
+        dock.setWidget(holder)
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.resizeDocks([dock], [80], Qt.Vertical)
@@ -300,7 +331,7 @@ class MainWindow(QMainWindow):
     VIEWER_TABS = (1, 2)  # Signals, Events & KPIs
 
     def _tab_changed(self, index: int):
-        self.viewer_box.setVisible(index in self.VIEWER_TABS)
+        self.viewer_wrap.setVisible(index in self.VIEWER_TABS)
 
     def closeEvent(self, event):
         if not self._confirm_discard():

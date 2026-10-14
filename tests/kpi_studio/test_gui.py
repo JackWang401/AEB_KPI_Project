@@ -33,6 +33,7 @@ def test_load_profile_and_files(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
     assert window.signals_page.tree.topLevelItemCount() > 0
+    assert window.kpi_page.kpis.item(1).text() == "aeb_core.aeb.peakDecel"  # event.kpi
     assert window.signals_page.sig_table.rowCount() >= 9  # library signals shown
     assert window.kpi_page.kpis.count() == 2  # use: aeb_core.* + peakDecel
 
