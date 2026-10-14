@@ -58,7 +58,7 @@ def derived_to_yaml(d: "DerivedDef | str | dict"):
     if isinstance(d, str):
         return d
     if isinstance(d, dict):
-        d = DerivedDef.model_validate(d)
+        d = DerivedDef.model_validate({k: d[k] for k in ("expr", "unit", "description") if k in d})
     if not d.unit and not d.description:
         return d.expr
     out = {"expr": d.expr}

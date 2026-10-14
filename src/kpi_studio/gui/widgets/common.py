@@ -142,9 +142,11 @@ class ExprEdit(QLineEdit):
     def __init__(self, names_fn: Callable[[], list[str]], parent=None, *, allow_empty=True, placeholder="",
                  enums_fn: Optional[Callable[[], dict]] = None,
                  extras_fn: Optional[Callable[[], dict]] = None,
-                 build_fn: Optional[Callable[["ExprEdit"], None]] = None):
+                 build_fn: Optional[Callable[["ExprEdit"], None]] = None,
+                 build_label: str = "Build condition… (compare, changes to / from)"):
         super().__init__(parent)
         self.build_fn = build_fn
+        self.build_label = build_label
         self.names_fn = names_fn
         self.enums_fn = enums_fn or (lambda: {})
         self.extras_fn = extras_fn or (lambda: {})
@@ -166,7 +168,7 @@ class ExprEdit(QLineEdit):
     def open_picker(self):
         actions = {}
         if self.build_fn is not None:
-            actions["Build condition… (compare, changes to / from)"] = lambda: self.build_fn(self)
+            actions[self.build_label] = lambda: self.build_fn(self)
         self.picker = NamePicker(self.picker_sections(), self, actions=actions)
         self.picker.picked.connect(self.insert_name)
         self.picker.popup(self.mapToGlobal(self.rect().bottomLeft()))

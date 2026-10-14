@@ -14,8 +14,11 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 1. **Files** – add two or more MF4 files (or a folder, or drag and drop).
 2. **Signals** – import libraries (`vehicle`, `aeb_core`, …) or pick channels
    from the tree. A signal may list several channel names; the first one found
-   in a file is used. Derived signals are expressions such as
-   `lowpass(longActAccel, 10)`.
+   in a file is used. *Add derived…* builds a derived signal step by step:
+   pick the signal, pick the method (scale, offset, add/subtract a signal,
+   filters, derivative, unit conversion, …) and fill in the arguments it asks
+   for, plus an optional unit and description. The result is an expression
+   such as `lowpass(longActAccel, 10)`, which can also be typed directly.
 3. **Events & KPIs** – define an event (a start/end condition or a preset such
    as `target_decel_window`), its moments (e.g. `decel_onset`, `argmin`,
    `crossing`), then KPIs (value at a moment, duration, a reducer over a range,

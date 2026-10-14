@@ -1,0 +1,62 @@
+import pytest
+
+from src.kpi_studio.gui.widgets.derived_builder import (
+    DerivedBuilder, build_expression, methods, parse_expression)
+
+M = {m.key: m for m in methods()}
+
+
+@pytest.mark.parametrize("key,sigs,args,expr", [
+    ("scale", ["v"], {"factor": "3.6"}, "v * 3.6"),
+    ("offset", ["v"], {"offset": "-2"}, "v - 2"),
+    ("scale_offset", ["t"], {"factor": "1.8", "offset": "32"}, "t * 1.8 + 32"),
+    ("subtract", ["a", "b"], {}, "a - b"),
+    ("lowpass", ["a"], {"cutoff_hz": "10", "order": "4"}, "lowpass(a, 10)"),
+    ("lowpass", ["a"], {"cutoff_hz": "10", "order": "2"}, "lowpass(a, 10, 2)"),
+    ("ttc", ["d", "v"], {"min_closing": "0.1", "max_ttc": "10"}, "ttc(d, v, max_ttc=10)"),
+    ("convert", ["p"], {"from_unit": "bar", "to_unit": "kpa"}, 'convert(p, "bar", "kpa")'),
+])
+def test_build_and_parse_round_trip(key, sigs, args, expr):
+    if key not in M:
+        pytest.skip(f"no tool {key}")
+    assert build_expression(M[key], sigs, args) == expr
+    m, s, a = parse_expression(expr, list(M.values()))
+    assert m.key == key and s == sigs
+    assert build_expression(m, s, {**args, **a}) == expr
+
+
+def test_dialog_scale_prompts_for_factor(qtbot):
+    dlg = DerivedBuilder(["VehicleSpeed", "accel"], {"VehicleSpeed": "m/s"}, taken={"VehicleSpeed", "accel"})
+    qtbot.addWidget(dlg)
+    dlg.name.setText("VehSpdKph")
+    dlg.signal.setCurrentText("VehicleSpeed")
+    dlg.set_method("scale")
+    assert "factor" in dlg.arg_widgets and dlg.expression() == ""  # factor still empty
+    assert "factor" in dlg.problem()
+    dlg.arg_widgets["factor"].setText("3.6")
+    assert dlg.values() == {"name": "VehSpdKph", "expr": "VehicleSpeed * 3.6", "unit": "", "description": ""}
+    dlg.set_method("lowpass")
+    assert dlg.unit.text() == "m/s"  # same unit as the input
+    assert set(dlg.arg_widgets) == {"cutoff_hz", "order"}
+
+
+def test_dialog_prefills_from_existing_expression(qtbot):
+    dlg = DerivedBuilder(["v", "w"], {}, name="vKph", expr="v * 3.6", unit="km/h")
+    qtbot.addWidget(dlg)
+    assert dlg.current_method().key == "scale"
+    assert dlg.signal.currentText() == "v" and dlg.arg_widgets["factor"].text() == "3.6"
+    assert dlg.unit.text() == "km/h"
+    assert dlg.values()["expr"] == "v * 3.6"
+
+
+@pytest.mark.parametrize("m", methods(), ids=lambda m: m.key)
+def test_every_method_builds_a_valid_expression(m):
+    from src.kpi_studio.core.expr import compile_expr
+
+    sigs = ["a", "b", "c"][:1 + len(m.inputs)]
+    args = {p.name: str(p.example_value()) for p in m.params}
+    expr = build_expression(m, sigs, args)
+    compile_expr(expr, names={"a", "b", "c"})
+    parsed = parse_expression(expr, methods())
+    assert parsed is not None, expr
+    assert build_expression(parsed[0], parsed[1], {**args, **parsed[2]}) == expr  # same (or equivalent) method

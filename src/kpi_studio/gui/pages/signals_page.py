@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -11,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -26,9 +26,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.kpi_studio.core.model import derived_to_yaml
+from src.kpi_studio.core.model import derived_to_yaml, signal_units
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import ExprEdit, matches
+from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
@@ -127,7 +128,8 @@ class SignalsPage(QWidget):
         der_box = QWidget()
         dl = QVBoxLayout(der_box)
         dl.setContentsMargins(0, 0, 0, 0)
-        dl.addWidget(QLabel("Derived signals (expressions over signals; use the toolbox, e.g. lowpass(x, 10))"))
+        dl.addWidget(QLabel("Derived signals: pick a signal and a processing method (Add / Edit), "
+                            "or type an expression, e.g. lowpass(x, 10)"))
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
         self.der_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -136,9 +138,12 @@ class SignalsPage(QWidget):
         self.der_table.verticalHeader().setDefaultSectionSize(24)
         dl.addWidget(self.der_table, 1)
         drow = QHBoxLayout()
-        self.add_der_btn = QPushButton("Add derived")
+        self.add_der_btn = QPushButton("Add derived…")
+        self.edit_der_btn = QPushButton("Edit…")
+        self.edit_der_btn.setToolTip("Change the selected derived signal's input, method and arguments")
         self.del_der_btn = QPushButton("Delete derived")
         drow.addWidget(self.add_der_btn)
+        drow.addWidget(self.edit_der_btn)
         drow.addWidget(self.del_der_btn)
         drow.addStretch(1)
         dl.addLayout(drow)
@@ -154,6 +159,7 @@ class SignalsPage(QWidget):
         self.del_sig_btn.clicked.connect(self.delete_signal)
         self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
+        self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
         self.del_der_btn.clicked.connect(self.delete_derived)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
@@ -368,7 +374,9 @@ class SignalsPage(QWidget):
             item.setData(Qt.UserRole, name)
             item.setToolTip(f["description"])
             self.der_table.setItem(r, 0, item)
-            edit = ExprEdit(self._names_except(name), enums_fn=self.state.enum_map)
+            edit = ExprEdit(self._names_except(name), enums_fn=self.state.enum_map,
+                            build_fn=lambda _e, n=name: self.edit_derived(n),
+                            build_label="Build with a method… (signal, method, arguments)")
             edit.setText(f["expr"])
             edit.editingFinished.connect(lambda n=name, e=edit: self._derived_expr(n, e.text()))
             self.der_table.setCellWidget(r, 1, edit)
@@ -402,11 +410,43 @@ class SignalsPage(QWidget):
             if self._set_der_field(name, key, item.text().strip()):
                 self.state.edited()
 
+    def _units(self) -> dict:
+        units = {n: (d.get("unit") or "") for n, d in (self.state.data.get("signals", {}) or {}).items()}
+        if self.state.resolved is not None:
+            units = {**signal_units(self.state.resolved), **units}
+        for n, v in (self.state.data.get("derived", {}) or {}).items():
+            units[n] = self._der_fields(v)["unit"]
+        return units
+
+    def open_builder(self, name: str = "") -> Optional[dict]:
+        """Run the derived-signal dialog; returns its values, or None when cancelled."""
+        derived = self.state.data.get("derived", {}) or {}
+        f = self._der_fields(derived.get(name)) if name else {"expr": "", "unit": "", "description": ""}
+        dlg = DerivedBuilder(self.state.signal_names(), self._units(), self, name=name, expr=f["expr"],
+                             unit=f["unit"], description=f["description"],
+                             taken=set(self.state.signal_names()) | set(derived))
+        return dlg.values() if dlg.exec() == DerivedBuilder.Accepted else None
+
     def add_derived(self):
-        name, ok = QInputDialog.getText(self, "Derived signal", "Name:")
-        if not ok or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name.strip()):
+        v = self.open_builder()
+        if v is None:
             return
-        self.state.data.setdefault("derived", {})[name.strip()] = ""
+        self.state.data.setdefault("derived", {})[v["name"]] = derived_to_yaml(v)
+        self.state.edited(structure=True)
+
+    def edit_derived(self, name: Optional[str] = None):
+        if name is None:
+            row = self.der_table.currentRow()
+            if row < 0:
+                return
+            name = self.der_table.item(row, 0).data(Qt.UserRole)
+        v = self.open_builder(name)
+        if v is None:
+            return
+        derived = self.state.data.setdefault("derived", {})
+        # keep the table order when renaming
+        self.state.data["derived"] = {(v["name"] if k == name else k): (derived_to_yaml(v) if k == name else d)
+                                      for k, d in derived.items()}
         self.state.edited(structure=True)
 
     def delete_derived(self):

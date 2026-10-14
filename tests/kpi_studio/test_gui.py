@@ -423,3 +423,24 @@ def test_derived_unit_and_description_columns(qtbot, window, mf4_dir):
     viewer.plot_signals(["vKph"])
     qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None), timeout=20000)
     assert viewer.data["units"]["vKph"] == "km/h"
+
+
+def test_add_derived_through_the_builder(qtbot, window, mf4_dir, monkeypatch):
+    from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+
+    def fake_exec(dlg):
+        dlg.name.setText("vKph")
+        dlg.signal.setCurrentText("egoSpeed")
+        dlg.set_method("scale")
+        dlg.arg_widgets["factor"].setText("3.6")
+        dlg.unit.setText("km/h")
+        return DerivedBuilder.Accepted
+
+    monkeypatch.setattr(DerivedBuilder, "exec", fake_exec)
+    page.add_derived()
+    assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "unit": "km/h"}
+    window.state.validate_now()
+    assert "vKph" in {n for n, _ in window.state.compiled.derived}
