@@ -540,8 +540,13 @@ class SignalViewer(QWidget):
         if self._enum_axes:
             m["left"] += 70
         axis_h = max((h - m["top"] - m["bottom"] - m["gap"] * (n - 1)) / n, 1)
-        self.fig.subplots_adjust(left=min(m["left"] / w, 0.4), right=1 - m["right"] / w,
-                                 top=1 - m["top"] / h, bottom=m["bottom"] / h, hspace=m["gap"] / axis_h)
+        left, right = min(m["left"] / w, 0.4), 1 - m["right"] / w
+        top, bottom = 1 - m["top"] / h, m["bottom"] / h
+        if right - left < 0.1:  # panel too small for the pixel margins (e.g. while it is being resized)
+            left, right = 0.1, 0.9
+        if top - bottom < 0.1:
+            bottom, top = 0.1, 0.9
+        self.fig.subplots_adjust(left=left, right=right, top=top, bottom=bottom, hspace=m["gap"] / axis_h)
 
     def draw(self):
         from matplotlib.ticker import MaxNLocator
