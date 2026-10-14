@@ -13,9 +13,7 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 
 1. **Files** – add two or more MF4 files (or a folder, or drag and drop).
    When files are not time-synced, double-click a file's *Offset [s]* cell and
-   enter a shift (positive moves it later); or in the signal viewer select the
-   recording, place cursor A on a feature and cursor B (Shift+click) on the same
-   feature in that recording, and press *Align A→B*. The offset is used by the
+   enter a shift (positive moves it later). The offset is used by the
    viewer, the event preview and the KPI run; it is not saved with the profile.
    On the command line: `--offset FILE=SECONDS` (repeatable).
 2. **Signals** – import libraries (`vehicle`, `aeb_core`, …) or pick channels

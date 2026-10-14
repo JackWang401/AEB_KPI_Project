@@ -199,28 +199,24 @@ def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     viewer = window.signals_page.viewer
     recs = window.state.recordings()
+    assert not viewer.files.isVisible()  # no recordings list in the panel; a compact picker instead
+    viewer.rec_combo.setCurrentIndex(1)
+    assert viewer.selected_names() == [recs[1].name]
     viewer.select_recordings([r.name for r in recs])
     viewer.plot_signals(["egoSpeed"])
     qtbot.waitUntil(lambda: len(viewer.cache) == 2 and viewer.worker is None, timeout=30000)
     second = recs[1].name
     t0 = np.asarray(viewer.cache[second]["time"], dtype=float)
-    viewer.files.setCurrentRow(1)
-    viewer.offset_spin.setValue(1.5)  # typed offset shifts only the selected recording's file(s)
+    window.files_page.table.item(1, 2).setText("1.5")  # Offset [s] on the Files tab
     assert window.state.offsets == {recs[1].files[0]: 1.5}
     assert window.state.recordings()[1].offsets == {recs[1].files[0]: 1.5}  # what the KPI run reads
-    assert "+1.500 s" in viewer.files.item(1).text() and "s)" not in viewer.files.item(0).text()
+    assert "+1.500 s" in viewer.rec_combo.itemText(1) and "s)" not in viewer.rec_combo.itemText(0)
     assert window.files_page.table.item(1, 2).text() == "+1.500"
     # the shifted recording is read again with the offset applied
     qtbot.waitUntil(lambda: second in viewer.cache and viewer.worker is None, timeout=30000)
     assert np.allclose(np.asarray(viewer.cache[second]["time"], dtype=float)[:5], t0[:5] + 1.5)
-    # Align A→B: the feature under B (selected recording) moves to A
-    viewer.cursors = [2.0, 3.25]
-    viewer.align_cursors()
-    assert window.state.offsets[recs[1].files[0]] == pytest.approx(0.25)
-    assert viewer.cursors == [2.0, 2.0] and viewer.offset_spin.value() == pytest.approx(0.25)
-    # editing the Files tab column sets it too; zero removes the shift
-    window.files_page.table.item(1, 2).setText("0")
-    assert window.state.offsets == {} and "s)" not in viewer.files.item(1).text()
+    window.files_page.table.item(1, 2).setText("0")  # zero removes the shift
+    assert window.state.offsets == {} and "s)" not in viewer.rec_combo.itemText(1)
     window.files_page.table.item(0, 2).setText("abc")  # invalid input is ignored
     assert window.state.offsets == {} and window.files_page.table.item(0, 2).text() == "0"
 

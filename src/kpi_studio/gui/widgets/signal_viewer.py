@@ -20,7 +20,6 @@ from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QSpinBox,
@@ -140,8 +139,17 @@ class SignalViewer(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         bar = QHBoxLayout()
         self.load_btn = QPushButton("Load signals")
-        self.load_btn.setToolTip("Read the ticked signals from the ticked recordings")
+        self.load_btn.setToolTip("Read the ticked signals from the recording")
         bar.addWidget(self.load_btn)
+        self.rec_label = QLabel("Recording")
+        bar.addWidget(self.rec_label)
+        self.rec_combo = QComboBox()
+        self.rec_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.rec_combo.setToolTip("Recording to plot (shown when several are loaded on the Files tab)")
+        bar.addWidget(self.rec_combo)
+        # which recordings are plotted (several can be overlaid through select_recordings); not shown
+        self.files = QListWidget(self)
+        self.files.setVisible(False)
         self.separate_btn = QPushButton("One signal per subplot")
         self.separate_btn.setToolTip("Undo drag and drop: give every signal its own subplot again")
         self.separate_btn.setVisible(False)
@@ -179,28 +187,6 @@ class SignalViewer(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        ll.addWidget(QLabel("Recordings (tick one or more)"))
-        self.files = QListWidget()
-        self.files.setMaximumHeight(90)
-        self.files.setToolTip("Tick recordings to plot them; select one to set its time offset below")
-        ll.addWidget(self.files)
-        orow = QHBoxLayout()
-        orow.addWidget(QLabel("Offset"))
-        self.offset_spin = QDoubleSpinBox()
-        self.offset_spin.setRange(-1e6, 1e6)
-        self.offset_spin.setDecimals(3)
-        self.offset_spin.setSingleStep(0.1)
-        self.offset_spin.setSuffix(" s")
-        self.offset_spin.setToolTip("Shift the selected recording in time so it lines up with the others; "
-                                    "positive moves it later. Used by the plots, the preview and the KPI run "
-                                    "(per file: see the Offset column on the Files tab).")
-        orow.addWidget(self.offset_spin, 1)
-        self.align_btn = QPushButton("Align A→B")
-        self.align_btn.setToolTip("Put cursor A on a feature in one recording and cursor B on the same "
-                                  "feature in the selected recording, then press this to shift the "
-                                  "selected recording so B lands on A")
-        orow.addWidget(self.align_btn)
-        ll.addLayout(orow)
         ll.addWidget(QLabel("Signals"))
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter signals… (wildcards: * ?)")
@@ -236,9 +222,7 @@ class SignalViewer(QWidget):
 
         self.load_btn.clicked.connect(self.load)
         self.files.itemChanged.connect(lambda *_: self._files_ticked())
-        self.files.currentItemChanged.connect(lambda *_: self._show_offset())
-        self.offset_spin.valueChanged.connect(self._offset_edited)
-        self.align_btn.clicked.connect(self.align_cursors)
+        self.rec_combo.currentIndexChanged.connect(self._rec_chosen)
         state.offsets_changed.connect(self._offsets_changed)
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
@@ -280,17 +264,31 @@ class SignalViewer(QWidget):
             on = r.name in ticked or (not ticked and i == 0)
             it.setCheckState(Qt.Checked if on else Qt.Unchecked)
             self.files.addItem(it)
-        if self.files.count():
-            self.files.setCurrentRow(0)
         self.files.blockSignals(False)
         self.cache = {k: v for k, v in self.cache.items() if k in {r.name for r in recs}}
-        self._show_offset()
+        self._fill_combo()
+
+    def _fill_combo(self):
+        recs = self.state.recordings()
+        sel = self.selected_names()
+        self.rec_combo.blockSignals(True)
+        self.rec_combo.clear()
+        for r in recs:
+            self.rec_combo.addItem(self._file_label(r), r.name)
+            self.rec_combo.setItemData(self.rec_combo.count() - 1, "\n".join(r.files), Qt.ToolTipRole)
+        if sel:
+            self.rec_combo.setCurrentIndex(max(0, self.rec_combo.findData(sel[0])))
+        self.rec_combo.blockSignals(False)
+        self.rec_combo.setVisible(len(recs) > 1)
+        self.rec_label.setVisible(len(recs) > 1)
+
+    def _rec_chosen(self, i):
+        name = self.rec_combo.itemData(i)
+        if name is not None:
+            self.select_recordings([name])
+            self._files_ticked()
 
     # ------------------------------------------------------------------ time offsets
-    def rec_offset(self, r) -> float:
-        """Shift of a recording: that of its first file (the files of a recording move together here)."""
-        return self.state.offsets.get(r.files[0], 0.0) if r.files else 0.0
-
     def _file_label(self, r) -> str:
         offs = {self.state.offsets.get(f, 0.0) for f in r.files}
         if offs == {0.0}:
@@ -299,44 +297,11 @@ class SignalViewer(QWidget):
             return r.label + f"   ({offs.pop():+.3f} s)"
         return r.label + "   (shifted)"
 
-    def _current_rec(self):
-        it = self.files.currentItem()
-        name = it.data(Qt.UserRole) if it is not None else None
-        return next((r for r in self.state.recordings() if r.name == name), None)
-
-    def _show_offset(self):
-        r = self._current_rec()
-        self.offset_spin.blockSignals(True)
-        self.offset_spin.setValue(self.rec_offset(r) if r else 0.0)
-        self.offset_spin.blockSignals(False)
-        self.offset_spin.setEnabled(r is not None)
-        self.align_btn.setEnabled(r is not None)
-
-    def _offset_edited(self, value):
-        r = self._current_rec()
-        if r is not None:
-            self.set_offset(r.name, value)
-
-    def set_offset(self, name: str, seconds: float):
-        """Shift recording `name` to `seconds` (its files keep their offsets relative to each other)."""
-        r = next((r for r in self.state.recordings() if r.name == name), None)
-        if r is None:
-            return
-        delta = float(seconds) - self.rec_offset(r)
-        self.state.set_offsets({f: self.state.offsets.get(f, 0.0) + delta for f in r.files})
-
     def _offsets_changed(self, files):
         """Shifted files are read again (the shift is applied when reading, as in the KPI run)."""
         recs = self.state.recordings()
         hit = {r.name for r in recs if set(r.files) & set(files)}
-        for i in range(self.files.count()):
-            it = self.files.item(i)
-            r = next((r for r in recs if r.name == it.data(Qt.UserRole)), None)
-            if r is not None:
-                self.files.blockSignals(True)
-                it.setText(self._file_label(r))
-                self.files.blockSignals(False)
-        self._show_offset()
+        self._fill_combo()
         for name in hit:
             self.cache.pop(name, None)
         if self.preview and self.preview["rec"] in hit:
@@ -350,17 +315,6 @@ class SignalViewer(QWidget):
             self._reload_timer.start()
             return
         self.load()
-
-    def align_cursors(self):
-        """Shift the selected recording by A − B, so the feature under cursor B moves to cursor A."""
-        a, b = self.cursors
-        r = self._current_rec()
-        if r is None or a is None or b is None:
-            self.cursor_info.setText("Place cursor A (click) and cursor B (Shift+click) first, then select the "
-                                     "recording to shift")
-            return
-        self.cursors[1] = a
-        self.set_offset(r.name, round(self.rec_offset(r) + (a - b), 6))
 
     def selected_names(self) -> list[str]:
         return [self.files.item(i).data(Qt.UserRole) for i in range(self.files.count())
@@ -379,6 +333,11 @@ class SignalViewer(QWidget):
             elif only:
                 it.setCheckState(Qt.Unchecked)
         self.files.blockSignals(False)
+        sel = self.selected_names()
+        if sel:
+            self.rec_combo.blockSignals(True)
+            self.rec_combo.setCurrentIndex(max(0, self.rec_combo.findData(sel[0])))
+            self.rec_combo.blockSignals(False)
 
     def refresh_names(self):
         names = self.state.signal_names()
@@ -608,7 +567,7 @@ class SignalViewer(QWidget):
         self.separate_btn.setVisible(bool(self.host))
         if not loaded:
             self.kpi_table.setVisible(False)
-            self._message("Tick recordings and signals on the left, then press Load signals")
+            self._message("Tick signals on the left, then press Load signals")
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
         groups = self._groups(available)
