@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -253,14 +252,11 @@ class ToolPalette(QWidget):
         self.search.setPlaceholderText("Search signals and tools…")
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
-        self.doc = QTextBrowser()
-        self.doc.setMaximumHeight(140)
+        self.tree.setToolTip("Hover a tool to read what it does; double-click to insert it")
         lay.addWidget(title)
         lay.addWidget(self.search)
         lay.addWidget(self.tree, 1)
-        lay.addWidget(self.doc)
         self.search.textChanged.connect(self.populate)
-        self.tree.currentItemChanged.connect(self._show_doc)
         self.tree.itemDoubleClicked.connect(self._insert)
         self.populate()
 
@@ -282,6 +278,7 @@ class ToolPalette(QWidget):
             for n in shown:
                 item = QTreeWidgetItem([n])
                 item.setData(0, Qt.UserRole + 1, n)
+                item.setToolTip(0, self.doc_html(item))
                 top.addChild(item)
             if not self._names:
                 top.addChild(QTreeWidgetItem(["(add signals on the Signals tab)"]))
@@ -303,27 +300,27 @@ class ToolPalette(QWidget):
                     top.addChild(cat)
                 item = QTreeWidgetItem([s.signature])
                 item.setData(0, Qt.UserRole, s)
-                item.setToolTip(0, s.summary)
+                item.setToolTip(0, self.doc_html(item))
                 cat.addChild(item)
             top.setExpanded(bool(needle) or kind in ("signal", "condition"))
             for c in cats.values():
                 c.setExpanded(bool(needle))
 
-    def _show_doc(self, item, _prev=None):
+    @staticmethod
+    def doc_html(item) -> str:
+        """The help shown when hovering a toolbox entry (no separate help box)."""
         spec = item.data(0, Qt.UserRole) if item else None
         name = item.data(0, Qt.UserRole + 1) if item else None
         if name:
-            self.doc.setHtml(f"<b>{name}</b><br>Signal defined on the Signals tab. Double-click to insert it.")
-            return
+            return f"<b>{name}</b><br>Signal defined on the Signals tab. Double-click to insert it."
         if spec is None:
-            self.doc.clear()
-            return
+            return ""
         params = "".join(
             f"<li><b>{p.name}</b> ({p.type.__name__}{', default ' + repr(p.default) if not p.required else ''})"
             f"{': ' + p.doc if p.doc else ''}</li>" for p in spec.params)
-        self.doc.setHtml(f"<b>{spec.signature}</b><br>{spec.doc.replace(chr(10), '<br>')}"
-                         + (f"<ul>{params}</ul>" if params else "")
-                         + f"<i>{spec.kind} · {spec.category}</i>")
+        return (f"<p style='white-space:normal; width:360px'><b>{spec.signature}</b><br>"
+                f"{spec.doc.replace(chr(10), '<br>')}" + (f"<ul>{params}</ul>" if params else "")
+                + f"<i>{spec.kind} · {spec.category} · double-click to insert</i></p>")
 
     def _insert(self, item, _col=0):
         name = item.data(0, Qt.UserRole + 1)

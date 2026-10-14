@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -79,7 +80,7 @@ def _form(parent=None) -> QFormLayout:
     form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
     form.setHorizontalSpacing(10)
-    form.setVerticalSpacing(6)
+    form.setVerticalSpacing(4)
     return form
 
 
@@ -95,6 +96,7 @@ class EventForm(QWidget):
         enums = self.state.enum_map
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 12, 0)
         form = _form()
         self.name_edit = QLineEdit()
         self.desc = QLineEdit()
@@ -466,6 +468,7 @@ class KpiForm(QWidget):
         self._loading = False
 
         lay = _form(self)
+        lay.setContentsMargins(0, 0, 12, 0)  # flush top and bottom; room for the scroll bar on the right
         self.name_edit = QLineEdit()
         self.event = QComboBox()
         self.form = QComboBox()
@@ -804,6 +807,14 @@ class KpiPage(QWidget):
         self.form_scroll.setWidgetResizable(True)
         self.form_scroll.setFrameShape(QFrame.NoFrame)
         self.form_scroll.setWidget(self.stack)
+        # size the scroll area to the shown form only (a stacked widget otherwise takes its largest page)
+        def fit_current(_i):
+            for w in (self.empty, self.event_form, self.kpi_form, self.lib_note):
+                w.setSizePolicy(QSizePolicy.Preferred,
+                                QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored)
+            self.stack.adjustSize()
+        self.stack.currentChanged.connect(fit_current)
+        fit_current(0)
         top.addWidget(self.form_scroll)
 
         self.palette = ToolPalette(names_fn=state.signal_names)
