@@ -82,6 +82,15 @@ def _identifier(name: str) -> str:
     return ident
 
 
+SCROLLBAR_STYLE = """
+QScrollBar:vertical { background: #f0f0f2; width: 12px; margin: 0; border-left: 1px solid #e5e5ea; }
+QScrollBar::handle:vertical { background: #b8b8bd; border-radius: 4px; min-height: 24px; margin: 2px; }
+QScrollBar::handle:vertical:hover { background: #8e8e93; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+"""
+
+
 class SignalsPage(QWidget):
     DER_COLS = ["Name", "Expression", "Unit", "Description"]
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
@@ -108,6 +117,9 @@ class SignalsPage(QWidget):
             table.verticalHeader().setDefaultSectionSize(22)
             table.horizontalHeader().setFixedHeight(26)
             table.setMinimumHeight(26 + 22 * min_rows + 4)
+            # always visible (macOS otherwise hides scroll bars until you scroll)
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
         # ---- left: channels in files (title, filter and add button on one line)
         left = QWidget()
