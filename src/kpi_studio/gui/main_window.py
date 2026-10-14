@@ -31,6 +31,7 @@ from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets.common import ExprEdit
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
         self._build_issues_dock()
         self.state.dirty_changed.connect(lambda *_: self._update_title())
         self.state.validated.connect(self._show_issues)
+        self.state.validated.connect(self._recheck_expressions)
         self.state.profile_changed.connect(self._load_name)
 
         last = self.settings.value("profile/last", "")
@@ -289,6 +291,11 @@ class MainWindow(QMainWindow):
         self.settings.setValue("profile/last", str(path))
         self._update_title()
         return True
+
+    def _recheck_expressions(self):
+        """Fields are checked as you type; re-check them once names may have changed (renames, imports)."""
+        for edit in self.findChildren(ExprEdit):
+            edit.check()
 
     VIEWER_TABS = (1, 2)  # Signals, Events & KPIs
 

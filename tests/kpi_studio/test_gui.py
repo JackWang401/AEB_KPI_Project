@@ -516,3 +516,22 @@ def test_rename_everywhere_repairs_dangling_references(qtbot, window, mf4_dir, m
     assert state.data["events"]["served"]["end"] == "falling(LmcMotTypeSrvdLong == 3)"
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
+
+
+def test_event_fields_not_red_after_a_rename(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["signals"]["motType"] = {"channels": ["speedESC"]}
+    state.data["events"]["served"] = {"start": "rising(motType == 3)", "end": "falling(motType == 3)"}
+    state.edited(structure=True)
+    state.validate_now()
+    kp = window.kpi_page
+    kp.select_event("served")
+    assert kp.event_form.start.error is None
+    page = window.signals_page
+    row = next(r for r in range(page.sig_table.rowCount()) if page.sig_table.item(r, 0).text() == "motType")
+    page.sig_table.item(row, 0).setText("MotTypSrvdLong")  # form reloads before the profile re-validates
+    assert kp.event_form.start.text() == "rising(MotTypSrvdLong == 3)"
+    assert kp.event_form.start.error is None and kp.event_form.end.error is None
+    state.validate_now()
+    assert kp.event_form.start.error is None

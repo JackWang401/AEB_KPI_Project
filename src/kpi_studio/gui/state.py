@@ -28,6 +28,9 @@ NEW_PROFILE = {
 }
 
 
+_LIB_CACHE: dict = {}
+
+
 class AppState(QObject):
     profile_changed = Signal()          # structure edited (pages refresh lists)
     validated = Signal()                # compile finished; see .issues / .compiled
@@ -172,7 +175,11 @@ class AppState(QObject):
         signals, derived = {}, {}
         for ref in self.data.get("imports", []) or []:
             try:
-                lib = profile_store.load_library(profile_store.find_library(ref, self.base_dir))
+                path = profile_store.find_library(ref, self.base_dir)
+                key = (str(path), path.stat().st_mtime)
+                lib = _LIB_CACHE.get(key)
+                if lib is None:
+                    lib = _LIB_CACHE[key] = profile_store.load_library(path)
             except Exception:  # noqa: BLE001 - reported by validation
                 continue
             signals.update(lib.signals)
@@ -187,9 +194,17 @@ class AppState(QObject):
 
     # names usable in expressions (after resolving imports when possible)
     def signal_names(self) -> list[str]:
+        """Signal and derived names as they are now (the last validation can lag behind a rename)."""
+        live = self.taken_names()
+        names = []
         if self.resolved is not None:
-            return list(self.resolved.signals) + list(self.resolved.derived)
-        return list(self.data.get("signals", {})) + list(self.data.get("derived", {}))
+            names = [n for n in list(self.resolved.signals) + list(self.resolved.derived) if n in live]
+        lib_sig, lib_der = self.library_definitions()
+        for n in list(lib_sig) + list(self.data.get("signals", {}) or {}) + list(lib_der) \
+                + list(self.data.get("derived", {}) or {}):
+            if n not in names:
+                names.append(n)
+        return names
 
     def enum_map(self) -> dict:
         """signal name -> {MEMBER: value} for signals that declare an enum."""
