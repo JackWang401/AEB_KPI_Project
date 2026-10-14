@@ -122,11 +122,15 @@ class SignalsPage(QWidget):
         sl.addWidget(self.sig_table, 1)
         row = QHBoxLayout()
         self.del_sig_btn = QPushButton("Delete signal")
+        self.fill_btn = QPushButton("Fill units from files")
+        self.fill_btn.setToolTip("Fill empty units and descriptions of the selected signals (all, if none is "
+                                 "selected) from the MF4 files; text-valued channels become discrete")
         self.rename_btn = QPushButton("Rename everywhere…")
         self.rename_btn.setToolTip("Replace a signal name in every derived signal, event, moment, KPI and plot")
         self.preview_btn = QPushButton("Plot selected signals ↓")
         row.addWidget(self.del_sig_btn)
         row.addWidget(self.rename_btn)
+        row.addWidget(self.fill_btn)
         row.addStretch(1)
         row.addWidget(self.preview_btn)
         sl.addLayout(row)
@@ -165,6 +169,7 @@ class SignalsPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self.del_sig_btn.clicked.connect(self.delete_signal)
         self.rename_btn.clicked.connect(self.rename_everywhere)
+        self.fill_btn.clicked.connect(self.fill_from_files)
         self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
@@ -237,10 +242,47 @@ class SignalsPage(QWidget):
             while name in sigs or name in self.state.data.get("derived", {}):
                 name = f"{base}_{i}"
                 i += 1
-            sigs[name] = {"channels": [key], "unit": c.unit or None}
+            sigs[name] = self._from_channel({"channels": [key]}, c)
             added += 1
         if added:
             self.state.edited(structure=True)
+
+    @staticmethod
+    def _from_channel(d: dict, c: ChannelInfo, *, only_empty: bool = False) -> dict:
+        """Take unit, kind and description from the file's channel information."""
+        if c.unit and not (only_empty and d.get("unit")):
+            d["unit"] = c.unit
+        if c.discrete and not d.get("enum"):
+            d["kind"] = "discrete"
+        if c.comment and not (only_empty and d.get("description")):
+            d["description"] = c.comment
+        return d
+
+    def fill_from_files(self):
+        """Fill empty units and descriptions (and mark text-valued channels discrete) from the files."""
+        sigs = self.state.data.get("signals", {}) or {}
+        rows = {i.row() for i in self.sig_table.selectedIndexes()}
+        names = [self.sig_table.item(r, 0).data(Qt.UserRole)[0] for r in sorted(rows)] or list(sigs)
+        channels = [c for f in self.state.files if (idx := self.state.indexes.get(f)) is not None and idx.ok
+                    for c in idx.channels]
+        changed = []
+        for name in names:
+            d = sigs.get(name)
+            if d is None:
+                continue
+            before = dict(d)
+            for cand in d.get("channels", []):
+                c, _ = match_channel(cand, channels)
+                if c is not None:
+                    self._from_channel(d, c, only_empty=True)
+                    break
+            if d != before:
+                changed.append(name)
+        if changed:
+            self.state.edited(structure=True)
+        self.window().statusBar().showMessage(
+            f"Filled unit / description from the files for {len(changed)} signal(s)"
+            if changed else "Nothing to fill: the files store no unit or description for these signals", 8000)
 
     # ------------------------------------------------------------------ signals table
     def refresh_all(self):
@@ -289,6 +331,8 @@ class SignalsPage(QWidget):
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, (name, from_lib))
+                if c == 0 and d.get("description"):
+                    item.setToolTip(d["description"])
                 if from_lib:
                     item.setForeground(LIB_COLOR)
                 if c in (0, 6) and (from_lib or c == 6):

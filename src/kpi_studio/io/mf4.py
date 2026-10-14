@@ -7,6 +7,7 @@ case-insensitivity and an optional ``Group::channel`` form to pick one raster.
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import warnings
@@ -30,6 +31,8 @@ class ChannelInfo:
     index: int
     unit: str = ""
     group_name: str = ""
+    comment: str = ""        # channel description stored in the file (plain text)
+    discrete: bool = False   # the file maps raw values to text (an enum / state signal)
 
     @property
     def clean(self) -> str:
@@ -102,7 +105,8 @@ def index_file(path: str | Path) -> RecordingIndex:
                     continue
                 if ch.name in ("time", "t") and ci == 0:
                     continue
-                idx.channels.append(ChannelInfo(ch.name, gi, ci, getattr(ch, "unit", "") or "", gname))
+                unit, comment, discrete = channel_meta(ch)
+                idx.channels.append(ChannelInfo(ch.name, gi, ci, unit, gname, comment, discrete))
         starts, ends = [], []
         for gi in range(len(mdf.groups)):
             try:
@@ -122,6 +126,36 @@ def index_file(path: str | Path) -> RecordingIndex:
         except Exception:  # noqa: BLE001
             pass
     return idx
+
+
+_TEXT_CONVERSIONS = (7, 8)  # value to text, value range to text
+
+
+def _plain(text) -> str:
+    """Comment text without the MDF XML wrapper (<CNcomment><TX>…</TX>…)."""
+    text = str(text or "")
+    m = re.search(r"<TX>(.*?)</TX>", text, re.S)
+    if m:
+        text = m.group(1)
+    elif text.lstrip().startswith("<"):
+        text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(re.sub(r"\s+", " ", text)).strip()
+    return text[:300] + ("…" if len(text) > 300 else "")
+
+
+def channel_meta(ch) -> tuple[str, str, bool]:
+    """(unit, description, discrete) of an asammdf channel. Many loggers leave the channel unit empty
+    and store it on the channel's conversion instead."""
+    conv = getattr(ch, "conversion", None)
+    unit = str(getattr(ch, "unit", "") or "")
+    if not unit and conv is not None:
+        unit = str(getattr(conv, "unit", "") or "")
+    discrete = conv is not None and getattr(conv, "conversion_type", None) in _TEXT_CONVERSIONS
+    try:
+        comment = _plain(getattr(ch, "comment", ""))
+    except Exception:  # noqa: BLE001
+        comment = ""
+    return unit.strip(), comment, discrete
 
 
 def match_channel(candidate: str, channels: Iterable[ChannelInfo]) -> tuple[Optional[ChannelInfo], int]:
