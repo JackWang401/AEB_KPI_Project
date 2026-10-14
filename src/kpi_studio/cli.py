@@ -72,7 +72,7 @@ def _offsets(specs, files: list[str]) -> dict:
 def cmd_preflight(args) -> int:
     from src.kpi_studio.app.run_service import RunService
 
-    svc = RunService(args.profile, _expand(args.files), ".", combine=not args.separate_files)
+    svc = RunService(args.profile, _expand(args.files), ".")
     report = svc.preflight()
     print(report.text())
     return 0 if report.ok else 1
@@ -85,7 +85,7 @@ def cmd_run(args) -> int:
     files = _expand(args.files)
     try:
         svc = RunService(args.profile, files, args.output, workers=args.workers, progress=_progress,
-                         combine=not args.separate_files, offsets=_offsets(args.offset, files))
+                         offsets=_offsets(args.offset, files))
     except ProfileError as exc:
         for issue in exc.issues:
             print(issue)
@@ -127,8 +127,6 @@ def cmd_tools(args) -> int:
     return 0
 
 
-SEPARATE_HELP = ("treat every file as its own recording (by default files such as "
-                 "<test>_<run>_ABD_Robot__<time>.mf4 and <test>_<run>_MOTION_1__<time>.mf4 are combined)")
 
 
 def main(argv=None) -> int:
@@ -145,7 +143,6 @@ def main(argv=None) -> int:
                         "'kpi_results' next to the input files, replaced on every run")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--force", action="store_true", help="run even if preflight reports errors")
-    p.add_argument("--separate-files", action="store_true", help=SEPARATE_HELP)
     p.add_argument("--offset", action="append", metavar="FILE=SECONDS",
                    help="shift a file in time when files are not time-synced (positive: later); repeatable")
     p.set_defaults(func=cmd_run)
@@ -157,7 +154,6 @@ def main(argv=None) -> int:
     p = sub.add_parser("preflight", help="check signal coverage of files")
     p.add_argument("profile")
     p.add_argument("files", nargs="+")
-    p.add_argument("--separate-files", action="store_true", help=SEPARATE_HELP)
     p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("channels", help="list channels in an MF4 file")

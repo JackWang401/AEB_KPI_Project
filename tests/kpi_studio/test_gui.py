@@ -139,8 +139,7 @@ def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
     viewer.plot_signals(["egoSpeed", "aebTargetDecel"])  # one from each file
     qtbot.waitUntil(lambda: viewer.data is not None and viewer.worker is None, timeout=20000)
     assert {"egoSpeed", "aebTargetDecel"} <= set(viewer.data["values"])
-    window.files_page.combine.setChecked(False)
-    assert len(window.state.recordings()) == 2
+    assert not hasattr(window.files_page, "combine")  # always combined, no option
 
 
 def test_new_signals_reach_tab3_while_an_event_is_unfinished(qtbot, window, mf4_dir):

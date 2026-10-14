@@ -46,7 +46,6 @@ class AppState(QObject):
         self.files: list[str] = []
         self.indexes: dict[str, RecordingIndex] = {}
         self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
-        self.combine = True   # read files of the same recording (one per logger/bus) together
         self.offsets: dict[str, float] = {}  # file -> manual time shift [s] (viewer and KPI run; not saved)
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
@@ -257,14 +256,9 @@ class AppState(QObject):
         self.indexes[path] = index
         self.files_changed.emit()
 
-    def set_combine(self, combine: bool):
-        if combine != self.combine:
-            self.combine = combine
-            self.files_changed.emit()
-
     def recordings(self) -> list[Recording]:
-        """What gets processed: the files grouped into recordings (one file each when combining is off)."""
-        return group_recordings(self.files, self.indexes, self.combine, self.offsets)
+        """What gets processed: the files grouped into recordings (files of one recording are always combined)."""
+        return group_recordings(self.files, self.indexes, offsets=self.offsets)
 
     def set_offsets(self, changes: dict[str, float]):
         """Set the manual time shift [s] of files (0 removes it); positive moves a file later."""

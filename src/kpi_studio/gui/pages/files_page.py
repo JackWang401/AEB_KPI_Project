@@ -8,7 +8,6 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -40,7 +39,9 @@ class FilesPage(QWidget):
         lay.setContentsMargins(*PAGE_MARGINS)
         lay.setSpacing(12)
         intro = QLabel("Add the MF4 recordings to process (two or more is typical). Drag and drop works too. "
-                       "Headers are read in the background so channel names are available in the next step.")
+                       "Headers are read in the background so channel names are available in the next step. "
+                       "Files of the same recording (one per logger, e.g. …_002_ABD_Robot__… and "
+                       "…_002_MOTION_1__…) are read together as one recording.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
 
@@ -52,17 +53,6 @@ class FilesPage(QWidget):
         for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             bar.addWidget(b)
         bar.addStretch(1)
-        self.combine = QCheckBox("Combine files of the same recording")
-        self.combine.setToolTip(
-            "Loggers often write one drive as several files, one per bus or ECU, e.g.\n"
-            "  AADT-150453_002_ABD_Robot__20260826T151159.mf4\n"
-            "  AADT-150453_002_MOTION_1__20260826T151158.mf4\n"
-            "Files in the same folder with the same name before the logger part (and start times within\n"
-            "5 minutes) are read together as one recording, on one time axis. KPIs can then use signals\n"
-            "from all of them.")
-        self.combine.setChecked(self.settings.value("files/combine", True, type=bool))
-        self.state.set_combine(self.combine.isChecked())
-        bar.addWidget(self.combine)
         lay.addLayout(bar)
 
         self.table = QTableWidget(0, len(self.COLS))
@@ -85,7 +75,6 @@ class FilesPage(QWidget):
         self.add_folder_btn.clicked.connect(self.pick_folder)
         self.remove_btn.clicked.connect(self.remove_selected)
         self.clear_btn.clicked.connect(lambda: self.state.set_files([]))
-        self.combine.toggled.connect(self._combine_toggled)
         self.table.itemChanged.connect(self._item_edited)
         state.files_changed.connect(self.refresh)
         state.offsets_changed.connect(lambda *_: self.refresh())
@@ -134,10 +123,6 @@ class FilesPage(QWidget):
             value = self.state.offsets.get(f, 0.0)
         self.state.set_offsets({f: value})
         self.refresh()  # normalise the text (and undo invalid input)
-
-    def _combine_toggled(self, on: bool):
-        self.settings.setValue("files/combine", on)
-        self.state.set_combine(on)
 
     # drag and drop
     def dragEnterEvent(self, e):

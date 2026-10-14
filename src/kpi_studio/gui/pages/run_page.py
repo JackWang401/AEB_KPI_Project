@@ -355,7 +355,7 @@ class RunPage(QWidget):
         if missing_idx:
             self.log.appendPlainText("Still reading file headers; try again in a moment.")
             return False
-        report = preflight(self.state.compiled, self.state.files, self.state.indexes, self.state.combine)
+        report = preflight(self.state.compiled, self.state.files, self.state.indexes)
         self.log.appendPlainText(report.text())
         return report.ok
 
@@ -374,7 +374,7 @@ class RunPage(QWidget):
         self.log.appendPlainText("— run started —")
         self.worker = RunWorker(self.state.resolved, list(self.state.files), self.output_root(),
                                 self.workers.value(), base_dir=self.state.base_dir,
-                                indexes=dict(self.state.indexes), combine=self.state.combine,
+                                indexes=dict(self.state.indexes),
                                 offsets=dict(self.state.offsets), parent=self)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log.appendPlainText)
