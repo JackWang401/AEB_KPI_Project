@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -39,7 +38,7 @@ from src.kpi_studio.core.align import build_frame
 from src.kpi_studio.core.engine import FileEvaluator
 from src.kpi_studio.core.model import signal_units
 from src.kpi_studio.core.results import FileOutcome, Status
-from src.kpi_studio.gui.widgets.common import make_canvas, matches
+from src.kpi_studio.gui.widgets.common import make_canvas
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import read_signals
 
@@ -187,10 +186,6 @@ class SignalViewer(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        ll.addWidget(QLabel("Signals"))
-        self.filter = QLineEdit()
-        self.filter.setPlaceholderText("Filter signals… (wildcards: * ?)")
-        ll.addWidget(self.filter)
         self.list = SignalList()
         self.list.setToolTip("Tick signals to plot them. Drag a signal onto a plot to draw it in that subplot.")
         ll.addWidget(self.list, 1)
@@ -229,7 +224,6 @@ class SignalViewer(QWidget):
         self._reload_timer.setInterval(400)
         self._reload_timer.timeout.connect(self._reload_shifted)
         self.list.itemChanged.connect(lambda *_: self.draw())
-        self.filter.textChanged.connect(self._apply_filter)
         clear.clicked.connect(self.uncheck_all)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
@@ -355,7 +349,6 @@ class SignalViewer(QWidget):
             self.list.addItem(it)
         self.list.blockSignals(False)
         self._set_name_tips()
-        self._apply_filter()
 
     def _set_name_tips(self):
         """Tooltip per signal: its unit and description."""
@@ -376,12 +369,6 @@ class SignalViewer(QWidget):
         if key != self._cache_key:
             self._cache_key = key
             self.cache.clear()
-
-    def _apply_filter(self):
-        needle = self.filter.text().strip()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            it.setHidden(not matches(needle, it.text()))
 
     def checked(self) -> list[str]:
         return [self.list.item(i).text() for i in range(self.list.count())
