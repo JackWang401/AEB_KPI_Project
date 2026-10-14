@@ -151,3 +151,20 @@ def test_no_occurrences_says_why():
     out = evaluate_frame(cp, frame, "f")
     msg = [i.message for i in out.issues if "no occurrences" in i.message][0]
     assert "never true" in msg and "rising(ax == 3)" in msg
+
+
+def test_kpi_unit_comes_from_its_signal():
+    from src.kpi_studio.core.model import KpiDef
+    from src.kpi_studio.core.validate import expr_unit, kpi_unit
+
+    units = {"v": "kph", "a": "m/s^2", "b": "m/s^2", "n": ""}
+    assert expr_unit("v", units) == "kph"
+    assert expr_unit("abs(lowpass(a, 5))", units) == "m/s^2"
+    assert expr_unit("a - b", units) == "m/s^2"
+    assert expr_unit("v * 3.6", units) is None
+    assert expr_unit("to_kph(a)", units) == "km/h"
+    assert kpi_unit(KpiDef(name="k", event="e", value="v", at="start", unit="m/s"), units) == "kph"  # signal wins
+    assert kpi_unit(KpiDef(name="k", event="e", value="n", at="start", unit="-"), units) == "-"  # fallback
+    assert kpi_unit(KpiDef(name="k", event="e", duration=("start", "end")), units) == "s"
+    assert kpi_unit(KpiDef(name="k", event="e", reduce="max", of="a"), units) == "m/s^2"
+    assert kpi_unit(KpiDef(name="k", event="e", reduce="count_rising", of="v > 1"), units) == ""

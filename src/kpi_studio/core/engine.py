@@ -306,7 +306,7 @@ class FileEvaluator:
                     value, mt, status, msg = self.kpi(k, times, done)
                     done[k.defn.name] = (value, status)
                     outcome.results.append(KpiResult(self.file, ename, i, k.defn.name, value,
-                                                     k.defn.unit or "", mt, status, msg))
+                                                     k.unit, mt, status, msg))
                 if cap and i <= cap.get("max", 50):
                     outcome.traces.append(self._trace(occ, cap.get("signals", [])))
         return outcome

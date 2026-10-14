@@ -310,7 +310,7 @@ class RunService:
 
         profile_text = profile_store.to_yaml(self.resolved)
         profile_store.atomic_write_text(out_dir / "profile.resolved.kpi.yaml", profile_text)
-        units = {k.defn.name: k.defn.unit or "" for k in self.cp.kpis}
+        units = {k.defn.name: k.unit for k in self.cp.kpis}
         kpi_order = [k.defn.name for k in self.cp.kpis]
         run_info = [
             ("profile", self.resolved.name),

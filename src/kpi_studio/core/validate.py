@@ -7,7 +7,8 @@ from typing import Any, Mapping, Optional
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.expr import Compiled, ExprError, compile_expr
-from src.kpi_studio.core.model import BUILTIN_MOMENTS, TIME, EventDef, KpiDef, MomentRule, Profile, parse_moment
+from src.kpi_studio.core.model import (BUILTIN_MOMENTS, TIME, EventDef, KpiDef, MomentRule, Profile, parse_moment,
+                                       signal_units)
 from src.kpi_studio.toolbox.registry import ToolError, ToolSpec
 
 
@@ -57,10 +58,76 @@ class CompiledKpi:
     reducer: Optional[ToolSpec] = None
     of: Optional[Compiled] = None
     args: dict = field(default_factory=dict)
+    unit: str = ""   # taken from the signal the KPI reads; the profile's 'unit' only when it cannot be inferred
 
     @property
     def name(self) -> str:
         return self.defn.name
+
+
+_UNITLESS = {"count", "bool"}
+
+
+def expr_unit(source: Optional[str], units: Mapping[str, str]) -> Optional[str]:
+    """Unit of an expression when it follows from its signal: `x`, `-x`, `abs(x)`, `lowpass(x, 5)`,
+    `to_kph(v)`, `a - b` (same units). None when it cannot be told (e.g. `x * 3.6`)."""
+    import ast
+
+    if not source:
+        return None
+    try:
+        node = ast.parse(source.strip(), mode="eval").body
+    except SyntaxError:
+        return None
+
+    def unit(n) -> Optional[str]:
+        if isinstance(n, ast.Name):
+            return units.get(n.id)
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
+            return unit(n.operand)
+        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub)):
+            a, b = unit(n.left), unit(n.right)
+            if isinstance(n.right, ast.Constant):
+                return a
+            return a if a is not None and a == b else None
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.args:
+            spec = toolbox.find_expression_tool(n.func.id)
+            if spec is None or spec.kind != "signal":
+                return None
+            if spec.unit == "same":
+                return unit(n.args[0])
+            if spec.unit == "to":
+                arg = next((k.value for k in n.keywords if k.arg == "to_unit"), n.args[2] if len(n.args) > 2 else None)
+                return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
+            if spec.unit and "x" not in spec.unit:
+                return spec.unit
+        return None
+
+    return unit(node)
+
+
+def kpi_unit(kdef: KpiDef, units: Mapping[str, str]) -> str:
+    """The KPI's unit: from the signal it reads, else the profile's 'unit', else ''."""
+    inferred = None
+    if kdef.form == "value":
+        inferred = expr_unit(kdef.value, units)
+    elif kdef.form == "duration":
+        inferred = "s"
+    elif kdef.form == "reduce" and kdef.reduce:
+        try:
+            spec = toolbox.get("reducer", kdef.reduce)
+        except ToolError:
+            spec = None
+        if spec is not None:
+            if spec.unit == "same":
+                inferred = expr_unit(kdef.of, units)
+            elif spec.unit in _UNITLESS:
+                inferred = ""
+            elif spec.unit and "x" not in spec.unit:
+                inferred = spec.unit
+    if inferred:
+        return inferred
+    return kdef.unit or (inferred or "")
 
 
 @dataclass
@@ -206,6 +273,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         events[ename] = ce
 
     # ---------------- kpis
+    sig_units = signal_units(profile)
     kpis: list[CompiledKpi] = []
     seen: set[str] = set()
     seen_by_event: dict[str, set[str]] = {}
@@ -228,7 +296,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
                 err(f"{where}.{key}", f"unknown moment '{m}' in event '{kdef.event}'; "
                                       f"use one of {', '.join(sorted(valid_moments))}")
 
-        ck = CompiledKpi(defn=kdef)
+        ck = CompiledKpi(defn=kdef, unit=kpi_unit(kdef, sig_units))
         if kdef.form == "value":
             ck.value = cexpr(f"{where}.value", kdef.value)
             check_moment(kdef.at, "at")

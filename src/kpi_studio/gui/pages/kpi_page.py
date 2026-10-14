@@ -34,7 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio import toolbox
-from src.kpi_studio.core.model import BUILTIN_MOMENTS, derived_to_yaml
+from src.kpi_studio.core.model import BUILTIN_MOMENTS, KpiDef, derived_to_yaml, signal_units
+from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import (
     ConditionBuilder,
@@ -467,7 +468,9 @@ class KpiForm(QWidget):
         self.reducer.addItems(toolbox.names("reducer"))
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
-        self.unit = QLineEdit()
+        self.unit = QLineEdit()  # shows the unit taken from the signal; typed only for formulas
+        self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
+                             "Only a formula needs a unit typed in.")
         self.desc = QLineEdit()
         rng = QHBoxLayout()
         rng.addWidget(self.m1)
@@ -536,7 +539,7 @@ class KpiForm(QWidget):
         self.m2.setCurrentText(rng[1])
         self.reducer.setCurrentText(k.get("reduce", "max"))
         self.args.setText(format_options(k.get("args", {})))
-        self.unit.setText(k.get("unit", "") or "")
+        self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
         self._show_form(form)
         self._loading = False
@@ -592,14 +595,35 @@ class KpiForm(QWidget):
                 pass
         else:
             k.update(formula=self.formula.text().strip())
-        if self.unit.text().strip():
-            k["unit"] = self.unit.text().strip()
+        if form == "formula":
+            if self.unit.text().strip():
+                k["unit"] = self.unit.text().strip()
+        elif self.k.get("unit"):
+            k["unit"] = self.k["unit"]  # kept as a fallback when the signal has no unit
         if self.desc.text().strip():
             k["description"] = self.desc.text().strip()
         if k != self.k:
             self.state.data["kpis"][self.index] = k
             self.state.edited()
             self.page.refresh_kpi_labels()
+        self.update_unit(k)
+
+    def update_unit(self, k: dict):
+        """Show the unit the KPI gets from its signal; editable only for formulas."""
+        formula = k.get("formula") is not None
+        self.unit.setReadOnly(not formula)
+        self.unit.setStyleSheet("" if formula else "QLineEdit { background: transparent; border: none; }")
+        if formula:
+            self.unit.setText(k.get("unit", "") or "")
+            self.unit.setPlaceholderText("unit of the formula (optional)")
+            return
+        units = signal_units(self.state.resolved) if self.state.resolved is not None else {}
+        try:
+            unit = kpi_unit(KpiDef.model_validate({kk: v for kk, v in k.items() if v is not None}), units)
+        except Exception:  # noqa: BLE001 - incomplete KPI
+            unit = ""
+        self.unit.setText(unit)
+        self.unit.setPlaceholderText("from the signal (it has no unit)")
 
     def rename(self):
         new = self.name_edit.text().strip()
@@ -623,6 +647,7 @@ class KpiForm(QWidget):
         if self.index is None:
             return
         name = self.k.get("name", "")
+        self.update_unit(self.k)
         msgs = [str(i) for i in self.state.issues if f"kpis.{name}" in i.where]
         self.status.setText("<span style='color:#e34948'>" + "<br>".join(msgs) + "</span>" if msgs else "")
 

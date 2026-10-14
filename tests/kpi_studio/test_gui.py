@@ -535,3 +535,30 @@ def test_event_fields_not_red_after_a_rename(qtbot, window, mf4_dir):
     assert kp.event_form.start.error is None and kp.event_form.end.error is None
     state.validate_now()
     assert kp.event_form.start.error is None
+
+
+def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPointF
+
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 900)
+    window.show()
+    window.tabs.setCurrentIndex(1)
+    viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    assert len(viewer._axes) == 3
+    # find the widget position of the first subplot and drop a signal there
+    ax = viewer._axes[0]
+    ratio = viewer.canvas.devicePixelRatioF()
+    x0, y0, x1, y1 = ax.bbox.extents
+    pos = QPointF((x0 + x1) / 2 / ratio, viewer.canvas.height() - (y0 + y1) / 2 / ratio)
+    assert viewer.axes_at(pos) is ax
+    viewer.drop_signals(["aebTargetDecel"], viewer.axes_at(pos))
+    assert len(viewer._axes) == 2
+    assert viewer._ax_groups[viewer._axes[0]] == ["egoSpeed", "aebTargetDecel"]
+    assert viewer.separate_btn.isVisible()
+    viewer.drop_signals(["longGap"], viewer._axes[1])  # unticked signal: ticked and added
+    assert "longGap" in viewer.checked() and viewer._ax_groups[viewer._axes[1]] == ["longActAccel", "longGap"]
+    viewer.separate_all()
+    assert len(viewer._axes) == 4

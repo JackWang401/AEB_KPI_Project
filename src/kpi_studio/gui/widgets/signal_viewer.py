@@ -16,10 +16,11 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QSpinBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -44,6 +46,28 @@ from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import read_signals
 
 NO_EVENT = "(signals only)"
+SIGNAL_MIME = "application/x-kpi-studio-signals"
+LINESTYLES = ["-", "--", ":", "-."]
+MIN_AXIS_PX = 90          # below this the subplots scroll instead of shrinking
+MARGIN_PX = dict(left=64, right=12, top=10, bottom=40, gap=12)
+
+
+class SignalList(QListWidget):
+    """Signal list whose items can be dragged onto a subplot."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+    def mimeTypes(self):
+        return [SIGNAL_MIME]
+
+    def mimeData(self, items):
+        md = QMimeData()
+        md.setData(SIGNAL_MIME, "\n".join(i.text() for i in items).encode())
+        return md
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_AXES = 8
 
@@ -107,6 +131,9 @@ class SignalViewer(QWidget):
         self._series: dict = {}              # axes -> [(label, time, values, enum labels)]
         self._artists: list = []
         self._dragging = None
+        self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
+        self._ax_groups: dict = {}           # axes -> signal names drawn there
+        self._enum_axes: set = set()
         self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome} from Run preview
         self.preview_worker = None
 
@@ -116,6 +143,10 @@ class SignalViewer(QWidget):
         self.load_btn = QPushButton("Load signals")
         self.load_btn.setToolTip("Read the ticked signals from the ticked recordings")
         bar.addWidget(self.load_btn)
+        self.separate_btn = QPushButton("One signal per subplot")
+        self.separate_btn.setToolTip("Undo drag and drop: give every signal its own subplot again")
+        self.separate_btn.setVisible(False)
+        bar.addWidget(self.separate_btn)
         self.status = QLabel()
         self.status.setObjectName("hint")
         bar.addWidget(self.status, 1)
@@ -157,7 +188,8 @@ class SignalViewer(QWidget):
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter signals… (wildcards: * ?)")
         ll.addWidget(self.filter)
-        self.list = QListWidget()
+        self.list = SignalList()
+        self.list.setToolTip("Tick signals to plot them. Drag a signal onto a plot to draw it in that subplot.")
         ll.addWidget(self.list, 1)
         clear = QPushButton("Uncheck all")
         ll.addWidget(clear)
@@ -167,9 +199,16 @@ class SignalViewer(QWidget):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         self.fig, self.canvas, Toolbar = make_canvas()
+        self.fig.set_layout_engine("none")  # margins are set in pixels (_apply_layout)
         self.toolbar = Toolbar(self.canvas, right)
         rl.addWidget(self.toolbar)
-        rl.addWidget(self.canvas, 1)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setWidget(self.canvas)
+        rl.addWidget(self.scroll, 1)
+        self.canvas.setAcceptDrops(True)
+        self.canvas.installEventFilter(self)
         split.addWidget(right)
         self.kpi_table = QTableWidget(0, 5)
         self.kpi_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
@@ -190,6 +229,8 @@ class SignalViewer(QWidget):
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
+        self.canvas.mpl_connect("resize_event", lambda *_: self._apply_layout())
+        self.separate_btn.clicked.connect(self.separate_all)
         state.files_changed.connect(self.refresh_files)
         state.validated.connect(self.refresh_names)
         state.validated.connect(self._drop_stale_cache)
@@ -381,59 +422,166 @@ class SignalViewer(QWidget):
         self.status.setText("  ·  ".join(parts))
         self.status.setToolTip("\n".join(tips))
 
+    # ------------------------------------------------------------------ drag and drop
+    def eventFilter(self, obj, event):
+        if obj is self.canvas and event.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            md = event.mimeData()
+            if not md.hasFormat(SIGNAL_MIME):
+                return False
+            if event.type() == QEvent.Drop:
+                names = [n for n in bytes(md.data(SIGNAL_MIME)).decode().split("\n") if n]
+                self.drop_signals(names, self.axes_at(event.position()))
+            event.acceptProposedAction()
+            return True
+        return super().eventFilter(obj, event)
+
+    def axes_at(self, pos):
+        """The subplot under a widget position (QPointF), or None."""
+        ratio = self.canvas.devicePixelRatioF()
+        x, y = pos.x() * ratio, (self.canvas.height() - pos.y()) * ratio
+        return next((ax for ax in self._axes if ax.bbox.contains(x, y)), None)
+
+    def drop_signals(self, names, ax=None):
+        """Draw `names` in the subplot `ax` (its first signal hosts them); outside any subplot: own subplots."""
+        group = self._ax_groups.get(ax) or []
+        host = group[0] if group else None
+        for n in names:
+            if host is None or n == host:
+                self.host.pop(n, None)
+                continue
+            for other, h in list(self.host.items()):  # whatever n hosted moves along
+                if h == n:
+                    self.host[other] = host
+            self.host[n] = host
+        self.set_checked(names)
+        self.draw()
+
+    def separate_all(self):
+        self.host.clear()
+        self.draw()
+
+    def _groups(self, names: list[str]) -> list[list[str]]:
+        """Signals grouped by subplot, in list order; the host of a group comes first."""
+        avail = set(names)
+
+        def root(n):
+            seen = set()
+            while n in self.host and self.host[n] in avail and n not in seen:
+                seen.add(n)
+                n = self.host[n]
+            return n
+
+        groups: dict[str, list[str]] = {}
+        for n in names:
+            groups.setdefault(root(n), []).append(n)
+        return [[r] + [n for n in g if n != r] for r, g in groups.items()]
+
+    def _apply_layout(self):
+        """Fixed pixel margins, so labels and moment names never squeeze the subplots."""
+        n = len(self._axes)
+        if not n:
+            return
+        w, h = max(self.canvas.width(), 1), max(self.canvas.height(), 1)
+        m = dict(MARGIN_PX)
+        if any(ax.get_title() for ax in self._axes):
+            m["top"] += 16
+        if self._enum_axes:
+            m["left"] += 70
+        axis_h = max((h - m["top"] - m["bottom"] - m["gap"] * (n - 1)) / n, 1)
+        self.fig.subplots_adjust(left=min(m["left"] / w, 0.4), right=1 - m["right"] / w,
+                                 top=1 - m["top"] / h, bottom=m["bottom"] / h, hspace=m["gap"] / axis_h)
+
     def draw(self):
+        from matplotlib.lines import Line2D
+        from matplotlib.ticker import MaxNLocator
+
         self.fig.clear()
-        self._axes, self._series, self._artists = [], {}, []
+        self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
+        self.separate_btn.setVisible(bool(self.host))
         if not loaded:
             self.kpi_table.setVisible(False)
-            ax = self.fig.add_subplot(111)
-            ax.text(0.5, 0.5, "Tick recordings and signals on the left, then press Load signals", ha="center",
-                    va="center", transform=ax.transAxes, color="#6b6b66")
-            ax.set_axis_off()
-            self.canvas.draw_idle()
+            self._message("Tick recordings and signals on the left, then press Load signals")
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
-        shown = available[:MAX_AXES]
+        groups = self._groups(available)
+        shown = groups[:MAX_AXES]
         if not shown:
-            ax = self.fig.add_subplot(111)
-            msg = "Tick one or more signals on the left"
-            if names:
-                msg = "Not available in the ticked recordings: " + ", ".join(names)
-            ax.text(0.5, 0.5, msg, ha="center", va="center", transform=ax.transAxes, color="#6b6b66", wrap=True)
-            ax.set_axis_off()
-            self.canvas.draw_idle()
+            self._message("Not available in the ticked recordings: " + ", ".join(names) if names
+                          else "Tick one or more signals on the left")
             return
+        self.canvas.setMinimumHeight(len(shown) * MIN_AXIS_PX + MARGIN_PX["top"] + MARGIN_PX["bottom"] + 16)
         overlay = len(loaded) > 1
+        any_multi = any(len(g) > 1 for g in shown)
         axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
-        for i, (ax, n) in enumerate(zip(axes, shown)):
-            unit = ""
-            for j, (r, d) in enumerate(loaded):
-                if n not in d["values"]:
-                    continue
-                y = np.asarray(d["values"][n], dtype=float)
-                color = COLORS[(j if overlay else i) % len(COLORS)]
-                ax.plot(d["time"], y, color=color, lw=1.2, label=Path(r.name).name if i == 0 else None)
-                enum = d.get("labels", {}).get(n)
-                self._series.setdefault(ax, []).append((Path(r.name).name, np.asarray(d["time"]), y, enum))
-                unit = unit or d["units"].get(n, "")
-                if enum and len(enum) <= 16:
-                    ax.set_yticks(sorted(enum), [enum[k] for k in sorted(enum)])
-            ax.text(0.005, 0.97, f"{n} [{unit}]" if unit else n, transform=ax.transAxes, fontsize=8, va="top",
-                    ha="left", color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
+        for i, (ax, group) in enumerate(zip(axes, shown)):
+            multi = len(group) > 1
+            handles = []
+            for k, n in enumerate(group):
+                unit = ""
+                color = COLORS[k % len(COLORS)] if multi else None
+                for j, (r, d) in enumerate(loaded):
+                    if n not in d["values"]:
+                        continue
+                    y = np.asarray(d["values"][n], dtype=float)
+                    c = color or COLORS[(j if overlay else i) % len(COLORS)]
+                    ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
+                    ax.plot(d["time"], y, color=c, lw=1.2, ls=ls)
+                    rec = Path(r.name).name
+                    label = (f"{n} · {rec}" if overlay else n) if multi else (rec if overlay else n)
+                    enum = d.get("labels", {}).get(n)
+                    self._series.setdefault(ax, []).append((label, np.asarray(d["time"]), y, enum))
+                    unit = unit or d["units"].get(n, "")
+                    if enum and not multi:
+                        self._enum_ticks(ax, enum, y)
+                text = f"{n} [{unit}]" if unit else n
+                if multi:
+                    handles.append(Line2D([], [], color=color, lw=1.6, label=text))
+                else:
+                    ax.text(0.005, 0.97, text, transform=ax.transAxes, fontsize=8, va="top", ha="left",
+                            color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.5))
+            if handles:
+                ax.legend(handles=handles, loc="upper left", fontsize=7.5, framealpha=0.85, handlelength=1.4,
+                          borderaxespad=0.3, ncols=min(len(handles), 3))
+            if ax not in self._enum_axes:
+                ax.yaxis.set_major_locator(MaxNLocator(nbins=4, min_n_ticks=2))
             for lo, hi in self.spans:
                 ax.axvspan(lo, hi, color="#2a78d6", alpha=0.08, lw=0)
             ax.grid(True, color="#e6e5e0", lw=0.6)
-            ax.tick_params(labelsize=7)
+            ax.tick_params(labelsize=7.5)
+            ax.margins(y=0.08)
+            self._ax_groups[ax] = group
         if overlay:
-            axes[0].legend(fontsize=7, loc="upper right", framealpha=0.85)
+            recs = [Path(r.name).name for r, _ in loaded]
+            rec_handles = [Line2D([], [], color="#5f5e5a" if any_multi else COLORS[j % len(COLORS)],
+                                  ls=LINESTYLES[j % len(LINESTYLES)] if any_multi else "-", lw=1.4, label=rec)
+                           for j, rec in enumerate(recs)]
+            axes[0].add_artist(axes[0].legend(handles=rec_handles, fontsize=7, loc="lower right", framealpha=0.85))
         axes[-1].set_xlabel("time [s]", fontsize=8)
-        if len(available) > MAX_AXES:
-            axes[0].set_title(f"Showing the first {MAX_AXES} ticked signals", fontsize=8, color="#6b6b66")
+        if len(groups) > MAX_AXES:
+            axes[0].set_title(f"Showing the first {MAX_AXES} subplots", fontsize=8, color="#6b6b66")
         self._decorate_preview(list(axes), loaded)
         self._axes = list(axes)
+        self._apply_layout()
         self._update_cursors()
+
+    def _message(self, text):
+        self.canvas.setMinimumHeight(0)
+        ax = self.fig.add_subplot(111)
+        ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, color="#6b6b66", wrap=True)
+        ax.set_axis_off()
+        self.fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+        self.canvas.draw_idle()
+
+    def _enum_ticks(self, ax, enum: dict, y):
+        """Y ticks named by the file's texts, only for the values that occur (long tables stay legible)."""
+        present = set(np.unique(y[np.isfinite(y)]).tolist())
+        ticks = [k for k in sorted(enum) if k in present] or sorted(enum)
+        if len(ticks) > 10:
+            return
+        ax.set_yticks(ticks, [(enum[k][:20] + "…") if len(enum[k]) > 21 else enum[k] for k in ticks])
+        self._enum_axes.add(ax)
 
     # ------------------------------------------------------------------ event preview
     def refresh_events(self):
@@ -569,8 +717,9 @@ class SignalViewer(QWidget):
                 if m.time is not None:
                     ax.axvline(m.time, color="#5f5e5a", ls=":", lw=1)
                     if i == 0:
-                        ax.annotate(m.moment, (m.time, 1.0), xycoords=("data", "axes fraction"), fontsize=7,
-                                    rotation=90, va="top", ha="right", color="#5f5e5a")
+                        ax.annotate(f" {m.moment}", (m.time, 0.02), xycoords=("data", "axes fraction"),
+                                    fontsize=7, rotation=90, va="bottom", ha="right", color="#5f5e5a",
+                                    annotation_clip=False)
         lo, hi = occ.t_window_start, occ.t_window_end
         axes[0].set_xlim(lo, hi)
         for ax in axes:  # fit y to the window, not the whole file
