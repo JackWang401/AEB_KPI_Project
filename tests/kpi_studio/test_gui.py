@@ -463,3 +463,56 @@ def test_renaming_a_signal_updates_events_and_kpis(qtbot, window, mf4_dir):
     assert state.data["kpis"][-1]["value"] == "motTypeSrvd"
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
+
+
+def test_rename_twice_quickly_and_no_ghost_rows(qtbot, window, mf4_dir, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["signals"]["LmcMotTypeServedLong"] = {"channels": ["speedESC"]}
+    state.data["events"]["served"] = {"start": "rising(LmcMotTypeServedLong == 3)"}
+    state.edited(structure=True)
+    state.validate_now()
+    page = window.signals_page
+
+    def rename(old, new):
+        row = next(r for r in range(page.sig_table.rowCount()) if page.sig_table.item(r, 0).text() == old)
+        page.sig_table.item(row, 0).setText(new)
+
+    rename("LmcMotTypeServedLong", "MotTypeSrvdLong")  # no validation in between
+    names = [page.sig_table.item(r, 0).text() for r in range(page.sig_table.rowCount())]
+    assert "LmcMotTypeServedLong" not in names  # the old name does not linger as a library row
+    rename("MotTypeSrvdLong", "LmcMotTypeSrvdLong")
+    assert state.data["events"]["served"]["start"] == "rising(LmcMotTypeSrvdLong == 3)"
+    rename("LmcMotTypeSrvdLong", "egoSpeed")  # taken by the vehicle library
+    assert warnings and "LmcMotTypeSrvdLong" in state.data["signals"]
+
+
+def test_rename_everywhere_repairs_dangling_references(qtbot, window, mf4_dir, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.kpi_studio.gui.pages.signals_page import RenameDialog
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["signals"]["LmcMotTypeSrvdLong"] = {"channels": ["speedESC"]}
+    state.data["events"]["served"] = {"start": "rising(MotTypeSrvdLong == 3)", "end": "falling(MotTypeSrvdLong == 3)"}
+    state.edited(structure=True)
+    state.validate_now()
+    assert state.compiled is None
+    page = window.signals_page
+    assert "MotTypeSrvdLong" in page._unknown_names()
+
+    def fake_exec(dlg):
+        assert dlg.old.itemText(0) == "MotTypeSrvdLong"  # unknown names first
+        dlg.new.setText("LmcMotTypeSrvdLong")
+        return RenameDialog.Accepted
+
+    monkeypatch.setattr(RenameDialog, "exec", fake_exec)
+    page.rename_everywhere()
+    assert state.data["events"]["served"]["end"] == "falling(LmcMotTypeSrvdLong == 3)"
+    state.validate_now()
+    assert state.compiled is not None, [str(i) for i in state.issues]

@@ -5,11 +5,14 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -119,8 +122,11 @@ class SignalsPage(QWidget):
         sl.addWidget(self.sig_table, 1)
         row = QHBoxLayout()
         self.del_sig_btn = QPushButton("Delete signal")
+        self.rename_btn = QPushButton("Rename everywhere…")
+        self.rename_btn.setToolTip("Replace a signal name in every derived signal, event, moment, KPI and plot")
         self.preview_btn = QPushButton("Plot selected signals ↓")
         row.addWidget(self.del_sig_btn)
+        row.addWidget(self.rename_btn)
         row.addStretch(1)
         row.addWidget(self.preview_btn)
         sl.addLayout(row)
@@ -158,6 +164,7 @@ class SignalsPage(QWidget):
         self.add_sig_btn.clicked.connect(self.add_selected_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self.del_sig_btn.clicked.connect(self.delete_signal)
+        self.rename_btn.clicked.connect(self.rename_everywhere)
         self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
@@ -253,10 +260,10 @@ class SignalsPage(QWidget):
     def _rows(self):
         own = self.state.data.get("signals", {}) or {}
         rows = [(n, d, False) for n, d in own.items()]
-        if self.state.resolved is not None:
-            for n, sdef in self.state.resolved.signals.items():
-                if n not in own:
-                    rows.append((n, sdef.model_dump(exclude_none=True), True))
+        lib_signals, _ = self.state.library_definitions()  # from the files: never stale after a rename
+        for n, sdef in lib_signals.items():
+            if n not in own:
+                rows.append((n, sdef.model_dump(exclude_none=True), True))
         return rows
 
     def _found(self, sdict: dict) -> str:
@@ -301,10 +308,10 @@ class SignalsPage(QWidget):
         d = sigs[name]
         col, text = item.column(), item.text().strip()
         if col == 0:
-            if text and text != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", text) \
-                    and text not in self.state.signal_names():
-                self.state.data["signals"] = {(text if k == name else k): v for k, v in sigs.items()}  # keep order
-                self._renamed(name, text)
+            if text != name:
+                if self._rename_ok(text):
+                    self.state.data["signals"] = {(text if k == name else k): v for k, v in sigs.items()}
+                    self._renamed(name, text)
             self.state.edited(structure=True)
             return
         if col == 1:
@@ -406,11 +413,12 @@ class SignalsPage(QWidget):
         if item.column() == 0:
             new = item.text().strip()
             derived = self.state.data.setdefault("derived", {})
-            if new and new != name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new) \
-                    and new not in self.state.signal_names():
+            if new != name and self._rename_ok(new):
                 self.state.data["derived"] = {(new if k == name else k): v for k, v in derived.items()}
                 self._renamed(name, new)
                 self.state.edited(structure=True)
+            elif new != name:
+                QTimer.singleShot(0, self.refresh_derived)  # put the old name back
         elif item.column() in (2, 3):
             key = "unit" if item.column() == 2 else "description"
             if self._set_der_field(name, key, item.text().strip()):
@@ -457,6 +465,45 @@ class SignalsPage(QWidget):
             self._renamed(name, v["name"])
         self.state.edited(structure=True)
 
+    def _rename_ok(self, new: str) -> bool:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new):
+            QMessageBox.warning(self, "Rename", f"'{new}' is not a valid name: use letters, digits and _, "
+                                               "not starting with a digit.")
+            return False
+        if new in self.state.taken_names():
+            QMessageBox.warning(self, "Rename", f"'{new}' is already a signal or derived signal.")
+            return False
+        return True
+
+    def rename_everywhere(self):
+        """Replace a name in every expression, e.g. to repair references to a signal renamed earlier."""
+        dlg = RenameDialog(sorted(set(self.state.signal_names()) | self.state.taken_names()
+                                  | self._unknown_names()), self._unknown_names(), self)
+        if dlg.exec() != RenameDialog.Accepted:
+            return
+        old, new = dlg.values()
+        if not old or not new or old == new or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", new):
+            return
+        for section in ("signals", "derived"):
+            d = self.state.data.get(section) or {}
+            if old in d:
+                if new in self.state.taken_names():
+                    QMessageBox.warning(self, "Rename", f"'{new}' is already a signal or derived signal.")
+                    return
+                self.state.data[section] = {(new if k == old else k): v for k, v in d.items()}
+        self._renamed(old, new)
+        self.state.edited(structure=True)
+        n = self.last_rename[2]
+        QMessageBox.information(self, "Rename", f"Replaced {old} → {new} in {n} place{'s' if n != 1 else ''}.")
+
+    def _unknown_names(self) -> set:
+        out = set()
+        for i in self.state.issues:
+            m = re.search(r"unknown (?:name|signal)[^']*'([A-Za-z_][A-Za-z0-9_]*)'", str(i))
+            if m:
+                out.add(m.group(1))
+        return out
+
     def _renamed(self, old: str, new: str):
         """Point every expression, moment, KPI and plot that used `old` at `new`."""
         n = rename_signal_references(self.state.data, old, new)
@@ -487,3 +534,33 @@ class SignalsPage(QWidget):
         if item:
             self.state.data["imports"] = [i for i in self.state.data.get("imports", []) if i != item.text()]
             self.state.edited(structure=True)
+
+
+class RenameDialog(QDialog):
+    def __init__(self, names: list[str], unknown: set, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rename everywhere")
+        lay = QVBoxLayout(self)
+        info = QLabel("Replaces the name in every derived signal, event, moment, KPI and plot "
+                      "(and renames the signal itself if it exists).")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        form = QFormLayout()
+        self.old = QComboBox()
+        self.old.setEditable(True)
+        first = sorted(unknown)
+        self.old.addItems(first + [n for n in names if n not in unknown])
+        if first:
+            self.old.setToolTip("Names used in expressions that no signal defines are listed first")
+        self.new = QLineEdit()
+        self.new.setPlaceholderText("new name")
+        form.addRow("Replace", self.old)
+        form.addRow("with", self.new)
+        lay.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def values(self) -> tuple[str, str]:
+        return self.old.currentText().strip(), self.new.text().strip()

@@ -167,6 +167,24 @@ class AppState(QObject):
         except Exception:  # noqa: BLE001
             return None, None
 
+    def library_definitions(self) -> tuple[dict, dict]:
+        """(signals, derived) defined by the imported libraries, read from the library files."""
+        signals, derived = {}, {}
+        for ref in self.data.get("imports", []) or []:
+            try:
+                lib = profile_store.load_library(profile_store.find_library(ref, self.base_dir))
+            except Exception:  # noqa: BLE001 - reported by validation
+                continue
+            signals.update(lib.signals)
+            derived.update(lib.derived)
+        return signals, derived
+
+    def taken_names(self) -> set[str]:
+        """Every signal / derived name currently defined (own and imported), from the live data."""
+        lib_sig, lib_der = self.library_definitions()
+        return set(self.data.get("signals", {}) or {}) | set(self.data.get("derived", {}) or {}) \
+            | set(lib_sig) | set(lib_der)
+
     # names usable in expressions (after resolving imports when possible)
     def signal_names(self) -> list[str]:
         if self.resolved is not None:
