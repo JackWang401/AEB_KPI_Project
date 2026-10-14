@@ -145,8 +145,12 @@ class SignalsPage(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
 
-        imp = QHBoxLayout()
-        imp.addWidget(title("Libraries", "Imported signal / event / KPI libraries"))
+        # libraries are not offered any more; the row only shows for a profile that still imports one,
+        # so those imports can be removed
+        self.lib_row = QWidget()
+        imp = QHBoxLayout(self.lib_row)
+        imp.setContentsMargins(0, 0, 0, 0)
+        imp.addWidget(title("Libraries", "Libraries this profile imports; select one and press Remove"))
         self.imports = QListWidget()
         self.imports.setFixedHeight(28)
         self.imports.setFlow(QListWidget.LeftToRight)
@@ -158,10 +162,10 @@ class SignalsPage(QWidget):
         self.lib_combo.addItems(sorted(p.name.split(".")[0] for p in profile_store.builtin_library_dir().glob("*.kpi-lib.yaml")))
         self.lib_add = QPushButton("Import")
         self.lib_remove = QPushButton("Remove")
-        imp.addWidget(self.lib_combo)
-        imp.addWidget(self.lib_add)
+        self.lib_combo.setVisible(False)
+        self.lib_add.setVisible(False)
         imp.addWidget(self.lib_remove)
-        rl.addLayout(imp)
+        rl.addWidget(self.lib_row)
 
         vsplit = QSplitter(Qt.Vertical)
         rl.addWidget(vsplit, 1)
@@ -355,6 +359,7 @@ class SignalsPage(QWidget):
         self._loading = True
         self.imports.clear()
         self.imports.addItems(self.state.data.get("imports", []) or [])
+        self.lib_row.setVisible(bool(self.state.data.get("imports")))
         self._loading = False
         self.refresh_signals()
         self.refresh_derived()

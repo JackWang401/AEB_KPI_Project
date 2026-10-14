@@ -782,6 +782,7 @@ class KpiPage(QWidget):
         self.to_lib = lib_menu.addAction("Save the selected KPI to a library…")
         self.lib_btn.setMenu(lib_menu)
         krow.insertWidget(2, self.lib_btn)
+        self.lib_btn.setVisible(False)  # libraries are not offered in the GUI
         ll.addLayout(krow)
         self.kpis = QListWidget()
         self.kpis.setMinimumHeight(60)
