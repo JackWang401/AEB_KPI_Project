@@ -631,3 +631,17 @@ def test_library_profile_opens_self_contained(qtbot, window, mf4_dir):
     assert "aeb" in data["events"] and len(data["kpis"]) == 26 and "egoSpeed" in data["signals"]
     assert window.state.dirty  # saving writes the copied-in definitions
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+
+
+def test_right_click_deletes_signal_and_derived(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    for table, section, delete in ((page.sig_table, "signals", page.delete_signal),
+                                   (page.der_table, "derived", page.delete_derived)):
+        name = table.item(0, 0).data(Qt.UserRole)
+        name = name[0] if isinstance(name, tuple) else table.item(0, 0).text()
+        table.clearSelection()
+        menu = page.row_menu(table, table.visualRect(table.model().index(0, 1)).center(), delete)
+        assert [a.text() for a in menu.actions()] == ["Delete"]
+        menu.actions()[0].trigger()
+        assert name not in window.state.data[section]

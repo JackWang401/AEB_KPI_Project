@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -164,9 +165,6 @@ class SignalsPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(title("Signals", "Signals this profile reads from the files"))
         row.addStretch(1)
-        self.del_sig_btn = QPushButton("Delete")
-        self.del_sig_btn.setToolTip("Delete the selected signals")
-        row.addWidget(self.del_sig_btn)
         sl.addLayout(row)
         self.sig_table = QTableWidget(0, len(self.SIG_COLS))
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
@@ -190,11 +188,8 @@ class SignalsPage(QWidget):
         self.add_der_btn.setToolTip("Build a derived signal: pick a signal, a method and its arguments")
         self.edit_der_btn = QPushButton("Edit…")
         self.edit_der_btn.setToolTip("Change the selected derived signal's input, method and arguments")
-        self.del_der_btn = QPushButton("Delete")
-        self.del_der_btn.setToolTip("Delete the selected derived signals")
         drow.addWidget(self.add_der_btn)
         drow.addWidget(self.edit_der_btn)
-        drow.addWidget(self.del_der_btn)
         dl.addLayout(drow)
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
@@ -212,10 +207,10 @@ class SignalsPage(QWidget):
         self.search.textChanged.connect(self.refresh_channels)
         self.add_sig_btn.clicked.connect(self.add_selected_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
-        self.del_sig_btn.clicked.connect(self.delete_signal)
+        self._delete_menu(self.sig_table, self.delete_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
-        self.del_der_btn.clicked.connect(self.delete_derived)
+        self._delete_menu(self.der_table, self.delete_derived)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
         self.sig_table.itemDoubleClicked.connect(self._enum_double_clicked)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
@@ -442,6 +437,30 @@ class SignalsPage(QWidget):
             sigs[name] = self.state.resolved.signals[name].model_dump(exclude_none=True)
         sigs[name]["enum"] = dlg.values() or None
         self.state.edited(structure=True)
+
+    def _delete_menu(self, table, delete):
+        """Right-click a row: Delete (the clicked row, or the whole selection when it is part of it)."""
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        def show(pos):
+            menu = self.row_menu(table, pos, delete)
+            if menu is not None:
+                menu.exec(table.viewport().mapToGlobal(pos))
+
+        table.customContextMenuRequested.connect(show)
+
+    @staticmethod
+    def row_menu(table, pos, delete):
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return None
+        if not table.selectionModel().isRowSelected(index.row(), index.parent()):
+            table.selectRow(index.row())
+        rows = {i.row() for i in table.selectedIndexes()}
+        menu = QMenu(table)
+        act = menu.addAction("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows")
+        act.triggered.connect(delete)
+        return menu
 
     def delete_signal(self):
         rows = sorted({i.row() for i in self.sig_table.selectedIndexes()}, reverse=True)
