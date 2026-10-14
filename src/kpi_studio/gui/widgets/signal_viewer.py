@@ -20,7 +20,6 @@ from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QSpinBox,
@@ -31,7 +30,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -48,7 +46,6 @@ from src.kpi_studio.io.mf4 import read_signals
 NO_EVENT = "(signals only)"
 SIGNAL_MIME = "application/x-kpi-studio-signals"
 LINESTYLES = ["-", "--", ":", "-."]
-MIN_AXIS_PX = 90          # below this the subplots scroll instead of shrinking
 MARGIN_PX = dict(left=64, right=250, top=10, bottom=40, gap=12)   # right: the signal / value list
 
 
@@ -203,11 +200,7 @@ class SignalViewer(QWidget):
         self.fig.set_layout_engine("none")  # margins are set in pixels (_apply_layout)
         self.toolbar = Toolbar(self.canvas, right)
         rl.addWidget(self.toolbar)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setWidget(self.canvas)
-        rl.addWidget(self.scroll, 1)
+        rl.addWidget(self.canvas, 1)  # subplots share the panel height (no scrolling)
         self.canvas.setAcceptDrops(True)
         self.canvas.installEventFilter(self)
         split.addWidget(right)
@@ -512,7 +505,6 @@ class SignalViewer(QWidget):
             self._message("Not available in the ticked recordings: " + ", ".join(names) if names
                           else "Tick one or more signals on the left")
             return
-        self.canvas.setMinimumHeight(len(shown) * MIN_AXIS_PX + MARGIN_PX["top"] + MARGIN_PX["bottom"] + 16)
         overlay = len(loaded) > 1
         axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
         for i, (ax, group) in enumerate(zip(axes, shown)):
@@ -548,7 +540,6 @@ class SignalViewer(QWidget):
         self._update_cursors()
 
     def _message(self, text):
-        self.canvas.setMinimumHeight(0)
         ax = self.fig.add_subplot(111)
         ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, color="#6b6b66", wrap=True)
         ax.set_axis_off()
