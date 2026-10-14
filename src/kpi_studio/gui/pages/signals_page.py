@@ -154,9 +154,7 @@ class SignalsPage(QWidget):
         row.addStretch(1)
         self.del_sig_btn = QPushButton("Delete")
         self.del_sig_btn.setToolTip("Delete the selected signals")
-        self.preview_btn = QPushButton("Plot selected ↓")
         row.addWidget(self.del_sig_btn)
-        row.addWidget(self.preview_btn)
         sl.addLayout(row)
         self.sig_table = QTableWidget(0, len(self.SIG_COLS))
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
@@ -203,7 +201,6 @@ class SignalsPage(QWidget):
         self.add_sig_btn.clicked.connect(self.add_selected_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self.del_sig_btn.clicked.connect(self.delete_signal)
-        self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
         self.del_der_btn.clicked.connect(self.delete_derived)
@@ -448,17 +445,6 @@ class SignalsPage(QWidget):
                                         f"'{name}' comes from an imported library; remove the library to drop it.")
         if changed:
             self.state.edited(structure=True)
-
-    def preview_signal(self):
-        rows = sorted({i.row() for i in self.sig_table.selectedIndexes()})
-        rows += sorted({i.row() + 10_000 for i in self.der_table.selectedIndexes()})
-        names = [self.sig_table.item(r, 0).data(Qt.UserRole)[0] for r in rows if r < 10_000]
-        names += [self.der_table.item(r - 10_000, 0).text() for r in rows
-                  if r >= 10_000 and self.der_table.item(r - 10_000, 0)]
-        if not names:
-            self.viewer.status.setText("Select rows in the signals or derived table first, or tick signals in the panel below.")
-            return
-        self.viewer.plot_signals(names)
 
     def shutdown(self):
         self.viewer.shutdown()
