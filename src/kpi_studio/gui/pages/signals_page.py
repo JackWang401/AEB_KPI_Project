@@ -53,6 +53,14 @@ def format_enum(enum) -> str:
     return enum or ""
 
 
+def enum_summary(enum) -> str:
+    """Short cell text: '8 values: Longitudinal Off, …' for a value table; a table name as it is."""
+    if isinstance(enum, dict):
+        first = min(enum.items(), key=lambda kv: kv[1])[0] if enum else ""
+        return f"{len(enum)} values: {first}, …" if len(enum) > 1 else f"1 value: {first}"
+    return enum or ""
+
+
 def parse_enum(text: str):
     """Inverse of format_enum: a value table when the text has 'value = text' pairs, else a table name."""
     text = text.strip()
@@ -199,6 +207,7 @@ class SignalsPage(QWidget):
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
         self.del_der_btn.clicked.connect(self.delete_derived)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
+        self.sig_table.itemDoubleClicked.connect(self._enum_double_clicked)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
         self.lib_add.clicked.connect(self.add_import)
         self.lib_remove.clicked.connect(self.remove_import)
@@ -359,15 +368,20 @@ class SignalsPage(QWidget):
         self.sig_table.setRowCount(len(rows))
         for r, (name, d, from_lib) in enumerate(rows):
             vals = [name, ", ".join(d.get("channels", [])), d.get("unit") or "", d.get("kind", "continuous"),
-                    format_enum(d.get("enum")), "yes" if d.get("required", True) else "no", self._found(d)]
+                    enum_summary(d.get("enum")), "yes" if d.get("required", True) else "no", self._found(d)]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, (name, from_lib))
                 if c == 0 and d.get("description"):
                     item.setToolTip(d["description"])
-                if c == 4 and isinstance(d.get("enum"), dict):
-                    item.setToolTip("\n".join(f"{_num(v)} = {k}" for k, v in d["enum"].items())
-                                    + "\n\nUse the text in expressions, e.g. x == \"" + next(iter(d["enum"]), "") + "\"")
+                if c == 4:
+                    if isinstance(d.get("enum"), dict):
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # edited in the table dialog
+                        item.setToolTip("\n".join(f"{_num(v)} = {k}" for k, v in
+                                                  sorted(d["enum"].items(), key=lambda kv: kv[1]))
+                                        + "\n\nDouble-click to see or edit the values")
+                    else:
+                        item.setToolTip("Name of an enum table, or double-click with a value table to edit it")
                 if from_lib:
                     item.setForeground(LIB_COLOR)
                 if c in (0, 6) and (from_lib or c == 6):
@@ -404,6 +418,24 @@ class SignalsPage(QWidget):
         elif col == 5:
             d["required"] = text.lower() not in ("no", "false", "0", "n")
         self.state.edited(structure=from_lib)
+
+    def _enum_double_clicked(self, item):
+        if item.column() != 4:
+            return
+        name, from_lib = item.data(Qt.UserRole)
+        sigs = self.state.data.setdefault("signals", {})
+        current = (sigs.get(name) or {}).get("enum") if not from_lib or name in sigs else None
+        if from_lib and name not in sigs:
+            current = self.state.resolved.signals[name].enum if self.state.resolved is not None else None
+        if not isinstance(current, dict):
+            return  # a table name: edited in the cell
+        dlg = EnumDialog(name, current, self)
+        if dlg.exec() != EnumDialog.Accepted:
+            return
+        if from_lib and name not in sigs:
+            sigs[name] = self.state.resolved.signals[name].model_dump(exclude_none=True)
+        sigs[name]["enum"] = dlg.values() or None
+        self.state.edited(structure=True)
 
     def delete_signal(self):
         rows = sorted({i.row() for i in self.sig_table.selectedIndexes()}, reverse=True)
@@ -643,3 +675,59 @@ class RenameDialog(QDialog):
 
     def values(self) -> tuple[str, str]:
         return self.old.currentText().strip(), self.new.text().strip()
+
+
+class EnumDialog(QDialog):
+    """The value table of an enum signal, one value per row (raw value | text)."""
+
+    def __init__(self, signal: str, enum: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Enum values of {signal}")
+        self.resize(460, 420)
+        lay = QVBoxLayout(self)
+        info = QLabel("Use the text in conditions, e.g. " + signal + ' == "' + (next(iter(enum), "") or "TEXT") + '"')
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Value", "Text"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        for text, value in sorted(enum.items(), key=lambda kv: kv[1]):
+            self._add(_num(value), text)
+        lay.addWidget(self.table, 1)
+        row = QHBoxLayout()
+        add = QPushButton("Add value")
+        delete = QPushButton("Delete value")
+        add.clicked.connect(lambda: self._add("", ""))
+        delete.clicked.connect(lambda: [self.table.removeRow(r) for r in
+                                        sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)])
+        row.addWidget(add)
+        row.addWidget(delete)
+        row.addStretch(1)
+        lay.addLayout(row)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def _add(self, value: str, text: str):
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        v = QTableWidgetItem(value)
+        v.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.table.setItem(r, 0, v)
+        self.table.setItem(r, 1, QTableWidgetItem(text))
+
+    def values(self) -> dict:
+        out = {}
+        for r in range(self.table.rowCount()):
+            v, t = self.table.item(r, 0), self.table.item(r, 1)
+            text = t.text().strip() if t else ""
+            try:
+                num = float(v.text()) if v else None
+            except ValueError:
+                num = None
+            if text and num is not None:
+                out[text] = int(num) if num.is_integer() else num
+        return out

@@ -59,7 +59,13 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     assert sigs["Mot"]["enum"] == {"OFF": 0, "SERVED": 3}
     row = next(r for r in range(w.signals_page.sig_table.rowCount())
                if w.signals_page.sig_table.item(r, 0).text() == "Mot")
-    assert w.signals_page.sig_table.item(row, 4).text() == "0 = OFF, 3 = SERVED"
+    assert w.signals_page.sig_table.item(row, 4).text() == "2 values: OFF, …"
+    from src.kpi_studio.gui.pages.signals_page import EnumDialog
+    dlg = EnumDialog("Mot", sigs["Mot"]["enum"])
+    qtbot.addWidget(dlg)
+    assert [dlg.table.item(r, 1).text() for r in range(dlg.table.rowCount())] == ["OFF", "SERVED"]
+    dlg.table.item(1, 1).setText("ON")
+    assert dlg.values() == {"OFF": 0, "ON": 3}
     # the file's texts work in expressions
     w.state.data["events"]["served"] = {"start": 'rising(Mot == "SERVED")'}
     w.state.edited(structure=True)
