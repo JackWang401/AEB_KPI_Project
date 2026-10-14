@@ -7,7 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
-from PySide6.QtCore import QSettings  # noqa: E402
+from PySide6.QtCore import QSettings, Qt  # noqa: E402
 
 from src.kpi_studio.gui.main_window import MainWindow  # noqa: E402
 from src.kpi_studio.io import profile_store  # noqa: E402
@@ -591,3 +591,13 @@ def test_renaming_a_moment_or_kpi_updates_its_users(qtbot, window, mf4_dir):
     assert state.data["kpis"][-1]["formula"] == "speedAtOnset * 2"
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
+
+
+def test_ticking_a_signal_loads_and_plots_it(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.signals_page.viewer
+    assert not viewer.cache
+    item = next(viewer.list.item(i) for i in range(viewer.list.count()) if viewer.list.item(i).text() == "egoSpeed")
+    item.setCheckState(Qt.Checked)  # no Load signals press needed
+    qtbot.waitUntil(lambda: bool(viewer.cache) and viewer.worker is None, timeout=30000)
+    assert viewer.fig.axes and viewer.fig.axes[0].get_lines()

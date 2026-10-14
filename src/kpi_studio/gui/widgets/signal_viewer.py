@@ -223,7 +223,7 @@ class SignalViewer(QWidget):
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(400)
         self._reload_timer.timeout.connect(self._reload_shifted)
-        self.list.itemChanged.connect(lambda *_: self.draw())
+        self.list.itemChanged.connect(lambda *_: self._files_ticked())  # ticking a signal loads and plots it
         clear.clicked.connect(self.uncheck_all)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
@@ -389,7 +389,8 @@ class SignalViewer(QWidget):
         self.draw()
 
     def _files_ticked(self):
-        if any(r.name not in self.cache for r in self.selected()) and self.cache:
+        if self.state.files and self.checked() and (not self.selected()
+                                                   or any(r.name not in self.cache for r in self.selected())):
             self.load()
         else:
             self.draw()
