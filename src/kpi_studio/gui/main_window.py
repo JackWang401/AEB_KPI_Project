@@ -9,14 +9,17 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QGroupBox,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QSplitter,
     QTabWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
     QHBoxLayout,
 )
@@ -28,6 +31,7 @@ from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 
 # Used with the Fusion style (set in app.py) so the window looks the same on macOS, Windows and Linux.
@@ -74,14 +78,29 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.files_page = FilesPage(self.state, self.settings)
-        self.signals_page = SignalsPage(self.state)
-        self.kpi_page = KpiPage(self.state)
+        # one signal panel shared by tab 2 (signals) and tab 3 (event / KPI preview), shown below the tabs
+        self.viewer = SignalViewer(self.state)
+        self.signals_page = SignalsPage(self.state, viewer=self.viewer)
+        self.kpi_page = KpiPage(self.state, viewer=self.viewer)
         self.run_page = RunPage(self.state, self.settings)
         self.tabs.addTab(self.files_page, "1  Files")
         self.tabs.addTab(self.signals_page, "2  Signals")
         self.tabs.addTab(self.kpi_page, "3  Events && KPIs")
         self.tabs.addTab(self.run_page, "4  Plots && Run")
-        self.setCentralWidget(self.tabs)
+        self.viewer_box = QGroupBox("Signal viewer && preview")
+        vb = QVBoxLayout(self.viewer_box)
+        vb.setContentsMargins(6, 6, 6, 6)
+        vb.addWidget(self.viewer)
+        self.central_split = QSplitter(Qt.Vertical)
+        self.central_split.setChildrenCollapsible(False)
+        self.central_split.addWidget(self.tabs)
+        self.central_split.addWidget(self.viewer_box)
+        self.central_split.setStretchFactor(0, 1)
+        self.central_split.setStretchFactor(1, 1)
+        self.central_split.setSizes([430, 470])
+        self.setCentralWidget(self.central_split)
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self._tab_changed(self.tabs.currentIndex())
 
         self._build_toolbar()
         self._build_issues_dock()
@@ -271,11 +290,16 @@ class MainWindow(QMainWindow):
         self._update_title()
         return True
 
+    VIEWER_TABS = (1, 2)  # Signals, Events & KPIs
+
+    def _tab_changed(self, index: int):
+        self.viewer_box.setVisible(index in self.VIEWER_TABS)
+
     def closeEvent(self, event):
         if not self._confirm_discard():
             event.ignore()
             return
         self.files_page.shutdown()
-        self.signals_page.shutdown()
+        self.viewer.shutdown()
         self.run_page.shutdown()
         event.accept()

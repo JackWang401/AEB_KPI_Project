@@ -1,4 +1,4 @@
-"""Step 3: define events, windows, moments and KPIs; preview them on one file."""
+"""Step 3: define events, windows, moments and KPIs (previewed in the shared signal panel)."""
 
 from __future__ import annotations
 
@@ -6,11 +6,9 @@ import copy
 import re
 from pathlib import Path
 
-import numpy as np
 import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -23,10 +21,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -39,17 +35,14 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.model import BUILTIN_MOMENTS
-from src.kpi_studio.core.results import Status
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import (
     ConditionBuilder,
     ExprEdit,
     ToolPalette,
     format_options,
-    make_canvas,
     parse_options,
 )
-from src.kpi_studio.gui.workers import PreviewWorker
 from src.kpi_studio.io import profile_store
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -64,12 +57,6 @@ def _spin(minimum=0.0, maximum=1e6, decimals=2, step=0.1):
     s.setSingleStep(step)
     s.setMinimumWidth(80)
     return s
-
-
-def _label_axis(ax, name: str, unit: str = ""):
-    """Signal name in the top-left corner of its subplot (y labels collide when subplots are short)."""
-    ax.text(0.005, 0.97, f"{name} [{unit}]" if unit else name, transform=ax.transAxes, fontsize=8,
-            va="top", ha="left", color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
 
 
 def _form(parent=None) -> QFormLayout:
@@ -695,18 +682,16 @@ class LibraryPicker(QDialog):
 
 # ============================================================================ page
 class KpiPage(QWidget):
-    def __init__(self, state: AppState, parent=None):
+    def __init__(self, state: AppState, parent=None, viewer=None):
         super().__init__(parent)
         self.state = state
+        self.viewer = viewer  # the shared signal viewer / preview below the tabs
         self.target: ExprEdit | None = None
-        self.preview_data = None
-        self.worker = None
 
         outer = QVBoxLayout(self)
-        vsplit = QSplitter(Qt.Vertical)
-        outer.addWidget(vsplit)
+        outer.setContentsMargins(0, 0, 0, 0)
         top = QSplitter(Qt.Horizontal)
-        vsplit.addWidget(top)
+        outer.addWidget(top)
 
         # ---- left lists
         left = QWidget()
@@ -757,50 +742,6 @@ class KpiPage(QWidget):
         top.addWidget(self.palette)
         top.setSizes([260, 700, 300])
 
-        # ---- preview
-        pv = QWidget()
-        pl = QVBoxLayout(pv)
-        pl.setContentsMargins(0, 0, 0, 0)
-        bar = QHBoxLayout()
-        bar.addWidget(QLabel("Preview on"))
-        self.pv_file = QComboBox()
-        self.pv_file.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.pv_file.setMinimumContentsLength(28)
-        self.pv_event = QComboBox()
-        self.pv_event.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.pv_event.setMinimumContentsLength(14)
-        self.pv_occ = QSpinBox()
-        self.pv_occ.setMinimum(1)
-        self.pv_occ.setMinimumWidth(60)
-        self.pv_occ.setToolTip("Which occurrence of the event to show")
-        self.pv_run = QPushButton("Run preview")
-        self.pv_run.setObjectName("primary")
-        self.pv_status = QLabel()
-        for w in (self.pv_file, QLabel("event"), self.pv_event, QLabel("occurrence"), self.pv_occ, self.pv_run):
-            bar.addWidget(w)
-        bar.addWidget(self.pv_status, 1)
-        pl.addLayout(bar)
-        ps = QSplitter(Qt.Horizontal)
-        self.pv_signals = QListWidget()
-        self.pv_signals.setToolTip("Signals to plot")
-        ps.addWidget(self.pv_signals)
-        plot_box = QWidget()
-        pbl = QVBoxLayout(plot_box)
-        pbl.setContentsMargins(0, 0, 0, 0)
-        self.fig, self.canvas, Toolbar = make_canvas()
-        pbl.addWidget(Toolbar(self.canvas, plot_box))
-        pbl.addWidget(self.canvas, 1)
-        ps.addWidget(plot_box)
-        self.pv_table = QTableWidget(0, 5)
-        self.pv_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
-        self.pv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        self.pv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        ps.addWidget(self.pv_table)
-        ps.setStretchFactor(1, 1)
-        ps.setSizes([190, 700, 380])
-        pl.addWidget(ps, 1)
-        vsplit.addWidget(pv)
-        vsplit.setSizes([430, 360])
 
         self.events.currentRowChanged.connect(self.event_selected)
         self.kpis.currentRowChanged.connect(self.kpi_selected)
@@ -812,13 +753,8 @@ class KpiPage(QWidget):
         self.down.clicked.connect(lambda: self.move_kpi(1))
         self.from_lib.clicked.connect(self.add_from_library)
         self.to_lib.clicked.connect(self.save_to_library)
-        self.pv_run.clicked.connect(self.run_preview)
-        self.pv_occ.valueChanged.connect(self.draw_preview)
-        self.pv_event.currentTextChanged.connect(lambda *_: self.draw_preview())
-        self.pv_signals.itemChanged.connect(lambda *_: self.draw_preview())
 
         state.profile_changed.connect(self.refresh)
-        state.files_changed.connect(self.refresh_preview_choices)
         state.validated.connect(self.on_validated)
         state.validated.connect(self.palette.refresh_names)
         self.refresh()
@@ -832,7 +768,6 @@ class KpiPage(QWidget):
             self.events.addItem(name)
         self.events.blockSignals(False)
         self.refresh_kpi_labels()
-        self.refresh_preview_choices()
         if self.stack.currentWidget() is self.event_form and self.event_form.name in self.state.data.get("events", {}):
             self.event_form.load(self.event_form.name)
         elif cur_ev and cur_ev in self.state.data.get("events", {}):
@@ -869,6 +804,8 @@ class KpiPage(QWidget):
         self.kpis.blockSignals(False)
         self.event_form.load(self.events.item(row).text())
         self.stack.setCurrentWidget(self.event_form)
+        if self.viewer is not None:
+            self.viewer.set_event(self.events.item(row).text())
 
     def kpi_selected(self, row):
         if row < 0:
@@ -877,6 +814,8 @@ class KpiPage(QWidget):
         self.events.setCurrentRow(-1)
         self.events.blockSignals(False)
         k = self.state.data["kpis"][row]
+        if self.viewer is not None and k.get("event"):
+            self.viewer.set_event(k["event"])
         if k.get("use"):
             self.lib_note.setText(f"<b>{k['use']}</b><br><br>This entry takes KPIs from an imported library. "
                                   "Edit the library file to change them, or delete this entry and add your own.")
@@ -1030,160 +969,6 @@ class KpiPage(QWidget):
             return
         QMessageBox.information(self, "Save to library", f"Saved '{kdict['name']}' to {p.name}.")
 
-    # ------------------------------------------------------------------ preview
-    def refresh_preview_choices(self):
-        cur = self.pv_file.currentText()
-        self.pv_file.blockSignals(True)
-        self.pv_file.clear()
-        self.pv_file.addItems([r.label for r in self.state.recordings()])
-        if cur:
-            self.pv_file.setCurrentText(cur)
-        self.pv_file.blockSignals(False)
-        cur_ev = self.pv_event.currentText()
-        self.pv_event.blockSignals(True)
-        self.pv_event.clear()
-        self.pv_event.addItems(self.state.event_names())
-        if cur_ev:
-            self.pv_event.setCurrentText(cur_ev)
-        self.pv_event.blockSignals(False)
-
     def on_validated(self):
         if self.stack.currentWidget() is self.kpi_form:
             self.kpi_form.show_status()
-        names = self.state.signal_names()
-        checked = {self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
-                   if self.pv_signals.item(i).checkState() == Qt.Checked}
-        existing = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())]
-        if existing != names:
-            self.pv_signals.blockSignals(True)
-            self.pv_signals.clear()
-            for n in names:
-                it = QListWidgetItem(n)
-                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-                it.setCheckState(Qt.Checked if n in checked else Qt.Unchecked)
-                self.pv_signals.addItem(it)
-            self.pv_signals.blockSignals(False)
-        self.refresh_preview_choices()
-
-    def _default_signals(self, event: str) -> list[str]:
-        cp = self.state.compiled
-        if cp is None or event not in cp.events:
-            return []
-        ev = cp.events[event]
-        out: list[str] = []
-        for c in [ev.start, *ev.preset_inputs] + [m.expr for m in ev.moments.values()]:
-            if c is not None:
-                out += [d for d in sorted(c.deps) if d != "time" and d not in out]
-        return out[:4]
-
-    def run_preview(self):
-        if not self.state.files:
-            self.pv_status.setText("Add files first.")
-            return
-        if self.state.compiled is None:
-            self.pv_status.setText("Fix the errors listed under Profile check first. "
-                                   "To look at signals meanwhile, use the Signal viewer on the Signals tab.")
-            return
-        recs = self.state.recordings()
-        f = recs[min(max(self.pv_file.currentIndex(), 0), len(recs) - 1)]
-        self.pv_status.setText(f"Running on {f.label}…")
-        self.pv_run.setEnabled(False)
-        self.worker = PreviewWorker(self.state.compiled, f, dict(self.state.indexes), self)
-        self.worker.done.connect(self.preview_done)
-        self.worker.failed.connect(self.preview_failed)
-        self.worker.finished.connect(lambda: self.pv_run.setEnabled(True))
-        self.worker.start()
-
-    def preview_failed(self, msg):
-        self.pv_status.setText("Preview failed: " + msg.splitlines()[0])
-
-    def preview_done(self, data):
-        self.preview_data = data
-        out = data["outcome"]
-        ev = self.pv_event.currentText()
-        n = sum(1 for o in out.occurrences if o.event == ev)
-        self.pv_occ.blockSignals(True)
-        self.pv_occ.setMaximum(max(n, 1))
-        self.pv_occ.blockSignals(False)
-        issues = [i.message for i in out.issues if i.severity != "info"]
-        self.pv_status.setText(f"{len(out.occurrences)} occurrence(s) in total, {n} for '{ev}'"
-                               + (f"  ·  {len(issues)} warning(s)" if issues else ""))
-        self.pv_status.setToolTip("\n".join(issues))
-        checked = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
-                   if self.pv_signals.item(i).checkState() == Qt.Checked]
-        if not checked:
-            defaults = set(self._default_signals(ev)) or {self.pv_signals.item(i).text()
-                                                           for i in range(min(3, self.pv_signals.count()))}
-            self.pv_signals.blockSignals(True)
-            for i in range(self.pv_signals.count()):
-                it = self.pv_signals.item(i)
-                it.setCheckState(Qt.Checked if it.text() in defaults else Qt.Unchecked)
-            self.pv_signals.blockSignals(False)
-        self.draw_preview()
-
-    def draw_preview(self):
-        data = self.preview_data
-        self.fig.clear()
-        self.pv_table.setRowCount(0)
-        if not data:
-            self.canvas.draw_idle()
-            return
-        out, t, values = data["outcome"], data["time"], data["values"]
-        ev = self.pv_event.currentText()
-        idx = self.pv_occ.value()
-        occ = next((o for o in out.occurrences if o.event == ev and o.index == idx), None)
-        names = [self.pv_signals.item(i).text() for i in range(self.pv_signals.count())
-                 if self.pv_signals.item(i).checkState() == Qt.Checked and self.pv_signals.item(i).text() in values]
-        colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-        n = max(len(names), 1)
-        if occ is None:
-            # no occurrence to zoom into: show the whole file, with any occurrences of the event shaded
-            spans = [(o.t_start, o.t_end) for o in out.occurrences if o.event == ev]
-            axes = self.fig.subplots(n, 1, sharex=True, squeeze=False)[:, 0]
-            for i, ax in enumerate(axes):
-                if i < len(names):
-                    ax.plot(t, np.asarray(values[names[i]], dtype=float), color=colors[i % 8], lw=1.2)
-                    _label_axis(ax, names[i])
-                for lo, hi in spans:
-                    ax.axvspan(lo, hi, color="#2a78d6", alpha=0.08, lw=0)
-                ax.grid(True, color="#e6e5e0", lw=0.6)
-                ax.tick_params(labelsize=7)
-            axes[0].set_title(f"Whole file: no occurrence #{idx} of '{ev}' found" if not spans
-                              else f"Whole file: occurrence #{idx} of '{ev}' not found", fontsize=9, color="#5f5e5a")
-            if not names:
-                axes[0].text(0.5, 0.5, "Tick signals on the left to plot them", ha="center", va="center",
-                             transform=axes[0].transAxes, color="#6b6b66")
-            axes[-1].set_xlabel("time [s]", fontsize=8)
-            self.canvas.draw_idle()
-            return
-        lo, hi = occ.t_window_start, occ.t_window_end
-        sl = slice(int(np.searchsorted(t, lo)), int(np.searchsorted(t, hi, side="right")))
-        moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
-        axes = self.fig.subplots(n, 1, sharex=True, squeeze=False)[:, 0]
-        for i, ax in enumerate(axes):
-            if i < len(names):
-                ax.plot(t[sl], np.asarray(values[names[i]], dtype=float)[sl], color=colors[i % 8], lw=1.4)
-                _label_axis(ax, names[i])
-            ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.08, lw=0)
-            for m in moments:
-                if m.time is not None:
-                    ax.axvline(m.time, color="#5f5e5a", ls=":", lw=1)
-                    if i == 0:
-                        ax.annotate(m.moment, (m.time, 1.0), xycoords=("data", "axes fraction"), fontsize=7,
-                                    rotation=90, va="top", ha="right", color="#5f5e5a")
-            ax.grid(True, color="#e6e5e0", lw=0.6)
-            ax.tick_params(labelsize=7)
-            if i < n - 1:
-                ax.tick_params(labelbottom=False)
-        axes[-1].set_xlabel("time [s]", fontsize=8)
-        self.canvas.draw_idle()
-
-        res = [r for r in out.results if r.event == ev and r.occurrence == idx]
-        self.pv_table.setRowCount(len(res))
-        for r, k in enumerate(res):
-            vals = [k.kpi, "" if k.value is None else f"{k.value:.3f}", k.unit, k.status, k.message]
-            for c, v in enumerate(vals):
-                item = QTableWidgetItem(v)
-                if c == 3 and k.status != Status.OK:
-                    item.setForeground(Qt.red)
-                self.pv_table.setItem(r, c, item)

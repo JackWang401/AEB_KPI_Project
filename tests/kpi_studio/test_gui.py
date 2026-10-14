@@ -58,12 +58,13 @@ def test_edit_event_and_kpi_validates(qtbot, window, mf4_dir):
 
 def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     _load(qtbot, window, mf4_dir)
-    page = window.kpi_page
-    page.refresh_preview_choices()
-    page.pv_event.setCurrentText("aeb_core.aeb")
-    page.run_preview()
-    qtbot.waitUntil(lambda: page.preview_data is not None, timeout=20000)
-    assert page.pv_table.rowCount() > 10
+    viewer = window.viewer
+    assert window.kpi_page.viewer is viewer and window.signals_page.viewer is viewer
+    viewer.set_event("aeb_core.aeb")
+    viewer.run_preview()
+    qtbot.waitUntil(lambda: bool(viewer.preview is not None and viewer.preview_worker is None
+                                 and viewer.worker is None), timeout=20000)
+    assert viewer.kpi_table.rowCount() > 10
     run = window.run_page
     run.out_dir.setText(str(tmp_path / "out"))
     run.workers.setValue(1)
@@ -116,12 +117,12 @@ def test_preview_shows_whole_file_when_event_never_fires(qtbot, window, mf4_dir)
     window.state.data["events"]["never"] = {"start": "egoSpeedKph > 1000", "window": {"pre": 1, "post": 1}}
     window.state.edited(structure=True)
     window.state.validate_now()
-    page = window.kpi_page
-    page.refresh_preview_choices()
-    page.pv_event.setCurrentText("never")
-    page.run_preview()
-    qtbot.waitUntil(lambda: page.preview_data is not None, timeout=20000)
-    assert page.fig.axes and "Whole file" in page.fig.axes[0].get_title()
+    viewer = window.viewer
+    viewer.set_event("never")
+    viewer.run_preview()
+    qtbot.waitUntil(lambda: bool(viewer.preview is not None and viewer.preview_worker is None
+                                 and viewer.worker is None), timeout=20000)
+    assert viewer.fig.axes and "Whole file" in viewer.fig.axes[0].get_title()
 
 
 def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
@@ -151,7 +152,7 @@ def test_new_signals_reach_tab3_while_an_event_is_unfinished(qtbot, window, mf4_
     window.state.edited(structure=True)
     window.state.validate_now()
     assert "myNewSignal" in window.state.signal_names()
-    pv = [page.pv_signals.item(i).text() for i in range(page.pv_signals.count())]
+    pv = [window.viewer.list.item(i).text() for i in range(window.viewer.list.count())]
     assert "myNewSignal" in pv
     top = page.palette.tree.topLevelItem(0)
     assert top.text(0).startswith("Signals")
@@ -396,3 +397,10 @@ def test_flat_kpi_axis_is_widened():
     lo, hi = fig.layout.yaxis.range
     assert lo < 0.11 < hi and hi - lo >= 0.9  # not zoomed into float noise
     assert fig.layout.xaxis.range is None     # a normal spread stays automatic
+
+
+def test_signal_panel_is_shared_by_tabs_2_and_3(window):
+    window.show()
+    for index, visible in [(0, False), (1, True), (2, True), (3, False)]:
+        window.tabs.setCurrentIndex(index)
+        assert window.viewer_box.isVisible() == visible

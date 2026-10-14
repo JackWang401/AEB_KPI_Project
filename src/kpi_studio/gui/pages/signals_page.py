@@ -9,7 +9,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -47,9 +46,10 @@ def _identifier(name: str) -> str:
 class SignalsPage(QWidget):
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
-    def __init__(self, state: AppState, parent=None):
+    def __init__(self, state: AppState, parent=None, viewer: SignalViewer | None = None):
         super().__init__(parent)
         self.state = state
+        self.viewer = viewer or SignalViewer(state)  # shared panel below the tabs (main window)
         self._loading = False
 
         split = QSplitter(Qt.Horizontal)
@@ -140,13 +140,7 @@ class SignalsPage(QWidget):
         dl.addLayout(drow)
         vsplit.addWidget(der_box)
 
-        view_box = QGroupBox("Signal viewer")
-        vl = QVBoxLayout(view_box)
-        self.viewer = SignalViewer(self.state)
-        vl.addWidget(self.viewer)
-        vsplit.addWidget(view_box)
-        vsplit.setStretchFactor(2, 1)
-        vsplit.setSizes([230, 120, 520])
+        vsplit.setSizes([300, 160])
         split.addWidget(right)
         split.setSizes([380, 820])
 
@@ -333,7 +327,7 @@ class SignalsPage(QWidget):
         names += [self.der_table.item(r - 10_000, 0).text() for r in rows
                   if r >= 10_000 and self.der_table.item(r - 10_000, 0)]
         if not names:
-            self.viewer.status.setText("Select rows in the signals or derived table first, or tick signals below.")
+            self.viewer.status.setText("Select rows in the signals or derived table first, or tick signals in the panel below.")
             return
         self.viewer.plot_signals(names)
 

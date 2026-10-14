@@ -1,4 +1,8 @@
-"""Signal viewer: plot any of the profile's signals (raw and derived) from one file.
+"""Signal viewer: plot any of the profile's signals (raw and derived), shared by tabs 2 and 3.
+
+With an event chosen and "Run preview" pressed it also evaluates the whole profile on the first
+ticked recording: the plot zooms to the chosen occurrence, shades the event, marks its moments
+and lists the KPI values next to the plot.
 
 Works without valid events or KPIs: only the signals and derived signals are compiled.
 Stacked subplots share the time axis; the matplotlib toolbar gives zoom and pan.
@@ -14,7 +18,13 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
+    QHeaderView,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -27,11 +37,12 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio.core.align import build_frame
 from src.kpi_studio.core.engine import FileEvaluator
-from src.kpi_studio.core.results import FileOutcome
+from src.kpi_studio.core.results import FileOutcome, Status
 from src.kpi_studio.gui.widgets.common import make_canvas, matches
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import read_signals
 
+NO_EVENT = "(signals only)"
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_AXES = 8
 
@@ -95,6 +106,8 @@ class SignalViewer(QWidget):
         self._series: dict = {}              # axes -> [(label, time, values, enum labels)]
         self._artists: list = []
         self._dragging = None
+        self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome} from Run preview
+        self.preview_worker = None
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -109,6 +122,27 @@ class SignalViewer(QWidget):
         self.cursor_info.setObjectName("hint")
         bar.addWidget(self.cursor_info)
         lay.addLayout(bar)
+
+        pbar = QHBoxLayout()
+        pbar.addWidget(QLabel("Event"))
+        self.pv_event = QComboBox()
+        self.pv_event.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.pv_event.setMinimumContentsLength(16)
+        self.pv_event.setToolTip("Choose an event and press Run preview to see its occurrences, moments and KPIs")
+        pbar.addWidget(self.pv_event)
+        pbar.addWidget(QLabel("occurrence"))
+        self.pv_occ = QSpinBox()
+        self.pv_occ.setMinimum(1)
+        self.pv_occ.setMinimumWidth(60)
+        pbar.addWidget(self.pv_occ)
+        self.pv_run = QPushButton("Run preview")
+        self.pv_run.setObjectName("primary")
+        self.pv_run.setToolTip("Evaluate the profile on the first ticked recording")
+        pbar.addWidget(self.pv_run)
+        self.pv_status = QLabel()
+        self.pv_status.setObjectName("hint")
+        pbar.addWidget(self.pv_status, 1)
+        lay.addLayout(pbar)
 
         split = QSplitter(Qt.Horizontal)
         left = QWidget()
@@ -136,8 +170,15 @@ class SignalViewer(QWidget):
         rl.addWidget(self.toolbar)
         rl.addWidget(self.canvas, 1)
         split.addWidget(right)
+        self.kpi_table = QTableWidget(0, 5)
+        self.kpi_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
+        self.kpi_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.kpi_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.kpi_table.verticalHeader().setDefaultSectionSize(22)
+        self.kpi_table.setVisible(False)
+        split.addWidget(self.kpi_table)
         split.setStretchFactor(1, 1)
-        split.setSizes([230, 800])
+        split.setSizes([230, 800, 360])
         lay.addWidget(split, 1)
 
         self.load_btn.clicked.connect(self.load)
@@ -151,9 +192,15 @@ class SignalViewer(QWidget):
         state.files_changed.connect(self.refresh_files)
         state.validated.connect(self.refresh_names)
         state.validated.connect(self._drop_stale_cache)
+        state.validated.connect(self.refresh_events)
+        state.profile_changed.connect(self._clear_preview)
+        self.pv_run.clicked.connect(self.run_preview)
+        self.pv_event.currentTextChanged.connect(lambda *_: self._event_changed())
+        self.pv_occ.valueChanged.connect(lambda *_: self.draw())
         self._cache_key = None
         self.refresh_files()
         self.refresh_names()
+        self.refresh_events()
         self.draw()
 
     # ------------------------------------------------------------------ lists
@@ -325,6 +372,7 @@ class SignalViewer(QWidget):
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
         if not loaded:
+            self.kpi_table.setVisible(False)
             ax = self.fig.add_subplot(111)
             ax.text(0.5, 0.5, "Tick recordings and signals on the left, then press Load signals", ha="center",
                     va="center", transform=ax.transAxes, color="#6b6b66")
@@ -368,8 +416,166 @@ class SignalViewer(QWidget):
         axes[-1].set_xlabel("time [s]", fontsize=8)
         if len(available) > MAX_AXES:
             axes[0].set_title(f"Showing the first {MAX_AXES} ticked signals", fontsize=8, color="#6b6b66")
+        self._decorate_preview(list(axes), loaded)
         self._axes = list(axes)
         self._update_cursors()
+
+    # ------------------------------------------------------------------ event preview
+    def refresh_events(self):
+        cur = self.pv_event.currentText()
+        names = [NO_EVENT] + self.state.event_names()
+        if [self.pv_event.itemText(i) for i in range(self.pv_event.count())] == names:
+            return
+        self.pv_event.blockSignals(True)
+        self.pv_event.clear()
+        self.pv_event.addItems(names)
+        self.pv_event.setCurrentText(cur if cur in names else NO_EVENT)
+        self.pv_event.blockSignals(False)
+
+    def current_event(self):
+        ev = self.pv_event.currentText()
+        return None if ev in ("", NO_EVENT) else ev
+
+    def set_event(self, name):
+        """Show `name` (tab 3 calls this when an event or KPI is selected)."""
+        self.refresh_events()
+        if name and self.pv_event.findText(name) >= 0 and self.pv_event.currentText() != name:
+            self.pv_event.setCurrentText(name)
+
+    def _event_changed(self):
+        self._update_occ_range()
+        self.draw()
+
+    def _clear_preview(self):
+        self.preview = None
+        self.pv_status.setText("")
+        self.draw()
+
+    def _occurrences(self):
+        ev = self.current_event()
+        if not self.preview or ev is None:
+            return []
+        return [o for o in self.preview["outcome"].occurrences if o.event == ev]
+
+    def _update_occ_range(self):
+        self.pv_occ.blockSignals(True)
+        self.pv_occ.setMaximum(max(len(self._occurrences()), 1))
+        self.pv_occ.blockSignals(False)
+
+    def default_signals(self, event: str) -> list[str]:
+        """Signals the event's trigger and moments use (first four)."""
+        cp = self.state.compiled
+        if cp is None or event not in cp.events:
+            return []
+        ev = cp.events[event]
+        out: list[str] = []
+        for c in [ev.start, *ev.preset_inputs] + [m.expr for m in ev.moments.values()]:
+            if c is not None:
+                out += [d for d in sorted(c.deps) if d != "time" and d not in out]
+        return out[:4]
+
+    def run_preview(self):
+        if not self.state.files:
+            self.pv_status.setText("Add files on the Files tab first.")
+            return
+        if self.state.compiled is None:
+            self.pv_status.setText("Fix the errors under Profile check first; signals can still be plotted.")
+            return
+        if self.preview_worker is not None:
+            return
+        if not self.selected() and self.files.count():
+            self.select_recordings([self.files.item(0).data(Qt.UserRole)])
+        rec = self.current_file()
+        if rec is None:
+            return
+        from src.kpi_studio.gui.workers import PreviewWorker
+
+        self.pv_status.setText(f"Running the profile on {rec.label}…")
+        self.pv_run.setEnabled(False)
+        self.preview_worker = PreviewWorker(self.state.compiled, rec, dict(self.state.indexes), self)
+        self.preview_worker.done.connect(lambda data, r=rec: self._preview_done(r, data))
+        self.preview_worker.failed.connect(lambda m: self.pv_status.setText("Preview failed: " + m.splitlines()[0]))
+        self.preview_worker.finished.connect(self._preview_finished)
+        self.preview_worker.start()
+
+    def _preview_finished(self):
+        self.preview_worker = None
+        self.pv_run.setEnabled(True)
+
+    def _preview_done(self, rec, data):
+        out = data["outcome"]
+        defs = self.state.compiled.profile.signals
+        old = self.cache.get(rec.name, {})
+        self.cache[rec.name] = {
+            "file": rec.name, "time": data["time"],
+            "values": {k: v for k, v in data["values"].items() if k != "time"},
+            "units": {n: (d.unit or "") for n, d in defs.items()}, "labels": old.get("labels", {}),
+            "missing": old.get("missing", {}),
+            "issues": [i.message for i in out.issues if i.severity != "info"]}
+        self.data = self.cache[rec.name]
+        self.preview = {"rec": rec.name, "outcome": out}
+        ev = self.current_event()
+        if ev is None and out.occurrences:
+            self.set_event(out.occurrences[0].event)
+            ev = self.current_event()
+        if not self.checked() and ev:
+            self.set_checked(self.default_signals(ev) or self.state.signal_names()[:3])
+        self._update_occ_range()
+        n = len(self._occurrences())
+        issues = [i.message for i in out.issues if i.severity != "info"]
+        self.pv_status.setText(f"{rec.label}: {len(out.occurrences)} occurrence(s)"
+                               + (f", {n} of '{ev}'" if ev else "")
+                               + (f"  ·  {len(issues)} warning(s)" if issues else ""))
+        self.pv_status.setToolTip("\n".join(issues))
+        self.draw()
+
+    def _decorate_preview(self, axes, loaded):
+        """Zoom to the chosen occurrence, shade it, mark its moments and list its KPIs."""
+        self.kpi_table.setRowCount(0)
+        ev = self.current_event()
+        active = bool(self.preview and ev and any(r.name == self.preview["rec"] for r, _ in loaded))
+        self.kpi_table.setVisible(active)
+        if not active:
+            return
+        out = self.preview["outcome"]
+        occs = self._occurrences()
+        idx = self.pv_occ.value()
+        occ = next((o for o in occs if o.index == idx), None)
+        if occ is None:
+            for ax in axes:
+                for o in occs:
+                    ax.axvspan(o.t_start, o.t_end, color="#2a78d6", alpha=0.10, lw=0)
+            axes[0].set_title(f"Whole file: no occurrence of '{ev}' found" if not occs
+                              else f"Whole file: occurrence #{idx} of '{ev}' not found", fontsize=8, color="#6b6b66")
+            return
+        moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
+        for i, ax in enumerate(axes):
+            ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.10, lw=0)
+            for m in moments:
+                if m.time is not None:
+                    ax.axvline(m.time, color="#5f5e5a", ls=":", lw=1)
+                    if i == 0:
+                        ax.annotate(m.moment, (m.time, 1.0), xycoords=("data", "axes fraction"), fontsize=7,
+                                    rotation=90, va="top", ha="right", color="#5f5e5a")
+        lo, hi = occ.t_window_start, occ.t_window_end
+        axes[0].set_xlim(lo, hi)
+        for ax in axes:  # fit y to the window, not the whole file
+            parts = [y[(t >= lo) & (t <= hi)] for _, t, y, _ in self._series.get(ax, [])]
+            vals = np.concatenate(parts) if parts else np.array([])
+            vals = vals[np.isfinite(vals)]
+            if vals.size:
+                y0, y1 = float(vals.min()), float(vals.max())
+                pad = 0.08 * (y1 - y0) or max(abs(y0) * 0.1, 0.5)
+                ax.set_ylim(y0 - pad, y1 + pad)
+        res = [r for r in out.results if r.event == ev and r.occurrence == idx]
+        self.kpi_table.setRowCount(len(res))
+        for r, k in enumerate(res):
+            vals = [k.kpi, "" if k.value is None else f"{k.value:.3f}", k.unit, k.status, k.message]
+            for c, v in enumerate(vals):
+                item = QTableWidgetItem(v)
+                if c == 3 and k.status != Status.OK:
+                    item.setForeground(Qt.red)
+                self.kpi_table.setItem(r, c, item)
 
     # ------------------------------------------------------------------ cursors
     def _on_press(self, event):
@@ -460,5 +666,6 @@ class SignalViewer(QWidget):
 
     def shutdown(self):
         self.queue = []
-        if self.worker is not None:
-            self.worker.wait(5000)
+        for w in (self.worker, self.preview_worker):
+            if w is not None:
+                w.wait(5000)
