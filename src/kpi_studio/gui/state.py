@@ -212,11 +212,15 @@ class AppState(QObject):
         signals = dict(self.resolved.signals) if self.resolved is not None else {}
         out = {}
         for name, sdef in signals.items():
-            if sdef.enum and sdef.enum in tables:
+            if isinstance(sdef.enum, dict):
+                out[name] = dict(sdef.enum)
+            elif sdef.enum and sdef.enum in tables:
                 out[name] = tables[sdef.enum]
         for name, sdef in (self.data.get("signals") or {}).items():
             enum = (sdef or {}).get("enum")
-            if enum in tables:
+            if isinstance(enum, dict):
+                out[name] = dict(enum)
+            elif enum in tables:
                 out[name] = tables[enum]
         return out
 

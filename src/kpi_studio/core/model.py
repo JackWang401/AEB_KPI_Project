@@ -34,7 +34,8 @@ class SignalDef(_Strict):
     channels: list[str] = Field(min_length=1, description="candidate MF4 channel names, first match wins")
     unit: Optional[str] = None
     kind: Literal["continuous", "discrete"] = "continuous"
-    enum: Optional[str] = None
+    # an enum table name (enum tables file), or the values themselves: {text: raw value}
+    enum: Optional[Union[str, dict[str, float]]] = None
     required: bool = True
     description: str = ""
 

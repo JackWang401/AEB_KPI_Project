@@ -117,7 +117,9 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
     # ---------------- signals
     enums: dict = {}
     for name, sdef in profile.signals.items():
-        if sdef.enum:
+        if isinstance(sdef.enum, dict):
+            enums[name] = dict(sdef.enum)
+        elif sdef.enum:
             if sdef.enum in enum_tables:
                 enums[name] = dict(enum_tables[sdef.enum])
             else:

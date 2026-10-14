@@ -33,6 +33,7 @@ class ChannelInfo:
     group_name: str = ""
     comment: str = ""        # channel description stored in the file (plain text)
     discrete: bool = False   # the file maps raw values to text (an enum / state signal)
+    enum: tuple = ()         # ((text, raw value), ...) of an enum channel, in value order
 
     @property
     def clean(self) -> str:
@@ -105,8 +106,8 @@ def index_file(path: str | Path) -> RecordingIndex:
                     continue
                 if ch.name in ("time", "t") and ci == 0:
                     continue
-                unit, comment, discrete = channel_meta(ch)
-                idx.channels.append(ChannelInfo(ch.name, gi, ci, unit, gname, comment, discrete))
+                unit, comment, discrete, enum = channel_meta(ch)
+                idx.channels.append(ChannelInfo(ch.name, gi, ci, unit, gname, comment, discrete, enum))
         starts, ends = [], []
         for gi in range(len(mdf.groups)):
             try:
@@ -143,19 +144,61 @@ def _plain(text) -> str:
     return text[:300] + ("…" if len(text) > 300 else "")
 
 
-def channel_meta(ch) -> tuple[str, str, bool]:
-    """(unit, description, discrete) of an asammdf channel. Many loggers leave the channel unit empty
-    and store it on the channel's conversion instead."""
+def _text(v) -> Optional[str]:
+    if isinstance(v, bytes):
+        v = v.decode("utf-8", "replace")
+    if not isinstance(v, str):
+        return None
+    v = v.strip().strip("\x00").strip()
+    return v or None
+
+
+def conversion_table(conv) -> tuple:
+    """((text, value), ...) of a value-to-text / range-to-text conversion that describes an enum.
+
+    Conversions whose default is another (numeric) conversion are physical signals with a few
+    special markers (e.g. 4095 = 'Fault'), not enums: they return ()."""
+    if conv is None or getattr(conv, "conversion_type", None) not in _TEXT_CONVERSIONS:
+        return ()
+    refs = getattr(conv, "referenced_blocks", None) or {}
+    default = refs.get("default_addr")
+    if default is not None and not isinstance(default, (bytes, str)):
+        return ()
+    pairs, seen = [], set()
+    i = 0
+    while f"text_{i}" in refs:
+        text = _text(refs[f"text_{i}"])
+        value = getattr(conv, f"val_{i}", None)
+        if value is None:
+            value = getattr(conv, f"lower_{i}", None)
+        i += 1
+        if text is None or value is None or text in seen:
+            continue
+        seen.add(text)
+        v = float(value)
+        pairs.append((text, int(v) if v.is_integer() else v))
+    return tuple(sorted(pairs, key=lambda p: p[1]))
+
+
+def channel_meta(ch) -> tuple[str, str, bool, tuple]:
+    """(unit, description, discrete, enum table) of an asammdf channel. Many loggers leave the channel
+    unit empty and store it on the conversion (or on the numeric conversion behind a text marker)."""
     conv = getattr(ch, "conversion", None)
     unit = str(getattr(ch, "unit", "") or "")
     if not unit and conv is not None:
         unit = str(getattr(conv, "unit", "") or "")
-    discrete = conv is not None and getattr(conv, "conversion_type", None) in _TEXT_CONVERSIONS
+        default = (getattr(conv, "referenced_blocks", None) or {}).get("default_addr")
+        if not unit and default is not None and not isinstance(default, (bytes, str)):
+            unit = str(getattr(default, "unit", "") or "")
+    try:
+        enum = conversion_table(conv)
+    except Exception:  # noqa: BLE001
+        enum = ()
     try:
         comment = _plain(getattr(ch, "comment", ""))
     except Exception:  # noqa: BLE001
         comment = ""
-    return unit.strip(), comment, discrete
+    return unit.strip(), comment, bool(enum), enum
 
 
 def match_channel(candidate: str, channels: Iterable[ChannelInfo]) -> tuple[Optional[ChannelInfo], int]:

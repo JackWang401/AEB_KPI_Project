@@ -36,8 +36,8 @@ def _to_numeric(raw: RawSignal, sdef: SignalDef, enum_table: Optional[Mapping], 
     s = np.asarray(raw.samples)
     if s.dtype.kind in "biuf":
         return s.astype(float)
-    if enum_table is None and raw.raw_values is not None:
-        # enum channel without an 'enum:' table in the profile: use the file's raw values
+    if raw.raw_values is not None and (enum_table is None or isinstance(sdef.enum, dict)):
+        # enum channel without a named enum table (none, or the file's own table): use the file's raw values
         return np.asarray(raw.raw_values, dtype=float)
     # text / bytes / object samples: decode through the enum table when there is one
     decoded = []
@@ -107,7 +107,8 @@ def build_frame(
         if r is None:
             missing[name] = "no matching channel"
             continue
-        values = _to_numeric(r, sdef, enum_tables.get(sdef.enum) if sdef.enum else None, issues)
+        table = sdef.enum if isinstance(sdef.enum, dict) else (enum_tables.get(sdef.enum) if sdef.enum else None)
+        values = _to_numeric(r, sdef, table, issues)
         t, v, dup = clean_series(r.timestamps, values)
         if dup:
             issues.append(FileIssue("info", f"{name}: dropped {dup} duplicate timestamp(s)"))

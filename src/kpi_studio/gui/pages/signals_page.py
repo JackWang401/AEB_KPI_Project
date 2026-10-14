@@ -41,6 +41,35 @@ from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
 LIB_COLOR = QColor("#6b6b66")
 
 
+def _num(v) -> str:
+    v = float(v)
+    return str(int(v)) if v.is_integer() else repr(v)
+
+
+def format_enum(enum) -> str:
+    """'0 = Off, 3 = Served' for a value table; a table name as it is."""
+    if isinstance(enum, dict):
+        return ", ".join(f"{_num(v)} = {k}" for k, v in sorted(enum.items(), key=lambda kv: kv[1]))
+    return enum or ""
+
+
+def parse_enum(text: str):
+    """Inverse of format_enum: a value table when the text has 'value = text' pairs, else a table name."""
+    text = text.strip()
+    if "=" not in text:
+        return text or None
+    out = {}
+    for part in text.split(","):
+        if "=" not in part:
+            continue
+        v, label = (x.strip() for x in part.split("=", 1))
+        try:
+            out[label] = int(float(v)) if float(v).is_integer() else float(v)
+        except ValueError:
+            continue
+    return out or None
+
+
 def _identifier(name: str) -> str:
     base = name.replace("\\", "/").split("/")[-1]
     ident = re.sub(r"[^A-Za-z0-9_]", "_", base).strip("_") or "signal"
@@ -250,7 +279,8 @@ class SignalsPage(QWidget):
         """Take unit, kind and description from the file's channel information."""
         if c.unit and not (only_empty and d.get("unit")):
             d["unit"] = c.unit
-        if c.discrete and not d.get("enum") and not (only_empty and "kind" in d):
+        if c.enum and not d.get("enum"):
+            d["enum"] = {text: value for text, value in c.enum}  # the file's value table
             d["kind"] = "discrete"
         if c.comment and not (only_empty and d.get("description")):
             d["description"] = c.comment
@@ -329,12 +359,15 @@ class SignalsPage(QWidget):
         self.sig_table.setRowCount(len(rows))
         for r, (name, d, from_lib) in enumerate(rows):
             vals = [name, ", ".join(d.get("channels", [])), d.get("unit") or "", d.get("kind", "continuous"),
-                    d.get("enum") or "", "yes" if d.get("required", True) else "no", self._found(d)]
+                    format_enum(d.get("enum")), "yes" if d.get("required", True) else "no", self._found(d)]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, (name, from_lib))
                 if c == 0 and d.get("description"):
                     item.setToolTip(d["description"])
+                if c == 4 and isinstance(d.get("enum"), dict):
+                    item.setToolTip("\n".join(f"{_num(v)} = {k}" for k, v in d["enum"].items())
+                                    + "\n\nUse the text in expressions, e.g. x == \"" + next(iter(d["enum"]), "") + "\"")
                 if from_lib:
                     item.setForeground(LIB_COLOR)
                 if c in (0, 6) and (from_lib or c == 6):
@@ -367,7 +400,7 @@ class SignalsPage(QWidget):
         elif col == 3:
             d["kind"] = "discrete" if text.lower().startswith("d") else "continuous"
         elif col == 4:
-            d["enum"] = text or None
+            d["enum"] = parse_enum(text)
         elif col == 5:
             d["required"] = text.lower() not in ("no", "false", "0", "n")
         self.state.edited(structure=from_lib)
