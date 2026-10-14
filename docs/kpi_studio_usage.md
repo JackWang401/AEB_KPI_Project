@@ -23,9 +23,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    *changes to 3* → `rising(sig == 3)`, *changes from 3* → `falling(sig == 3)`,
    *changes from → to 0, 3* → `(falling(sig == 0) and rising(sig == 3))`. Use them as
    an event's *Start when* or, with *Build condition…* under Moments, as a `first` moment.
-   Moments also have the rules `changes_to`, `changes_from` and `changes_from_to`
-   (expression = the signal, options `value: 3` or `from_value: 0, to_value: 3`), and the
-   ▾ list of every condition field starts with *Build condition…*. *Run preview* evaluates the profile on one file and draws the
+   The ▾ list of every condition field (start, end, moments) starts with the same
+   *Build condition…*, so one method serves all three. *Run preview* evaluates the profile on one file and draws the
    window and moments. *Save KPI to library* shares a KPI between profiles.
 4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. The output
    folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved

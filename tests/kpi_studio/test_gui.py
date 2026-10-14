@@ -287,7 +287,7 @@ def test_moment_rule_tooltips(qtbot, window):
     assert EventForm.rule_help("offset").startswith("offset")
 
 
-def test_moment_value_change_rule_and_build_action(qtbot, window, mf4_dir, monkeypatch):
+def test_moment_rule_options_and_build_action(qtbot, window, mf4_dir, monkeypatch):
     from src.kpi_studio.gui.widgets import common
 
     _load(qtbot, window, mf4_dir)
@@ -295,10 +295,10 @@ def test_moment_value_change_rule_and_build_action(qtbot, window, mf4_dir, monke
         "start": "egoSpeed > 1", "moments": {"m1": {"decel_onset": "longJerk", "after": "start", "threshold": -20}}}
     form = window.kpi_page.event_form
     form.load("vc")
-    form.moments.cellWidget(0, 1).setCurrentText("changes_to")
+    form.moments.cellWidget(0, 1).setCurrentText("crossing")
     m1 = form.ev["moments"]["m1"]
-    assert m1["after"] == "start" and m1["value"] == 3.0 and "threshold" not in m1
-    assert "changes_to" in m1
+    assert m1["after"] == "start" and m1["level"] == 0.0 and "threshold" not in m1
+    assert "crossing" in m1
     # the ▾ list offers the condition builder; picking it fills the cell and switches to 'first'
     monkeypatch.setattr(common.ConditionBuilder, "exec", lambda self: common.QDialog.Accepted)
     monkeypatch.setattr(common.ConditionBuilder, "expression", lambda self: "rising(egoSpeed == 3)")
@@ -308,4 +308,4 @@ def test_moment_value_change_rule_and_build_action(qtbot, window, mf4_dir, monke
     assert first.text().startswith("➜ Build condition")
     cell.picker._pick(first)
     m1 = form.ev["moments"]["m1"]
-    assert m1.get("first") == "rising(egoSpeed == 3)" and "value" not in m1 and m1["after"] == "start"
+    assert m1.get("first") == "rising(egoSpeed == 3)" and "level" not in m1 and m1["after"] == "start"
