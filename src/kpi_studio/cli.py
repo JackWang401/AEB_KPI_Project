@@ -53,6 +53,22 @@ def cmd_validate(args) -> int:
     return 0
 
 
+def _offsets(specs, files: list[str]) -> dict:
+    """--offset FILE=SECONDS (FILE: a path or just the file name) -> {file: seconds}."""
+    out = {}
+    for spec in specs or []:
+        name, _, sec = spec.rpartition("=")
+        try:
+            value = float(sec)
+        except ValueError:
+            raise SystemExit(f"--offset {spec}: expected FILE=SECONDS")
+        hits = [f for f in files if Path(f).name == name or Path(f).resolve() == Path(name).resolve()]
+        if not hits:
+            raise SystemExit(f"--offset {spec}: no input file matches '{name}'")
+        out.update({str(Path(f)): value for f in hits})
+    return out
+
+
 def cmd_preflight(args) -> int:
     from src.kpi_studio.app.run_service import RunService
 
@@ -69,7 +85,7 @@ def cmd_run(args) -> int:
     files = _expand(args.files)
     try:
         svc = RunService(args.profile, files, args.output, workers=args.workers, progress=_progress,
-                         combine=not args.separate_files)
+                         combine=not args.separate_files, offsets=_offsets(args.offset, files))
     except ProfileError as exc:
         for issue in exc.issues:
             print(issue)
@@ -130,6 +146,8 @@ def main(argv=None) -> int:
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--force", action="store_true", help="run even if preflight reports errors")
     p.add_argument("--separate-files", action="store_true", help=SEPARATE_HELP)
+    p.add_argument("--offset", action="append", metavar="FILE=SECONDS",
+                   help="shift a file in time when files are not time-synced (positive: later); repeatable")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("validate", help="check a profile")

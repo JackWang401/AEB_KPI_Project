@@ -205,18 +205,24 @@ def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
     second = recs[1].name
     t0 = np.asarray(viewer.cache[second]["time"], dtype=float)
     viewer.files.setCurrentRow(1)
-    viewer.offset_spin.setValue(1.5)  # typed offset shifts only the selected recording
-    assert viewer.offsets == {second: 1.5}
+    viewer.offset_spin.setValue(1.5)  # typed offset shifts only the selected recording's file(s)
+    assert window.state.offsets == {recs[1].files[0]: 1.5}
+    assert window.state.recordings()[1].offsets == {recs[1].files[0]: 1.5}  # what the KPI run reads
     assert "+1.500 s" in viewer.files.item(1).text() and "s)" not in viewer.files.item(0).text()
-    xs = [np.asarray(line.get_xdata(), dtype=float) for line in viewer.fig.axes[0].get_lines()[:2]]
-    assert np.allclose(xs[1], t0 + 1.5) and not np.allclose(xs[0], xs[1][: len(xs[0])])
+    assert window.files_page.table.item(1, 2).text() == "+1.500"
+    # the shifted recording is read again with the offset applied
+    qtbot.waitUntil(lambda: second in viewer.cache and viewer.worker is None, timeout=30000)
+    assert np.allclose(np.asarray(viewer.cache[second]["time"], dtype=float)[:5], t0[:5] + 1.5)
     # Align A→B: the feature under B (selected recording) moves to A
     viewer.cursors = [2.0, 3.25]
     viewer.align_cursors()
-    assert viewer.offsets[second] == 1.5 + (2.0 - 3.25)
-    assert viewer.cursors == [2.0, 2.0] and viewer.offset_spin.value() == 0.25
-    viewer.offset_spin.setValue(0)  # zero removes the shift
-    assert viewer.offsets == {} and "s)" not in viewer.files.item(1).text()
+    assert window.state.offsets[recs[1].files[0]] == pytest.approx(0.25)
+    assert viewer.cursors == [2.0, 2.0] and viewer.offset_spin.value() == pytest.approx(0.25)
+    # editing the Files tab column sets it too; zero removes the shift
+    window.files_page.table.item(1, 2).setText("0")
+    assert window.state.offsets == {} and "s)" not in viewer.files.item(1).text()
+    window.files_page.table.item(0, 2).setText("abc")  # invalid input is ignored
+    assert window.state.offsets == {} and window.files_page.table.item(0, 2).text() == "0"
 
 
 def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):

@@ -374,7 +374,8 @@ class RunPage(QWidget):
         self.log.appendPlainText("— run started —")
         self.worker = RunWorker(self.state.resolved, list(self.state.files), self.output_root(),
                                 self.workers.value(), base_dir=self.state.base_dir,
-                                indexes=dict(self.state.indexes), combine=self.state.combine, parent=self)
+                                indexes=dict(self.state.indexes), combine=self.state.combine,
+                                offsets=dict(self.state.offsets), parent=self)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.finished_ok.connect(self.on_done)

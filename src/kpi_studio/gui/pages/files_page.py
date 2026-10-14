@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,7 +26,8 @@ from src.kpi_studio.gui.workers import IndexWorker
 
 
 class FilesPage(QWidget):
-    COLS = ["File", "Recording", "Folder", "Duration [s]", "Channels", "Status"]
+    COLS = ["File", "Recording", "Offset [s]", "Folder", "Duration [s]", "Channels", "Status"]
+    OFFSET_COL = 2
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -66,10 +68,15 @@ class FilesPage(QWidget):
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+                                   | QAbstractItemView.AnyKeyPressed)
+        for c in (0, 1, 2):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.horizontalHeaderItem(self.OFFSET_COL).setToolTip(
+            "Time shift of a file in seconds (double-click to edit; positive moves it later). Use it when the\n"
+            "files of one recording, or two recordings, are not time-synced. It applies to the signal viewer,\n"
+            "the event preview and the KPI run. Not saved with the profile.")
         lay.addWidget(self.table, 1)
         self.summary = QLabel()
         lay.addWidget(self.summary)
@@ -79,7 +86,9 @@ class FilesPage(QWidget):
         self.remove_btn.clicked.connect(self.remove_selected)
         self.clear_btn.clicked.connect(lambda: self.state.set_files([]))
         self.combine.toggled.connect(self._combine_toggled)
+        self.table.itemChanged.connect(self._item_edited)
         state.files_changed.connect(self.refresh)
+        state.offsets_changed.connect(lambda *_: self.refresh())
         self.refresh()
 
     # ------------------------------------------------------------------ actions
@@ -115,6 +124,17 @@ class FilesPage(QWidget):
         keep = [f for i, f in enumerate(self.state.files) if i not in rows]
         self.state.set_files(keep)
 
+    def _item_edited(self, item):
+        if item.column() != self.OFFSET_COL or not (0 <= item.row() < len(self.state.files)):
+            return
+        f = self.state.files[item.row()]
+        try:
+            value = float(item.text().strip().replace(",", ".") or 0)
+        except ValueError:
+            value = self.state.offsets.get(f, 0.0)
+        self.state.set_offsets({f: value})
+        self.refresh()  # normalise the text (and undo invalid input)
+
     def _combine_toggled(self, on: bool):
         self.settings.setValue("files/combine", on)
         self.state.set_combine(on)
@@ -136,6 +156,7 @@ class FilesPage(QWidget):
 
     # ------------------------------------------------------------------ view
     def refresh(self):
+        self.table.blockSignals(True)
         self.table.setRowCount(len(self.state.files))
         indexed = 0
         recs = self.state.recordings()
@@ -154,11 +175,20 @@ class FilesPage(QWidget):
                 status, dur, chans = idx.error, "", ""
             rec = rec_of.get(f)
             rec_text = Path(rec.name).name if rec is not None and len(rec.files) > 1 else "(own)"
-            for c, text in enumerate([p.name, rec_text, str(p.parent), dur, chans, status]):
+            off = self.state.offsets.get(f, 0.0)
+            for c, text in enumerate([p.name, rec_text, f"{off:+.3f}" if off else "0",
+                                      str(p.parent), dur, chans, status]):
                 item = QTableWidgetItem(text)
-                if c == 5 and idx is not None and not idx.ok:
+                if c != self.OFFSET_COL:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                else:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    if off:
+                        item.setForeground(QColor("#007aff"))
+                if c == 6 and idx is not None and not idx.ok:
                     item.setForeground(Qt.red)
                 self.table.setItem(r, c, item)
+        self.table.blockSignals(False)
         multi = sum(1 for r in recs if len(r.files) > 1)
         self.summary.setText(f"{len(self.state.files)} file(s), {indexed} ready  ·  {len(recs)} recording(s) to process"
                              + (f", {multi} of them combined from several files" if multi else ""))

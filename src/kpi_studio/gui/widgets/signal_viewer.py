@@ -16,7 +16,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -102,7 +102,7 @@ class SignalLoadWorker(QThread):
             units = signal_units(self.cp.profile)
             labels = {n: r.labels for n, r in raw.items() if r.labels}
             self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "units": units,
-                            "labels": labels,
+                            "labels": labels, "offsets": dict(getattr(self.path, "offsets", {}) or {}),
                             "missing": dict(ev.env.missing),
                             "issues": [i.message for i in issues + align_issues + outcome.issues
                                        if i.severity != "info"]})
@@ -135,7 +135,6 @@ class SignalViewer(QWidget):
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
         self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome} from Run preview
         self.preview_worker = None
-        self.offsets: dict[str, float] = {}  # recording name -> time shift [s] added in the plots
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -192,8 +191,9 @@ class SignalViewer(QWidget):
         self.offset_spin.setDecimals(3)
         self.offset_spin.setSingleStep(0.1)
         self.offset_spin.setSuffix(" s")
-        self.offset_spin.setToolTip("Shift the selected recording in time (plots only) so it lines up with "
-                                    "the others; positive moves it later")
+        self.offset_spin.setToolTip("Shift the selected recording in time so it lines up with the others; "
+                                    "positive moves it later. Used by the plots, the preview and the KPI run "
+                                    "(per file: see the Offset column on the Files tab).")
         orow.addWidget(self.offset_spin, 1)
         self.align_btn = QPushButton("Align A→B")
         self.align_btn.setToolTip("Put cursor A on a feature in one recording and cursor B on the same "
@@ -239,6 +239,11 @@ class SignalViewer(QWidget):
         self.files.currentItemChanged.connect(lambda *_: self._show_offset())
         self.offset_spin.valueChanged.connect(self._offset_edited)
         self.align_btn.clicked.connect(self.align_cursors)
+        state.offsets_changed.connect(self._offsets_changed)
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(400)
+        self._reload_timer.timeout.connect(self._reload_shifted)
         self.list.itemChanged.connect(lambda *_: self.draw())
         self.filter.textChanged.connect(self._apply_filter)
         clear.clicked.connect(self.uncheck_all)
@@ -282,9 +287,17 @@ class SignalViewer(QWidget):
         self._show_offset()
 
     # ------------------------------------------------------------------ time offsets
+    def rec_offset(self, r) -> float:
+        """Shift of a recording: that of its first file (the files of a recording move together here)."""
+        return self.state.offsets.get(r.files[0], 0.0) if r.files else 0.0
+
     def _file_label(self, r) -> str:
-        off = self.offsets.get(r.name, 0.0)
-        return r.label + (f"   ({off:+.3f} s)" if off else "")
+        offs = {self.state.offsets.get(f, 0.0) for f in r.files}
+        if offs == {0.0}:
+            return r.label
+        if len(offs) == 1:
+            return r.label + f"   ({offs.pop():+.3f} s)"
+        return r.label + "   (shifted)"
 
     def _current_rec(self):
         it = self.files.currentItem()
@@ -294,7 +307,7 @@ class SignalViewer(QWidget):
     def _show_offset(self):
         r = self._current_rec()
         self.offset_spin.blockSignals(True)
-        self.offset_spin.setValue(self.offsets.get(r.name, 0.0) if r else 0.0)
+        self.offset_spin.setValue(self.rec_offset(r) if r else 0.0)
         self.offset_spin.blockSignals(False)
         self.offset_spin.setEnabled(r is not None)
         self.align_btn.setEnabled(r is not None)
@@ -305,23 +318,38 @@ class SignalViewer(QWidget):
             self.set_offset(r.name, value)
 
     def set_offset(self, name: str, seconds: float):
-        """Shift recording `name` by `seconds` in the plots (0 removes the shift)."""
-        if seconds:
-            self.offsets[name] = float(seconds)
-        else:
-            self.offsets.pop(name, None)
+        """Shift recording `name` to `seconds` (its files keep their offsets relative to each other)."""
+        r = next((r for r in self.state.recordings() if r.name == name), None)
+        if r is None:
+            return
+        delta = float(seconds) - self.rec_offset(r)
+        self.state.set_offsets({f: self.state.offsets.get(f, 0.0) + delta for f in r.files})
+
+    def _offsets_changed(self, files):
+        """Shifted files are read again (the shift is applied when reading, as in the KPI run)."""
+        recs = self.state.recordings()
+        hit = {r.name for r in recs if set(r.files) & set(files)}
         for i in range(self.files.count()):
             it = self.files.item(i)
-            if it.data(Qt.UserRole) == name:
-                r = next((r for r in self.state.recordings() if r.name == name), None)
-                if r is not None:
-                    self.files.blockSignals(True)
-                    it.setText(self._file_label(r))
-                    self.files.blockSignals(False)
-        cur = self._current_rec()
-        if cur is not None and cur.name == name:
-            self._show_offset()
-        self.draw()
+            r = next((r for r in recs if r.name == it.data(Qt.UserRole)), None)
+            if r is not None:
+                self.files.blockSignals(True)
+                it.setText(self._file_label(r))
+                self.files.blockSignals(False)
+        self._show_offset()
+        for name in hit:
+            self.cache.pop(name, None)
+        if self.preview and self.preview["rec"] in hit:
+            self.preview = None
+            self.pv_status.setText("Time offset changed: press Run preview again")
+        if hit & set(self.selected_names()):
+            self._reload_timer.start()
+
+    def _reload_shifted(self):
+        if self.worker is not None:  # still reading: try again shortly
+            self._reload_timer.start()
+            return
+        self.load()
 
     def align_cursors(self):
         """Shift the selected recording by A − B, so the feature under cursor B moves to cursor A."""
@@ -332,7 +360,7 @@ class SignalViewer(QWidget):
                                      "recording to shift")
             return
         self.cursors[1] = a
-        self.set_offset(r.name, round(self.offsets.get(r.name, 0.0) + (a - b), 6))
+        self.set_offset(r.name, round(self.rec_offset(r) + (a - b), 6))
 
     def selected_names(self) -> list[str]:
         return [self.files.item(i).data(Qt.UserRole) for i in range(self.files.count())
@@ -476,7 +504,13 @@ class SignalViewer(QWidget):
         self.worker = None
         self._next()
 
+    def _current_offsets(self, name) -> dict:
+        r = next((r for r in self.state.recordings() if r.name == name), None)
+        return dict(r.offsets) if r is not None else {}
+
     def _loaded(self, data):
+        if data.get("offsets", {}) != self._current_offsets(data["file"]):
+            return  # read before the time offset changed; it is read again
         self.data = data
         self.cache[data["file"]] = data
 
@@ -592,7 +626,7 @@ class SignalViewer(QWidget):
                     if n not in d["values"]:
                         continue
                     y = np.asarray(d["values"][n], dtype=float)
-                    t = np.asarray(d["time"], dtype=float) + self.offsets.get(r.name, 0.0)
+                    t = np.asarray(d["time"], dtype=float)
                     c = COLORS[k % len(COLORS)] if multi else COLORS[(j if overlay else i) % len(COLORS)]
                     ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
                     ax.plot(t, y, color=c, lw=1.2, ls=ls)
@@ -717,6 +751,9 @@ class SignalViewer(QWidget):
         self.pv_run.setEnabled(True)
 
     def _preview_done(self, rec, data):
+        if dict(rec.offsets) != self._current_offsets(rec.name):
+            self.pv_status.setText("Time offset changed while running: press Run preview again")
+            return
         out = data["outcome"]
         old = self.cache.get(rec.name, {})
         self.cache[rec.name] = {
@@ -751,28 +788,27 @@ class SignalViewer(QWidget):
         if not active:
             return
         out = self.preview["outcome"]
-        off = self.offsets.get(self.preview["rec"], 0.0)  # occurrence times are in file time
         occs = self._occurrences()
         idx = self.pv_occ.value()
         occ = next((o for o in occs if o.index == idx), None)
         if occ is None:
             for ax in axes:
                 for o in occs:
-                    ax.axvspan(o.t_start + off, o.t_end + off, color="#2a78d6", alpha=0.10, lw=0)
+                    ax.axvspan(o.t_start, o.t_end, color="#2a78d6", alpha=0.10, lw=0)
             axes[0].set_title(f"Whole file: no occurrence of '{ev}' found" if not occs
                               else f"Whole file: occurrence #{idx} of '{ev}' not found", fontsize=8, color="#6b6b66")
             return
         moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
         for i, ax in enumerate(axes):
-            ax.axvspan(occ.t_start + off, occ.t_end + off, color="#2a78d6", alpha=0.10, lw=0)
+            ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.10, lw=0)
             for m in moments:
                 if m.time is not None:
-                    ax.axvline(m.time + off, color="#5f5e5a", ls=":", lw=1)
+                    ax.axvline(m.time, color="#5f5e5a", ls=":", lw=1)
                     if i == 0:
-                        ax.annotate(f" {m.moment}", (m.time + off, 0.02), xycoords=("data", "axes fraction"),
+                        ax.annotate(f" {m.moment}", (m.time, 0.02), xycoords=("data", "axes fraction"),
                                     fontsize=7, rotation=90, va="bottom", ha="right", color="#5f5e5a",
                                     annotation_clip=False)
-        lo, hi = occ.t_window_start + off, occ.t_window_end + off
+        lo, hi = occ.t_window_start, occ.t_window_end
         axes[0].set_xlim(lo, hi)
         for ax in axes:  # fit y to the window, not the whole file
             parts = [y[(t >= lo) & (t <= hi)] for _, t, y, _ in self._series.get(ax, [])]

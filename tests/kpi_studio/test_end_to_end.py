@@ -56,6 +56,19 @@ def test_cli_validate_and_run(mf4_dir, tmp_path, capsys):
     assert "Recordings OK: 2/2" in capsys.readouterr().out
 
 
+def test_cli_offset_option(mf4_dir):
+    from src.kpi_studio.cli import _offsets
+
+    folder, _ = mf4_dir
+    files = [str(folder / "a.mf4"), str(folder / "b.mf4")]
+    assert _offsets(["b.mf4=0.25"], files) == {files[1]: 0.25}
+    assert _offsets([f"{files[0]}=-1"], files) == {files[0]: -1.0}
+    with pytest.raises(SystemExit):
+        _offsets(["c.mf4=1"], files)
+    with pytest.raises(SystemExit):
+        _offsets(["b.mf4=soon"], files)
+
+
 def test_results_next_to_input_are_replaced(mf4_dir):
     from src.kpi_studio.app.run_service import OUTPUT_MARKER, input_results_dir
 

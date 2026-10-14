@@ -138,13 +138,14 @@ def process_file(cp: CompiledProfile, source, index=None) -> FileOutcome:
         return outcome.error(f"unexpected error: {type(exc).__name__}: {exc}")
 
 
-def _worker(profile_dict: dict, name: str, files: list[str], user_tool_files: list[str]) -> FileOutcome:
+def _worker(profile_dict: dict, name: str, files: list[str], user_tool_files: list[str],
+            offsets: Optional[dict] = None) -> FileOutcome:
     # runs in a child process: rebuild the compiled profile from plain data
     for f in user_tool_files:
         toolbox.load_user_tools(Path(f).parent)
     profile = Profile.model_validate(profile_dict)
     _, cp = profile_store.load_compiled(profile)
-    return process_file(cp, Recording(name, files))
+    return process_file(cp, Recording(name, files, dict(offsets or {})))
 
 
 # ----------------------------------------------------------------------------- run
@@ -188,7 +189,7 @@ class RunService:
     def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path, None],
                  *, workers: int = 1, progress: Optional[ProgressFn] = None,
                  cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None,
-                 combine: bool = True):
+                 combine: bool = True, offsets: Optional[dict] = None):
         self.profile_src = profile
         if isinstance(profile, (str, Path)):
             base_dir = base_dir or Path(profile).parent
@@ -200,6 +201,7 @@ class RunService:
         self.cancel = cancel or threading.Event()
         self.indexes: dict = {}
         self.combine = combine
+        self.offsets = {str(Path(f)): float(v) for f, v in (offsets or {}).items() if v}  # file -> time shift [s]
         self.recordings: list[Recording] = []
 
     def preflight(self) -> PreflightReport:
@@ -210,11 +212,17 @@ class RunService:
         self.progress("index", total, total, "Headers read")
         report = preflight(self.cp, self.files, self.indexes, self.combine)
         self.recordings = report.recordings
+        self._attach_offsets()
         return report
+
+    def _attach_offsets(self):
+        for r in self.recordings:
+            r.offsets = {f: self.offsets[f] for f in r.files if f in self.offsets}
 
     def _process_all(self) -> list[FileOutcome]:
         if not self.recordings:
             self.recordings = group_recordings(self.files, self.indexes, self.combine)
+            self._attach_offsets()
         recs = self.recordings
         total = len(recs)
         outcomes: dict[str, FileOutcome] = {}
@@ -224,7 +232,7 @@ class RunService:
             # spawn (not fork): same behaviour on Windows/macOS/Linux and safe with Qt threads
             ctx = multiprocessing.get_context("spawn")
             with ProcessPoolExecutor(max_workers=min(self.workers, total), mp_context=ctx) as pool:
-                futures = {pool.submit(_worker, data, r.name, r.files, user_files): r for r in recs}
+                futures = {pool.submit(_worker, data, r.name, r.files, user_files, r.offsets): r for r in recs}
                 done = 0
                 for fut in as_completed(futures):
                     r = futures[fut]

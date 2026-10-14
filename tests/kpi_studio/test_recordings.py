@@ -88,6 +88,27 @@ def test_split_recording_gives_kpis_that_neither_file_gives_alone(tmp_path):
     assert len(res.outcomes) == 1 and res.n_ok == 1
 
 
+def test_manual_time_offset_shifts_a_file_for_reading_and_kpis(tmp_path):
+    pytest.importorskip("asammdf")
+    files = _split_recording(tmp_path)
+    indexes = {f: index_file(f) for f in files}
+    _, cp = profile_store.load_compiled(PROFILE)
+    rec = group_recordings(files, indexes, offsets={files[1]: 0.5})[0]
+    assert rec.offsets == {files[1]: 0.5}
+    raw, _ = read_signals(rec, cp.profile.signals, indexes)
+    assert raw["aebTargetDecel"].timestamps[0] == pytest.approx(1.5)  # header start 1 s + manual 0.5 s
+    assert raw["egoSpeed"].timestamps[0] == pytest.approx(0.0)
+
+    plain = process_file(cp, Recording(rec.name, files), indexes)
+    shifted = process_file(cp, rec, indexes)
+    assert shifted.occurrences[0].t_start == pytest.approx(plain.occurrences[0].t_start + 0.5, abs=0.02)
+
+    svc = RunService(PROFILE, files, tmp_path / "out", offsets={files[1]: 0.5})
+    res = svc.run()
+    assert svc.recordings[0].offsets == {files[1]: 0.5}
+    assert res.outcomes[0].occurrences[0].t_start == pytest.approx(shifted.occurrences[0].t_start)
+
+
 def test_text_enum_channel_reads_raw_values_and_labels(tmp_path):
     """A channel with a value-to-text conversion and no 'enum:' in the profile still plots."""
     from asammdf import MDF, Signal

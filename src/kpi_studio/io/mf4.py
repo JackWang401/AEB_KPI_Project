@@ -231,6 +231,7 @@ class Recording:
 
     name: str
     files: list
+    offsets: dict = field(default_factory=dict)  # file -> manual time shift [s], added on reading
 
     @property
     def label(self) -> str:
@@ -256,10 +257,20 @@ def recording_key(path: str | Path) -> str:
     return m.group("key") if m else stem
 
 
-def group_recordings(files: list, indexes: Optional[dict] = None, combine: bool = True) -> list[Recording]:
+def group_recordings(files: list, indexes: Optional[dict] = None, combine: bool = True,
+                     offsets: Optional[dict] = None) -> list[Recording]:
     """Group files into recordings: same folder and same name before the logger part
     (``AADT-150453_002_ABD_Robot__…`` + ``AADT-150453_002_MOTION_1__…``). Files whose
-    measurement start differs by more than MAX_START_GAP_S are kept apart."""
+    measurement start differs by more than MAX_START_GAP_S are kept apart.
+    `offsets` (file -> seconds) are manual time shifts carried by the recordings."""
+    out = _group(files, indexes, combine)
+    if offsets:
+        for r in out:
+            r.offsets = {f: float(offsets[f]) for f in r.files if offsets.get(f)}
+    return out
+
+
+def _group(files: list, indexes: Optional[dict], combine: bool) -> list[Recording]:
     files = [str(f) for f in files]
     if not combine:
         return [Recording(f, [f]) for f in files]
@@ -373,7 +384,8 @@ def read_signals(source, defs: dict[str, SignalDef],
         return {}, issues
     starts = [indexes[f].abs_start for f in rec.files if indexes[f].ok]
     t0 = min(starts) if starts and all(t is not None for t in starts) else None
-    offset = {f: (indexes[f].abs_start - t0 if t0 is not None and indexes[f].ok else 0.0) for f in rec.files}
+    offset = {f: (indexes[f].abs_start - t0 if t0 is not None and indexes[f].ok else 0.0)
+              + float(rec.offsets.get(f, 0.0)) for f in rec.files}
 
     mapping = resolve_recording(defs, rec, indexes)
     raw: dict[str, RawSignal] = {}

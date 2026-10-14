@@ -36,6 +36,7 @@ class AppState(QObject):
     validated = Signal()                # compile finished; see .issues / .compiled
     files_changed = Signal()
     dirty_changed = Signal(bool)
+    offsets_changed = Signal(list)      # files whose manual time offset changed
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +47,7 @@ class AppState(QObject):
         self.indexes: dict[str, RecordingIndex] = {}
         self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
         self.combine = True   # read files of the same recording (one per logger/bus) together
+        self.offsets: dict[str, float] = {}  # file -> manual time shift [s] (viewer and KPI run; not saved)
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
         self.resolved: Optional[Profile] = None
@@ -248,6 +250,7 @@ class AppState(QObject):
     def set_files(self, files: list[str]):
         self.files = list(dict.fromkeys(files))
         self.indexes = {f: i for f, i in self.indexes.items() if f in self.files}
+        self.offsets = {f: v for f, v in self.offsets.items() if f in self.files}
         self.files_changed.emit()
 
     def set_index(self, path: str, index: RecordingIndex):
@@ -261,4 +264,18 @@ class AppState(QObject):
 
     def recordings(self) -> list[Recording]:
         """What gets processed: the files grouped into recordings (one file each when combining is off)."""
-        return group_recordings(self.files, self.indexes, self.combine)
+        return group_recordings(self.files, self.indexes, self.combine, self.offsets)
+
+    def set_offsets(self, changes: dict[str, float]):
+        """Set the manual time shift [s] of files (0 removes it); positive moves a file later."""
+        changed = []
+        for f, v in changes.items():
+            v = round(float(v), 6)
+            if v != self.offsets.get(f, 0.0):
+                changed.append(f)
+                if v:
+                    self.offsets[f] = v
+                else:
+                    self.offsets.pop(f, None)
+        if changed:
+            self.offsets_changed.emit(changed)
