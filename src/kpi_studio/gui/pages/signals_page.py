@@ -186,10 +186,7 @@ class SignalsPage(QWidget):
         drow.addStretch(1)
         self.add_der_btn = QPushButton("Add…")
         self.add_der_btn.setToolTip("Build a derived signal: pick a signal, a method and its arguments")
-        self.edit_der_btn = QPushButton("Edit…")
-        self.edit_der_btn.setToolTip("Change the selected derived signal's input, method and arguments")
         drow.addWidget(self.add_der_btn)
-        drow.addWidget(self.edit_der_btn)
         dl.addLayout(drow)
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
@@ -209,8 +206,7 @@ class SignalsPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self._delete_menu(self.sig_table, self.delete_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
-        self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
-        self._delete_menu(self.der_table, self.delete_derived)
+        self._delete_menu(self.der_table, self.delete_derived, edit=self.edit_derived)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
         self.sig_table.itemDoubleClicked.connect(self._enum_double_clicked)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
@@ -438,19 +434,20 @@ class SignalsPage(QWidget):
         sigs[name]["enum"] = dlg.values() or None
         self.state.edited(structure=True)
 
-    def _delete_menu(self, table, delete):
-        """Right-click a row: Delete (the clicked row, or the whole selection when it is part of it)."""
+    def _delete_menu(self, table, delete, edit=None):
+        """Right-click a row: Edit… (one row, when `edit` is given) and Delete (the clicked row, or the
+        whole selection when it is part of it)."""
         table.setContextMenuPolicy(Qt.CustomContextMenu)
 
         def show(pos):
-            menu = self.row_menu(table, pos, delete)
+            menu = self.row_menu(table, pos, delete, edit)
             if menu is not None:
                 menu.exec(table.viewport().mapToGlobal(pos))
 
         table.customContextMenuRequested.connect(show)
 
     @staticmethod
-    def row_menu(table, pos, delete):
+    def row_menu(table, pos, delete, edit=None):
         index = table.indexAt(pos)
         if not index.isValid():
             return None
@@ -458,6 +455,9 @@ class SignalsPage(QWidget):
             table.selectRow(index.row())
         rows = {i.row() for i in table.selectedIndexes()}
         menu = QMenu(table)
+        if edit is not None and len(rows) == 1:
+            name = table.item(index.row(), 0).data(Qt.UserRole)
+            menu.addAction("Edit…").triggered.connect(lambda: edit(name))
         act = menu.addAction("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows")
         act.triggered.connect(delete)
         return menu

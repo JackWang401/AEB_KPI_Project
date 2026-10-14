@@ -645,3 +645,18 @@ def test_right_click_deletes_signal_and_derived(qtbot, window, mf4_dir):
         assert [a.text() for a in menu.actions()] == ["Delete"]
         menu.actions()[0].trigger()
         assert name not in window.state.data[section]
+
+
+def test_right_click_edits_derived(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    table = page.der_table
+    edited = []
+    pos = table.visualRect(table.model().index(1, 1)).center()
+    menu = page.row_menu(table, pos, page.delete_derived, edit=edited.append)
+    assert [a.text() for a in menu.actions()] == ["Edit…", "Delete"]
+    menu.actions()[0].trigger()
+    assert edited == [table.item(1, 0).data(Qt.UserRole)]
+    table.selectAll()
+    menu = page.row_menu(table, pos, page.delete_derived, edit=edited.append)
+    assert [a.text() for a in menu.actions()] == [f"Delete {table.rowCount()} rows"]  # Edit is for one row
