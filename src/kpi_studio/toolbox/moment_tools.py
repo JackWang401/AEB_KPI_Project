@@ -158,3 +158,54 @@ def settled(ctx, x, tol, seconds):
     with np.errstate(invalid="ignore"):
         ok = np.flatnonzero((np.max(win, axis=1) - np.min(win, axis=1)) <= tol)
     return _t(ctx, ok[0]) if ok.size else None
+
+
+def _value_edges(x: np.ndarray, after_mask: np.ndarray, before_mask: np.ndarray) -> np.ndarray:
+    """Sample indices i where before_mask[i-1] and after_mask[i] (a switch between two samples)."""
+    if x.size < 2:
+        return np.array([], dtype=int)
+    return np.flatnonzero(before_mask[:-1] & after_mask[1:]) + 1
+
+
+def _is(x: np.ndarray, value: float) -> np.ndarray:
+    with np.errstate(invalid="ignore"):
+        return np.isfinite(x) & np.isclose(x, value)
+
+
+def _pick(ctx, idx: np.ndarray, which: str):
+    if not idx.size:
+        return None
+    return _t(ctx, idx[0] if which == "first" else idx[-1])
+
+
+@tool("moment", "Value change", params=(
+    Param("value", float, example=3.0, doc="the value the signal switches to"),
+    Param("which", str, "first", choices=("first", "last")),
+))
+def changes_to(ctx, x, value, which):
+    """Time x switches to `value` (from any other value), e.g. an enum turning to 3."""
+    x = _f(x)
+    hit = _is(x, value)
+    return _pick(ctx, _value_edges(x, hit, np.isfinite(x) & ~hit), which)
+
+
+@tool("moment", "Value change", params=(
+    Param("value", float, example=3.0, doc="the value the signal leaves"),
+    Param("which", str, "first", choices=("first", "last")),
+))
+def changes_from(ctx, x, value, which):
+    """Time x leaves `value` (switches to any other value)."""
+    x = _f(x)
+    hit = _is(x, value)
+    return _pick(ctx, _value_edges(x, np.isfinite(x) & ~hit, hit), which)
+
+
+@tool("moment", "Value change", params=(
+    Param("from_value", float, example=0.0, doc="value before the switch"),
+    Param("to_value", float, example=3.0, doc="value after the switch"),
+    Param("which", str, "first", choices=("first", "last")),
+))
+def changes_from_to(ctx, x, from_value, to_value, which):
+    """Time x switches directly from `from_value` to `to_value`."""
+    x = _f(x)
+    return _pick(ctx, _value_edges(x, _is(x, to_value), _is(x, from_value)), which)

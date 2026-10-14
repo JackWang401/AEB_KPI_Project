@@ -63,8 +63,9 @@ class NamePicker(QMenu):
 
     picked = Signal(str)
 
-    def __init__(self, sections: dict[str, list[str]], parent=None):
+    def __init__(self, sections: dict[str, list[str]], parent=None, actions: Optional[dict] = None):
         super().__init__(parent)
+        self.actions_map = dict(actions or {})
         box = QWidget()
         lay = QVBoxLayout(box)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -72,6 +73,11 @@ class NamePicker(QMenu):
         self.filter.setPlaceholderText("Filter… (wildcards: * ?)")
         self.list = QListWidget()
         self.list.setMinimumSize(280, 260)
+        for label in self.actions_map:
+            it = QListWidgetItem("➜ " + label)
+            it.setData(Qt.UserRole + 1, label)
+            it.setForeground(QColor("#2a78d6"))
+            self.list.addItem(it)
         for title, names in sections.items():
             if not names:
                 continue
@@ -114,6 +120,11 @@ class NamePicker(QMenu):
             self.close()
 
     def _pick(self, item):
+        action = item.data(Qt.UserRole + 1)
+        if action:
+            self.close()
+            self.actions_map[action]()
+            return
         name = item.data(Qt.UserRole)
         if name:
             self.picked.emit(name)
@@ -130,8 +141,10 @@ class ExprEdit(QLineEdit):
 
     def __init__(self, names_fn: Callable[[], list[str]], parent=None, *, allow_empty=True, placeholder="",
                  enums_fn: Optional[Callable[[], dict]] = None,
-                 extras_fn: Optional[Callable[[], dict]] = None):
+                 extras_fn: Optional[Callable[[], dict]] = None,
+                 build_fn: Optional[Callable[["ExprEdit"], None]] = None):
         super().__init__(parent)
+        self.build_fn = build_fn
         self.names_fn = names_fn
         self.enums_fn = enums_fn or (lambda: {})
         self.extras_fn = extras_fn or (lambda: {})
@@ -151,7 +164,10 @@ class ExprEdit(QLineEdit):
         return sections
 
     def open_picker(self):
-        self.picker = NamePicker(self.picker_sections(), self)
+        actions = {}
+        if self.build_fn is not None:
+            actions["Build condition… (compare, changes to / from)"] = lambda: self.build_fn(self)
+        self.picker = NamePicker(self.picker_sections(), self, actions=actions)
         self.picker.picked.connect(self.insert_name)
         self.picker.popup(self.mapToGlobal(self.rect().bottomLeft()))
 

@@ -108,3 +108,17 @@ def test_units_conversion():
     assert conversion_factor("[m/s2]", "g") == pytest.approx(1 / 9.80665)
     assert conversion_factor("deg", "rad") == pytest.approx(np.pi / 180)
     assert conversion_factor("m", "s") is None
+
+
+def test_value_change_moments():
+    t = np.arange(8, dtype=float)
+    ctx = ToolContext(t)
+    x = np.array([0, 0, 3, 3, 1, 3, np.nan, 0.0])
+    run = lambda name, **p: toolbox.get("moment", name).func(  # noqa: E731
+        ctx, x, **toolbox.get("moment", name).bind_params([], p))
+    assert run("changes_to", value=3) == 2.0
+    assert run("changes_to", value=3, which="last") == 5.0
+    assert run("changes_from", value=3) == 4.0
+    assert run("changes_from_to", from_value=1, to_value=3) == 5.0
+    assert run("changes_from_to", from_value=3, to_value=0) is None  # NaN in between is not a switch
+    assert run("changes_to", value=7) is None

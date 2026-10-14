@@ -101,9 +101,10 @@ class EventForm(QWidget):
         self.desc = QLineEdit()
         self.mode = QComboBox()
         self.mode.addItems(["Condition (start / end expressions)", "Preset from the toolbox"])
-        self.start = ExprEdit(names, placeholder="e.g. aebRequest in (FULL, PARTIAL)", enums_fn=enums)
+        self.start = ExprEdit(names, placeholder="e.g. aebRequest in (FULL, PARTIAL)", enums_fn=enums,
+                              build_fn=lambda e: self.build(e, "start"))
         self.end = ExprEdit(names, placeholder="optional; default: until the start condition is false",
-                            enums_fn=enums)
+                            enums_fn=enums, build_fn=lambda e: self.build(e, "end"))
         sb, eb = QPushButton("Build…"), QPushButton("Build…")
         self.build_buttons = (sb, eb)
         srow, erow = QHBoxLayout(), QHBoxLayout()
@@ -320,10 +321,12 @@ class EventForm(QWidget):
             combo.setCurrentText(rule)
             combo.setToolTip(self.rule_help(rule))
             combo.currentTextChanged.connect(lambda t, c=combo: c.setToolTip(self.rule_help(t)))
+            combo.currentTextChanged.connect(lambda t, row=r: self.fill_rule_options(row, t))
             combo.currentTextChanged.connect(lambda *_, row=r: self.save_moment(row))
             self.moments.setCellWidget(r, 1, combo)
             expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
-                            extras_fn=lambda m=mname: {"Moments": self.moment_names(exclude=m)})
+                            extras_fn=lambda m=mname: {"Moments": self.moment_names(exclude=m)},
+                            build_fn=lambda e, row=r: self.build_moment_row(row))
             expr.setPlaceholderText("▾ pick a signal, or type a condition")
             expr.setText(str(target))
             expr.focused.connect(self.page.set_target)
@@ -390,6 +393,35 @@ class EventForm(QWidget):
         own = [m for m in (self.ev.get("moments", {}) or {}) if m != exclude] if self.name else []
         return list(BUILTIN_MOMENTS) + own
 
+    def fill_rule_options(self, row: int, rule: str):
+        """Switching rule: add the new rule's required options (e.g. 'value: 3.0') if missing."""
+        if self._loading or rule == "offset":
+            return
+        try:
+            spec = toolbox.get("moment", rule)
+        except Exception:  # noqa: BLE001
+            return
+        edit = self.moments.cellWidget(row, 3)
+        try:
+            opts = parse_options(edit.text())
+        except Exception:  # noqa: BLE001
+            return
+        known = {p.name for p in spec.params}
+        stale = [k for k in opts if k not in known and k not in ("after", "before", "within", "between",
+                                                                  "hold", "by")]
+        for k in stale:
+            opts.pop(k)
+        for p in spec.params:
+            if p.required and p.name not in opts:
+                opts[p.name] = p.example_value()
+        edit.setText(format_options(opts))
+        self.save_moment(row)
+
+    def build_moment_row(self, row: int):
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=self.moments.cellWidget(row, 2).text())
+        if dlg.exec() == QDialog.Accepted and dlg.expression():
+            self.apply_moment_condition(row, dlg.expression())
+
     def build_moment(self):
         if self.name is None:
             return
@@ -407,12 +439,11 @@ class EventForm(QWidget):
             self.add_moment()
             row = self.moments.rowCount() - 1
         combo = self.moments.cellWidget(row, 1)
-        if combo.currentText() not in self.CONDITION_RULES:
-            combo.blockSignals(True)
-            combo.setCurrentText("first")
-            combo.blockSignals(False)
         self.moments.cellWidget(row, 2).setText(expression)
-        self.save_moment(row)
+        if combo.currentText() not in self.CONDITION_RULES:
+            combo.setCurrentText("first")  # saves, and drops the old rule's options
+        else:
+            self.save_moment(row)
 
     def delete_moment(self):
         rows = sorted({i.row() for i in self.moments.selectedIndexes()}, reverse=True)
