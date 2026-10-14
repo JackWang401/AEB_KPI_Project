@@ -72,7 +72,7 @@ QLabel#sectionTitle { font-weight: 700; }
 QToolBar { spacing: 6px; padding: 6px 12px; background: #f5f5f7; border: none; border-bottom: 1px solid #e5e5ea; }
 QToolBar QToolButton { padding: 4px 10px; border-radius: 6px; }
 QToolBar QToolButton:hover { background: #e8e8ed; }
-QHeaderView::section { padding: 6px 8px; background: #fafafc; border: none; border-bottom: 1px solid #e5e5ea;
+QHeaderView::section { padding: 3px 8px; background: #fafafc; border: none; border-bottom: 1px solid #e5e5ea;
                        color: #6e6e73; font-weight: 600; }
 QSplitter::handle { background: transparent; }
 QSplitter::handle:horizontal { width: 14px; }
