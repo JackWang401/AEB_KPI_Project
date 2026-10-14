@@ -128,6 +128,10 @@ class MainWindow(QMainWindow):
         self.central_split.setSizes([430, 470])
         self.setCentralWidget(self.central_split)
         self.tabs.currentChanged.connect(self._tab_changed)
+        # the viewer plots the recording of the file selected on the Files tab
+        self.files_page.table.currentCellChanged.connect(
+            lambda row, *_: self.viewer.show_recording_of(self.state.files[row])
+            if 0 <= row < len(self.state.files) else None)
         self._tab_changed(self.tabs.currentIndex())
 
         self._build_toolbar()

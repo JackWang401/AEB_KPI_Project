@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -142,13 +143,8 @@ class SignalViewer(QWidget):
         self.load_btn = QPushButton("Load signals")
         self.load_btn.setToolTip("Read the ticked signals from the recording")
         bar.addWidget(self.load_btn)
-        self.rec_label = QLabel("Recording")
-        bar.addWidget(self.rec_label)
-        self.rec_combo = QComboBox()
-        self.rec_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        self.rec_combo.setToolTip("Recording to plot (shown when several are loaded on the Files tab)")
-        bar.addWidget(self.rec_combo)
-        # which recordings are plotted (several can be overlaid through select_recordings); not shown
+        # which recordings are plotted: the one selected on the Files tab (several can be overlaid
+        # through select_recordings); not shown
         self.files = QListWidget(self)
         self.files.setVisible(False)
         self.separate_btn = QPushButton("One signal per subplot")
@@ -157,13 +153,8 @@ class SignalViewer(QWidget):
         bar.addWidget(self.separate_btn)
         self.status = QLabel()
         self.status.setObjectName("hint")
-        bar.addWidget(self.status, 1)
-        self.cursor_info = QLabel()
-        self.cursor_info.setObjectName("hint")
-        bar.addWidget(self.cursor_info)
-        lay.addLayout(bar)
-
-        pbar = QHBoxLayout()
+        pbar = bar  # one row: load + status, event preview, cursor readout
+        pbar.addSpacing(12)
         pbar.addWidget(QLabel("Event"))
         self.pv_event = QComboBox()
         self.pv_event.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -181,8 +172,15 @@ class SignalViewer(QWidget):
         pbar.addWidget(self.pv_run)
         self.pv_status = QLabel()
         self.pv_status.setObjectName("hint")
-        pbar.addWidget(self.pv_status, 1)
-        lay.addLayout(pbar)
+        for label in (self.status, self.pv_status):  # long texts shrink instead of widening the window
+            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            label.setMinimumWidth(40)
+        pbar.addWidget(self.pv_status, 2)
+        pbar.addWidget(self.status, 1)
+        self.cursor_info = QLabel()
+        self.cursor_info.setObjectName("hint")
+        pbar.addWidget(self.cursor_info)
+        lay.addLayout(bar)
 
         split = QSplitter(Qt.Horizontal)
         left = QWidget()
@@ -220,7 +218,6 @@ class SignalViewer(QWidget):
 
         self.load_btn.clicked.connect(self.load)
         self.files.itemChanged.connect(lambda *_: self._files_ticked())
-        self.rec_combo.currentIndexChanged.connect(self._rec_chosen)
         state.offsets_changed.connect(self._offsets_changed)
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
@@ -263,27 +260,6 @@ class SignalViewer(QWidget):
             self.files.addItem(it)
         self.files.blockSignals(False)
         self.cache = {k: v for k, v in self.cache.items() if k in {r.name for r in recs}}
-        self._fill_combo()
-
-    def _fill_combo(self):
-        recs = self.state.recordings()
-        sel = self.selected_names()
-        self.rec_combo.blockSignals(True)
-        self.rec_combo.clear()
-        for r in recs:
-            self.rec_combo.addItem(self._file_label(r), r.name)
-            self.rec_combo.setItemData(self.rec_combo.count() - 1, "\n".join(r.files), Qt.ToolTipRole)
-        if sel:
-            self.rec_combo.setCurrentIndex(max(0, self.rec_combo.findData(sel[0])))
-        self.rec_combo.blockSignals(False)
-        self.rec_combo.setVisible(len(recs) > 1)
-        self.rec_label.setVisible(len(recs) > 1)
-
-    def _rec_chosen(self, i):
-        name = self.rec_combo.itemData(i)
-        if name is not None:
-            self.select_recordings([name])
-            self._files_ticked()
 
     # ------------------------------------------------------------------ time offsets
     def _file_label(self, r) -> str:
@@ -298,7 +274,6 @@ class SignalViewer(QWidget):
         """Shifted files are read again (the shift is applied when reading, as in the KPI run)."""
         recs = self.state.recordings()
         hit = {r.name for r in recs if set(r.files) & set(files)}
-        self._fill_combo()
         for name in hit:
             self.cache.pop(name, None)
         if self.preview and self.preview["rec"] in hit:
@@ -312,6 +287,13 @@ class SignalViewer(QWidget):
             self._reload_timer.start()
             return
         self.load()
+
+    def show_recording_of(self, path: str):
+        """Plot the recording a file belongs to (the row selected on the Files tab)."""
+        rec = next((r for r in self.state.recordings() if path in r.files), None)
+        if rec is not None and self.selected_names() != [rec.name]:
+            self.select_recordings([rec.name])
+            self._files_ticked()
 
     def selected_names(self) -> list[str]:
         return [self.files.item(i).data(Qt.UserRole) for i in range(self.files.count())
@@ -330,11 +312,6 @@ class SignalViewer(QWidget):
             elif only:
                 it.setCheckState(Qt.Unchecked)
         self.files.blockSignals(False)
-        sel = self.selected_names()
-        if sel:
-            self.rec_combo.blockSignals(True)
-            self.rec_combo.setCurrentIndex(max(0, self.rec_combo.findData(sel[0])))
-            self.rec_combo.blockSignals(False)
 
     def refresh_names(self):
         names = self.state.signal_names()
