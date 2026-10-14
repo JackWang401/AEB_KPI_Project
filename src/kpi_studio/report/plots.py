@@ -126,7 +126,20 @@ def kpi_figure(p: PlotDef, wide: pd.DataFrame, units: dict, files: list[str]) ->
         fig.update_xaxes(title_text=_label(p.x, units))
         fig.update_yaxes(title_text="count")
     _ref_lines(fig, p)
+    _axes(fig, p)
     return _layout(fig, title)
+
+
+def _axes(fig: go.Figure, p: PlotDef) -> None:
+    """User axis titles and ranges override the defaults."""
+    if p.x_label:
+        fig.update_xaxes(title_text=p.x_label)
+    if p.y_label:
+        fig.update_yaxes(title_text=p.y_label)
+    if p.x_range:
+        fig.update_xaxes(range=list(p.x_range))
+    if p.y_range:
+        fig.update_yaxes(range=list(p.y_range))
 
 
 def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, units: dict) -> go.Figure:

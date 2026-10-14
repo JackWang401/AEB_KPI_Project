@@ -187,6 +187,12 @@ class AppState(QObject):
                 out[name] = tables[enum]
         return out
 
+    def kpi_names(self) -> list[str]:
+        names = [k.get("name") for k in self.data.get("kpis", []) or [] if k.get("name")]
+        if self.resolved is not None:
+            names += [k.name for k in self.resolved.kpis if k.name not in names]
+        return names
+
     def event_names(self) -> list[str]:
         names = list(self.data.get("events", {}))
         if self.resolved is not None:

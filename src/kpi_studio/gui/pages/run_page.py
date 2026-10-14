@@ -5,11 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QSettings, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -31,10 +34,70 @@ from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.workers import RunWorker
 
 PLOT_TYPES = ["scatter", "box", "bar", "histogram", "timeseries"]
+COLOR_BY = ["file", "event", "none"]
+GROUP_BY = ["file", "event"]
+
+
+class AxesDialog(QDialog):
+    """Axis titles and ranges of one plot; empty fields keep the automatic default."""
+
+    def __init__(self, plot: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Axes")
+        form = QFormLayout(self)
+        self.x_label, self.y_label = QLineEdit(plot.get("x_label", "")), QLineEdit(plot.get("y_label", ""))
+        self.x_label.setPlaceholderText(f"default: {plot.get('x') or 'KPI name'} [unit]")
+        self.y_label.setPlaceholderText(f"default: {plot.get('y') or 'KPI name'} [unit]")
+        self.ranges = {}
+        form.addRow("X axis title", self.x_label)
+        form.addRow("Y axis title", self.y_label)
+        for key, label in (("x_range", "X range"), ("y_range", "Y range")):
+            lo, hi = (plot.get(key) or [None, None])
+            row = QHBoxLayout()
+            edits = (QLineEdit("" if lo is None else str(lo)), QLineEdit("" if hi is None else str(hi)))
+            edits[0].setPlaceholderText("min (auto)")
+            edits[1].setPlaceholderText("max (auto)")
+            row.addWidget(edits[0])
+            row.addWidget(QLabel("to"))
+            row.addWidget(edits[1])
+            form.addRow(label, row)
+            self.ranges[key] = edits
+        self.error = QLabel()
+        self.error.setStyleSheet("color: #e34948")
+        form.addRow(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def values(self) -> dict:
+        """{key: value or None}; raises ValueError for a half-filled or inverted range."""
+        out = {"x_label": self.x_label.text().strip() or None, "y_label": self.y_label.text().strip() or None}
+        for key, (lo, hi) in self.ranges.items():
+            a, b = lo.text().strip(), hi.text().strip()
+            if not a and not b:
+                out[key] = None
+                continue
+            if not (a and b):
+                raise ValueError(f"{key.replace('_', ' ')}: give both min and max, or neither")
+            a, b = float(a), float(b)
+            if not a < b:
+                raise ValueError(f"{key.replace('_', ' ')}: min must be below max")
+            out[key] = [a, b]
+        return out
+
+    def _accept(self):
+        try:
+            self.values()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        self.accept()
 
 
 class RunPage(QWidget):
-    PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)", "Signals (timeseries)"]
+    PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
+                 "Signals (timeseries)", "Axes"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -53,6 +116,8 @@ class RunPage(QWidget):
         self.plots.setHorizontalHeaderLabels(self.PLOT_COLS)
         self.plots.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.plots.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        for col, width in ((0, 110), (2, 190), (3, 190), (4, 130), (5, 170), (7, 80)):
+            self.plots.setColumnWidth(col, width)
         pl.addWidget(self.plots)
         prow = QHBoxLayout()
         self.add_plot, self.del_plot = QPushButton("Add plot"), QPushButton("Delete plot")
@@ -124,15 +189,74 @@ class RunPage(QWidget):
             combo = QComboBox()
             combo.addItems(PLOT_TYPES)
             combo.setCurrentText(p.get("type", "scatter"))
-            combo.currentTextChanged.connect(lambda v, row=r: self._set_plot(row, "type", v))
+            combo.currentTextChanged.connect(lambda v, row=r: self._type_changed(row, v))
             self.plots.setCellWidget(r, 0, combo)
             group = p.get("color_by") if p.get("type") in ("scatter", "histogram") else p.get("group_by", "")
-            for c, v in enumerate([p.get("title", ""), p.get("x", ""), p.get("y", ""), group or "",
-                                   p.get("event", ""), ", ".join(p.get("signals", []) or [])], start=1):
+            kpis = self.state.kpi_names()
+            events = self.state.event_names()
+            ptype = p.get("type", "scatter")
+            for c, v in ((1, p.get("title", "")), (6, ", ".join(p.get("signals", []) or []))):
                 self.plots.setItem(r, c, QTableWidgetItem(str(v or "")))
+            for c, key, choices in ((2, "x", kpis), (3, "y", kpis), (5, "event", events)):
+                self.plots.setCellWidget(r, c, self._choice(r, key, choices, p.get(key, ""), editable=True))
+            if ptype in ("scatter", "histogram"):
+                gkey, gchoices = "color_by", COLOR_BY
+            elif ptype in ("box", "bar"):
+                gkey, gchoices = "group_by", GROUP_BY
+            else:
+                gkey, gchoices = None, []
+            if gkey:
+                self.plots.setCellWidget(r, 4, self._choice(r, gkey, gchoices, group or gchoices[0]))
+            else:
+                self.plots.removeCellWidget(r, 4)
+                item = QTableWidgetItem("")
+                self.plots.setItem(r, 4, item)
+            axes = QPushButton("Axes…")
+            axes.setToolTip("Axis titles and ranges")
+            axes.setEnabled(ptype != "timeseries")
+            axes.clicked.connect(lambda *_, row=r: self.edit_axes(row))
+            self.plots.setCellWidget(r, 7, axes)
         self._loading = False
 
+    def _choice(self, row: int, key: str, choices: list[str], current: str, editable=False) -> QComboBox:
+        combo = QComboBox()
+        combo.setEditable(editable)
+        if editable:
+            combo.addItem("")
+        combo.addItems(choices)
+        if current and combo.findText(current) < 0:
+            combo.addItem(current)  # a name that does not exist (yet) stays visible
+        combo.setCurrentText(current or "")
+        combo.currentTextChanged.connect(lambda v, k=key: self._set_plot(row, k, v.strip()))
+        return combo
+
+    def edit_axes(self, row: int):
+        plot = self.state.data["plots"][row]
+        dlg = AxesDialog(plot, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self.apply_axes(row, dlg.values())
+
+    def apply_axes(self, row: int, values: dict):
+        plot = self.state.data["plots"][row]
+        for k, v in values.items():
+            if v is None:
+                plot.pop(k, None)
+            else:
+                plot[k] = v
+        self.state.edited()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_plots()  # KPI and event names may have changed on tab 3
+
+    def _type_changed(self, row, value):
+        self._set_plot(row, "type", value)
+        QTimer.singleShot(0, self.refresh_plots)  # rebuild after this combo's signal returns
+
     def _set_plot(self, row, key, value):
+        if self._loading:
+            return
         plots = self.state.data.setdefault("plots", [])
         if value in ("", [], None):
             plots[row].pop(key, None)
@@ -160,7 +284,7 @@ class RunPage(QWidget):
             self._set_plot(r, "signals", [s.strip() for s in text.split(",") if s.strip()])
 
     def new_plot(self):
-        kpis = [k.get("name") for k in self.state.data.get("kpis", []) if k.get("name")]
+        kpis = self.state.kpi_names()
         self.state.data.setdefault("plots", []).append(
             {"type": "scatter", "title": "", "x": kpis[0] if kpis else "", "y": kpis[1] if len(kpis) > 1 else ""})
         self.state.edited(structure=True)

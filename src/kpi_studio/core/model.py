@@ -247,9 +247,17 @@ class PlotDef(_Strict):
     show_moments: bool = True
     max_figures: int = Field(50, ge=1, le=1000)
     reference_lines: list[RefLine] = Field(default_factory=list)
+    x_label: str = ""                          # axis titles; default: KPI name [unit]
+    y_label: str = ""
+    x_range: Optional[list[float]] = None      # [min, max]; default: automatic
+    y_range: Optional[list[float]] = None
 
     @model_validator(mode="after")
     def _fields_for_type(self):
+        for key in ("x_range", "y_range"):
+            r = getattr(self, key)
+            if r is not None and (len(r) != 2 or not r[0] < r[1]):
+                raise ValueError(f"{key} must be [min, max] with min < max")
         t = self.type
         if t == "scatter" and not (self.x and self.y):
             raise ValueError("scatter plots need 'x' and 'y' KPI names")

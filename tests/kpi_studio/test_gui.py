@@ -326,3 +326,53 @@ def test_unfinished_profile_saves_as_draft_and_reopens(qtbot, window, tmp_path):
     window.open_profile(path, quiet=True)
     assert state.load_error and "kpi2" in state.load_error
     assert state.data["kpis"][0]["name"] == "kpi2" and state.compiled is None
+
+
+def test_plot_axes_dropdowns_and_ranges(qtbot, window, mf4_dir, tmp_path):
+    from src.kpi_studio.gui.pages.run_page import AxesDialog
+
+    _load(qtbot, window, mf4_dir)
+    page = window.run_page
+    window.state.data["plots"] = []
+    page.new_plot()
+    kpis = window.state.kpi_names()
+    assert len(kpis) >= 2
+    x, y = page.plots.cellWidget(0, 2), page.plots.cellWidget(0, 3)
+    assert kpis[0] in [x.itemText(i) for i in range(x.count())]
+    x.setCurrentText(kpis[1])
+    y.setCurrentText(kpis[0])
+    plot = window.state.data["plots"][0]
+    assert plot["x"] == kpis[1] and plot["y"] == kpis[0]
+    page.plots.cellWidget(0, 4).setCurrentText("event")
+    assert plot["color_by"] == "event"
+
+    dlg = AxesDialog(plot)
+    qtbot.addWidget(dlg)
+    dlg.x_label.setText("Stop gap [m]")
+    dlg.ranges["y_range"][0].setText("0")
+    dlg.ranges["y_range"][1].setText("50")
+    page.apply_axes(0, dlg.values())
+    assert plot["x_label"] == "Stop gap [m]" and plot["y_range"] == [0.0, 50.0] and "x_range" not in plot
+    dlg.ranges["x_range"][0].setText("5")
+    import pytest
+
+    with pytest.raises(ValueError, match="both min and max"):
+        dlg.values()
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+
+
+def test_plot_axes_applied_to_figure():
+    import pandas as pd
+
+    from src.kpi_studio.core.model import PlotDef
+    from src.kpi_studio.report.plots import kpi_figure
+
+    p = PlotDef(type="scatter", x="a", y="b", x_label="Gap [m]", y_range=[0, 10])
+    wide = pd.DataFrame({"file": ["f"], "event": ["e"], "occurrence": [1], "a": [1.0], "b": [2.0]})
+    fig = kpi_figure(p, wide, {}, ["f"])
+    assert fig.layout.xaxis.title.text == "Gap [m]" and list(fig.layout.yaxis.range) == [0, 10]
+    import pytest
+
+    with pytest.raises(ValueError):
+        PlotDef(type="scatter", x="a", y="b", x_range=[5, 1])
