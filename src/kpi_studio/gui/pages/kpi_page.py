@@ -315,7 +315,11 @@ class EventForm(QWidget):
             self.moments.setItem(r, 0, name_item)
             combo = QComboBox()
             combo.addItems(tools + ["offset"])
+            for i, t in enumerate(tools + ["offset"]):
+                combo.setItemData(i, self.rule_help(t), Qt.ToolTipRole)
             combo.setCurrentText(rule)
+            combo.setToolTip(self.rule_help(rule))
+            combo.currentTextChanged.connect(lambda t, c=combo: c.setToolTip(self.rule_help(t)))
             combo.currentTextChanged.connect(lambda *_, row=r: self.save_moment(row))
             self.moments.setCellWidget(r, 1, combo)
             expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
@@ -371,6 +375,16 @@ class EventForm(QWidget):
         self.load_moments()
 
     CONDITION_RULES = ("first", "last", "last_segment_start")
+
+    @staticmethod
+    def rule_help(rule: str) -> str:
+        if rule == "offset":
+            return "offset: another moment shifted in time (target moment, options 'by: -0.5')"
+        try:
+            spec = toolbox.get("moment", rule)
+        except Exception:  # noqa: BLE001
+            return ""
+        return f"{spec.signature}\n{spec.summary}"
 
     def moment_names(self, exclude=None) -> list[str]:
         own = [m for m in (self.ev.get("moments", {}) or {}) if m != exclude] if self.name else []

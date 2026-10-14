@@ -278,3 +278,10 @@ def test_moment_expression_signal_picker(qtbot, window, mf4_dir):
     menu = NamePicker({"Signals": ["a", "b"], "Moments": []})
     qtbot.addWidget(menu)
     assert menu.list.count() == 3  # one header + two names; empty sections are left out
+
+
+def test_moment_rule_tooltips(qtbot, window):
+    from src.kpi_studio.gui.pages.kpi_page import EventForm
+
+    assert "First time the condition is true" in EventForm.rule_help("first")
+    assert EventForm.rule_help("offset").startswith("offset")
