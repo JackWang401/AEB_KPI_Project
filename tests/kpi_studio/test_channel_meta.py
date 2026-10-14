@@ -42,9 +42,9 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     # an existing signal without unit, as in older profiles
     w.state.data["signals"]["VehicleSpeed"] = {"channels": ["EVC::VehicleSpeed"]}
     w.state.data["signals"]["Mot"] = {"channels": ["MotType"], "unit": "-"}
-    w.state.edited(structure=True)
-    w.signals_page.fill_from_files()
+    w.state.edited(structure=True)  # no button: filled as soon as signals or files change
     sigs = w.state.data["signals"]
+    qtbot.waitUntil(lambda: sigs["VehicleSpeed"].get("unit") == "kph", timeout=5000)
     assert sigs["VehicleSpeed"]["unit"] == "kph"
     assert sigs["VehicleSpeed"]["description"].startswith("Use in conjunction")
     assert sigs["Mot"]["unit"] == "-" and sigs["Mot"]["kind"] == "discrete"  # filled units are kept
@@ -56,3 +56,8 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     page.add_selected_channels()
     new = sigs["MotType"]
     assert new["kind"] == "discrete" and new["description"] == "motion type"
+    # an explicit kind is respected
+    sigs["Mot2"] = {"channels": ["MotType"], "kind": "continuous"}
+    w.state.edited(structure=True)
+    qtbot.waitUntil(lambda: sigs["Mot2"].get("description") == "motion type", timeout=5000)
+    assert sigs["Mot2"]["kind"] == "continuous"

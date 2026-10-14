@@ -122,15 +122,11 @@ class SignalsPage(QWidget):
         sl.addWidget(self.sig_table, 1)
         row = QHBoxLayout()
         self.del_sig_btn = QPushButton("Delete signal")
-        self.fill_btn = QPushButton("Fill units from files")
-        self.fill_btn.setToolTip("Fill empty units and descriptions of the selected signals (all, if none is "
-                                 "selected) from the MF4 files; text-valued channels become discrete")
         self.rename_btn = QPushButton("Rename everywhere…")
         self.rename_btn.setToolTip("Replace a signal name in every derived signal, event, moment, KPI and plot")
         self.preview_btn = QPushButton("Plot selected signals ↓")
         row.addWidget(self.del_sig_btn)
         row.addWidget(self.rename_btn)
-        row.addWidget(self.fill_btn)
         row.addStretch(1)
         row.addWidget(self.preview_btn)
         sl.addLayout(row)
@@ -169,7 +165,6 @@ class SignalsPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         self.del_sig_btn.clicked.connect(self.delete_signal)
         self.rename_btn.clicked.connect(self.rename_everywhere)
-        self.fill_btn.clicked.connect(self.fill_from_files)
         self.preview_btn.clicked.connect(self.preview_signal)
         self.add_der_btn.clicked.connect(self.add_derived)
         self.edit_der_btn.clicked.connect(lambda: self.edit_derived())
@@ -182,6 +177,9 @@ class SignalsPage(QWidget):
         state.files_changed.connect(self.refresh_channels)
         state.files_changed.connect(self.refresh_signals)
         state.profile_changed.connect(self.refresh_all)
+        # units / descriptions come from the files without asking: fill them whenever files or signals change
+        state.files_changed.connect(self._schedule_fill)
+        state.profile_changed.connect(self._schedule_fill)
         state.validated.connect(self.refresh_signals_if_imports)
         self._shown_resolved_sig = None
         self.last_rename = None
@@ -252,24 +250,26 @@ class SignalsPage(QWidget):
         """Take unit, kind and description from the file's channel information."""
         if c.unit and not (only_empty and d.get("unit")):
             d["unit"] = c.unit
-        if c.discrete and not d.get("enum"):
+        if c.discrete and not d.get("enum") and not (only_empty and "kind" in d):
             d["kind"] = "discrete"
         if c.comment and not (only_empty and d.get("description")):
             d["description"] = c.comment
         return d
 
-    def fill_from_files(self):
-        """Fill empty units and descriptions (and mark text-valued channels discrete) from the files."""
+    def _schedule_fill(self):
+        QTimer.singleShot(0, self.fill_from_files)
+
+    def fill_from_files(self) -> list[str]:
+        """Fill empty units and descriptions (and mark text-valued channels discrete) from the loaded files.
+
+        Runs by itself whenever files are indexed or the signals change; never overwrites what the user set."""
         sigs = self.state.data.get("signals", {}) or {}
-        rows = {i.row() for i in self.sig_table.selectedIndexes()}
-        names = [self.sig_table.item(r, 0).data(Qt.UserRole)[0] for r in sorted(rows)] or list(sigs)
         channels = [c for f in self.state.files if (idx := self.state.indexes.get(f)) is not None and idx.ok
                     for c in idx.channels]
+        if not channels or not sigs:
+            return []
         changed = []
-        for name in names:
-            d = sigs.get(name)
-            if d is None:
-                continue
+        for name, d in sigs.items():
             before = dict(d)
             for cand in d.get("channels", []):
                 c, _ = match_channel(cand, channels)
@@ -280,9 +280,11 @@ class SignalsPage(QWidget):
                 changed.append(name)
         if changed:
             self.state.edited(structure=True)
-        self.window().statusBar().showMessage(
-            f"Filled unit / description from the files for {len(changed)} signal(s)"
-            if changed else "Nothing to fill: the files store no unit or description for these signals", 8000)
+            win = self.window()
+            if hasattr(win, "statusBar"):
+                win.statusBar().showMessage(f"Units / descriptions taken from the files for: {', '.join(changed)}",
+                                            8000)
+        return changed
 
     # ------------------------------------------------------------------ signals table
     def refresh_all(self):
