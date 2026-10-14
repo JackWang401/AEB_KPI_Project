@@ -49,7 +49,7 @@ NO_EVENT = "(signals only)"
 SIGNAL_MIME = "application/x-kpi-studio-signals"
 LINESTYLES = ["-", "--", ":", "-."]
 MIN_AXIS_PX = 90          # below this the subplots scroll instead of shrinking
-MARGIN_PX = dict(left=64, right=12, top=10, bottom=40, gap=12)
+MARGIN_PX = dict(left=64, right=250, top=10, bottom=40, gap=12)   # right: the signal / value list
 
 
 class SignalList(QListWidget):
@@ -134,6 +134,7 @@ class SignalViewer(QWidget):
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
+        self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
         self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome} from Run preview
         self.preview_worker = None
 
@@ -492,11 +493,11 @@ class SignalViewer(QWidget):
                                  top=1 - m["top"] / h, bottom=m["bottom"] / h, hspace=m["gap"] / axis_h)
 
     def draw(self):
-        from matplotlib.lines import Line2D
         from matplotlib.ticker import MaxNLocator
 
         self.fig.clear()
         self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()
+        self._legend = {}
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
         self.separate_btn.setVisible(bool(self.host))
@@ -513,37 +514,23 @@ class SignalViewer(QWidget):
             return
         self.canvas.setMinimumHeight(len(shown) * MIN_AXIS_PX + MARGIN_PX["top"] + MARGIN_PX["bottom"] + 16)
         overlay = len(loaded) > 1
-        any_multi = any(len(g) > 1 for g in shown)
         axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
         for i, (ax, group) in enumerate(zip(axes, shown)):
             multi = len(group) > 1
-            handles = []
             for k, n in enumerate(group):
-                unit = ""
-                color = COLORS[k % len(COLORS)] if multi else None
                 for j, (r, d) in enumerate(loaded):
                     if n not in d["values"]:
                         continue
                     y = np.asarray(d["values"][n], dtype=float)
-                    c = color or COLORS[(j if overlay else i) % len(COLORS)]
+                    c = COLORS[k % len(COLORS)] if multi else COLORS[(j if overlay else i) % len(COLORS)]
                     ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
                     ax.plot(d["time"], y, color=c, lw=1.2, ls=ls)
-                    rec = Path(r.name).name
-                    label = (f"{n} · {rec}" if overlay else n) if multi else (rec if overlay else n)
+                    label = f"{n} · {Path(r.name).name}" if overlay else n
                     enum = d.get("labels", {}).get(n)
                     self._series.setdefault(ax, []).append((label, np.asarray(d["time"]), y, enum))
-                    unit = unit or d["units"].get(n, "")
+                    self._legend.setdefault(ax, []).append((label, c, ls, d["units"].get(n, "")))
                     if enum and not multi:
                         self._enum_ticks(ax, enum, y)
-                text = f"{n} [{unit}]" if unit else n
-                if multi:
-                    handles.append(Line2D([], [], color=color, lw=1.6, label=text))
-                else:
-                    ax.text(0.005, 0.97, text, transform=ax.transAxes, fontsize=8, va="top", ha="left",
-                            color="#1f1f1e", bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.5))
-            if handles:
-                ax.legend(handles=handles, loc="upper left", fontsize=7.5, framealpha=0.85, handlelength=1.4,
-                          borderaxespad=0.3, ncols=min(len(handles), 3))
             if ax not in self._enum_axes:
                 ax.yaxis.set_major_locator(MaxNLocator(nbins=4, min_n_ticks=2))
             for lo, hi in self.spans:
@@ -552,12 +539,6 @@ class SignalViewer(QWidget):
             ax.tick_params(labelsize=7.5)
             ax.margins(y=0.08)
             self._ax_groups[ax] = group
-        if overlay:
-            recs = [Path(r.name).name for r, _ in loaded]
-            rec_handles = [Line2D([], [], color="#5f5e5a" if any_multi else COLORS[j % len(COLORS)],
-                                  ls=LINESTYLES[j % len(LINESTYLES)] if any_multi else "-", lw=1.4, label=rec)
-                           for j, rec in enumerate(recs)]
-            axes[0].add_artist(axes[0].legend(handles=rec_handles, fontsize=7, loc="lower right", framealpha=0.85))
         axes[-1].set_xlabel("time [s]", fontsize=8)
         if len(groups) > MAX_AXES:
             axes[0].set_title(f"Showing the first {MAX_AXES} subplots", fontsize=8, color="#6b6b66")
@@ -812,11 +793,7 @@ class SignalViewer(QWidget):
                 for t, style in ((a, "-"), (b, "--")):
                     if t is not None:
                         self._artists.append(ax.axvline(t, color="#1f1f1e", lw=0.9, ls=style, zorder=5))
-                if lines:
-                    self._artists.append(ax.text(
-                        0.995, 0.97, "\n".join(lines), transform=ax.transAxes, fontsize=8, va="top", ha="right",
-                        family="monospace", color="#1f1f1e", zorder=6,
-                        bbox=dict(facecolor="white", edgecolor="#c9c8c2", alpha=0.9, pad=2)))
+            self._draw_side_lists()
         info = []
         if a is not None:
             info.append(f"A = {a:.3f} s")
@@ -826,6 +803,41 @@ class SignalViewer(QWidget):
             info.append(f"Δt = {b - a:.3f} s")
         self.cursor_info.setText("   ".join(info) if info else "Click a plot to place a cursor (Shift+click: second)")
         self.canvas.draw_idle()
+
+    def _draw_side_lists(self):
+        """MDA-style list right of each subplot: a colour mark, the signal name and its value at the cursors."""
+        from matplotlib.transforms import ScaledTranslation, blended_transform_factory
+
+        a, b = self.cursors
+        line_h = 11.5 / 72  # inches per text line (8 pt + leading)
+        for ax in self._axes:
+            base = blended_transform_factory(ax.transAxes, ax.transAxes)
+            row = 0
+            for (label, t, y, enum), (_, color, ls, unit) in zip(self._series.get(ax, []), self._legend.get(ax, [])):
+                def at(dx_in, rows):
+                    return base + ScaledTranslation(dx_in, -rows * line_h - 2 / 72, self.fig.dpi_scale_trans)
+
+                self._artists.append(ax.text(1, 1, "━━" if ls == "-" else "╍╍", transform=at(0.06, row),
+                                             fontsize=8, va="top", ha="left", color=color, clip_on=False))
+                self._artists.append(ax.text(1, 1, label + (f" [{unit}]" if unit else ""), transform=at(0.28, row),
+                                             fontsize=8, va="top", ha="left", color="#1f1f1e", clip_on=False,
+                                             fontweight="semibold"))
+                row += 1
+                values = []
+                if a is not None:
+                    values.append(f"A {_fmt(self.value_at(t, y, a), enum)}")
+                if b is not None:
+                    vb = self.value_at(t, y, b)
+                    values.append(f"B {_fmt(vb, enum)}")
+                    va = self.value_at(t, y, a) if a is not None else None
+                    if va is not None and vb is not None and not enum:
+                        values.append(f"Δ {_fmt(vb - va)}")
+                if values:
+                    self._artists.append(ax.text(1, 1, "   ".join(values), transform=at(0.28, row), fontsize=8,
+                                                 va="top", ha="left", family="monospace", color=color,
+                                                 clip_on=False))
+                    row += 1
+                row += 0.35
 
     def shutdown(self):
         self.queue = []

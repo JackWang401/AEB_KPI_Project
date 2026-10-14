@@ -185,7 +185,11 @@ def test_channel_filter_and_viewer_overlay_two_recordings(qtbot, window, mf4_dir
     qtbot.waitUntil(lambda: len(viewer.cache) == 2 and viewer.worker is None, timeout=30000)
     lines = viewer.fig.axes[0].get_lines()
     assert len(lines) == 2  # one line per recording, overlaid
-    assert viewer.fig.axes[0].get_legend() is not None
+    ax = viewer.fig.axes[0]
+    labels = [lab for lab, *_ in viewer._legend[ax]]  # side list names each recording
+    assert len(labels) == 2 and all(" · " in lab for lab in labels)
+    texts = [t.get_text() for t in ax.texts]
+    assert any(lab in t for lab in labels for t in texts)
 
 
 def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
