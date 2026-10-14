@@ -121,7 +121,7 @@ class MainWindow(QMainWindow):
         self.central_split = QSplitter(Qt.Vertical)
         self.central_split.setChildrenCollapsible(False)
         self.central_split.addWidget(self.tabs)
-        self.tabs.setMinimumHeight(150)  # the tabs give way to the plots when the window is small
+        self.tabs.setMinimumHeight(270)  # lists stay usable; the plots and forms give way first
         self.central_split.addWidget(self.viewer_wrap)
         self.central_split.setStretchFactor(0, 1)
         self.central_split.setStretchFactor(1, 1)

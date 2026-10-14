@@ -16,14 +16,17 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -745,28 +748,41 @@ class KpiPage(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(8)
-        ll.addWidget(QLabel("Events"))
+        # compact headers: the list title with its buttons on one line, so the lists keep their height
+        def header(title, buttons):
+            row = QHBoxLayout()
+            lab = QLabel(title)
+            lab.setObjectName("sectionTitle")
+            row.addWidget(lab)
+            row.addStretch(1)
+            for b, tip in buttons:
+                b.setToolTip(tip)
+                b.setFixedSize(30, 26)
+                b.setStyleSheet("QPushButton { padding: 0; font-size: 15px; }")
+                row.addWidget(b)
+            return row
+
+        self.add_ev, self.del_ev = QPushButton("+"), QPushButton("−")
+        ll.addLayout(header("Events", [(self.add_ev, "Add an event"), (self.del_ev, "Delete the selected event")]))
         self.events = QListWidget()
+        self.events.setMinimumHeight(52)
         ll.addWidget(self.events, 1)
-        er = QHBoxLayout()
-        self.add_ev, self.del_ev = QPushButton("Add event"), QPushButton("Delete")
-        er.addWidget(self.add_ev)
-        er.addWidget(self.del_ev)
-        ll.addLayout(er)
-        ll.addWidget(QLabel("KPIs"))
-        self.kpis = QListWidget()
-        ll.addWidget(self.kpis, 2)
-        kr = QHBoxLayout()
-        self.add_kpi, self.del_kpi = QPushButton("Add KPI"), QPushButton("Delete")
+        self.add_kpi, self.del_kpi = QPushButton("+"), QPushButton("−")
         self.up, self.down = QPushButton("↑"), QPushButton("↓")
-        for b in (self.add_kpi, self.del_kpi, self.up, self.down):
-            kr.addWidget(b)
-        ll.addLayout(kr)
-        lr = QHBoxLayout()
-        self.from_lib, self.to_lib = QPushButton("Add from library…"), QPushButton("Save KPI to library…")
-        lr.addWidget(self.from_lib)
-        lr.addWidget(self.to_lib)
-        ll.addLayout(lr)
+        krow = header("KPIs", [(self.add_kpi, "Add a KPI"), (self.del_kpi, "Delete the selected KPI"),
+                               (self.up, "Move up"), (self.down, "Move down")])
+        self.lib_btn = QPushButton("Library")
+        self.lib_btn.setFixedHeight(26)
+        self.lib_btn.setStyleSheet("QPushButton { padding: 0 8px; }")
+        lib_menu = QMenu(self.lib_btn)
+        self.from_lib = lib_menu.addAction("Add KPIs from a library…")
+        self.to_lib = lib_menu.addAction("Save the selected KPI to a library…")
+        self.lib_btn.setMenu(lib_menu)
+        krow.insertWidget(2, self.lib_btn)
+        ll.addLayout(krow)
+        self.kpis = QListWidget()
+        self.kpis.setMinimumHeight(60)
+        ll.addWidget(self.kpis, 2)
         top.addWidget(left)
 
         # ---- center forms
@@ -783,7 +799,12 @@ class KpiPage(QWidget):
         self.lib_note.setAlignment(Qt.AlignTop)
         for w in (self.empty, self.event_form, self.kpi_form, self.lib_note):
             self.stack.addWidget(w)
-        top.addWidget(self.stack)
+        # the forms scroll when the tab is short, instead of squeezing their fields
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setFrameShape(QFrame.NoFrame)
+        self.form_scroll.setWidget(self.stack)
+        top.addWidget(self.form_scroll)
 
         self.palette = ToolPalette(names_fn=state.signal_names)
         self.palette.insert_requested.connect(self.insert_tool)
@@ -799,8 +820,8 @@ class KpiPage(QWidget):
         self.del_kpi.clicked.connect(self.delete_kpi)
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
-        self.from_lib.clicked.connect(self.add_from_library)
-        self.to_lib.clicked.connect(self.save_to_library)
+        self.from_lib.triggered.connect(self.add_from_library)
+        self.to_lib.triggered.connect(self.save_to_library)
 
         state.profile_changed.connect(self.refresh)
         state.validated.connect(self.on_validated)

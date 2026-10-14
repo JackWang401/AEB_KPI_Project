@@ -67,8 +67,35 @@ class SignalList(QListWidget):
         return md
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_AXES = 8
-AXIS_MIN_PX = 72     # each subplot gets at least this height (the panel grows instead of squashing)
-PLOTS_MAX_MIN_PX = 280  # ...up to this total, so many subplots still fit on screen
+AXIS_MIN_PX = 55     # each subplot gets at least this height (the panel grows instead of squashing)
+PLOTS_MAX_MIN_PX = 190  # ...up to this total, so many subplots still fit on screen
+
+
+class ElideLabel(QLabel):
+    """One-line hint that shortens with "…" when there is no room (full text in the tooltip)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(40)
+
+    def setText(self, text):
+        self._full = text or ""
+        self._elide()
+
+    def text(self):
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        shown = self.fontMetrics().elidedText(self._full, Qt.ElideRight, max(self.width(), 40))
+        super().setText(shown)
+        if shown != self._full and not self.toolTip():
+            super().setToolTip(self._full)
 
 
 def _fmt(v, labels=None) -> str:
@@ -151,7 +178,7 @@ class SignalViewer(QWidget):
         self.separate_btn.setToolTip("Undo drag and drop: give every signal its own subplot again")
         self.separate_btn.setVisible(False)
         bar.addWidget(self.separate_btn)
-        self.status = QLabel()
+        self.status = ElideLabel()
         self.status.setObjectName("hint")
         pbar = bar  # one row: load + status, event preview, cursor readout
         pbar.addSpacing(12)
@@ -170,11 +197,8 @@ class SignalViewer(QWidget):
         self.pv_run.setObjectName("primary")
         self.pv_run.setToolTip("Evaluate the profile on the first ticked recording")
         pbar.addWidget(self.pv_run)
-        self.pv_status = QLabel()
+        self.pv_status = ElideLabel()  # long texts shorten with … instead of widening the window
         self.pv_status.setObjectName("hint")
-        for label in (self.status, self.pv_status):  # long texts shrink instead of widening the window
-            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            label.setMinimumWidth(40)
         pbar.addWidget(self.pv_status, 2)
         pbar.addWidget(self.status, 1)
         self.cursor_info = QLabel()
