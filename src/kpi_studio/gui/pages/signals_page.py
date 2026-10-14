@@ -171,7 +171,7 @@ class SignalsPage(QWidget):
         self.sig_table = QTableWidget(0, len(self.SIG_COLS))
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
         self.sig_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        compact_table(self.sig_table, 4)
+        compact_table(self.sig_table, 2)
         sl.addWidget(self.sig_table, 1)
         vsplit.addWidget(sig_box)
 
@@ -201,7 +201,7 @@ class SignalsPage(QWidget):
         self.der_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.der_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.der_table.setColumnWidth(2, 80)
-        compact_table(self.der_table, 2)
+        compact_table(self.der_table, 1)
         dl.addWidget(self.der_table, 1)
         vsplit.addWidget(der_box)
 
