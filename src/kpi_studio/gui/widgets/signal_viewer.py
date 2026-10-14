@@ -16,7 +16,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QMimeData, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -66,6 +66,8 @@ class SignalList(QListWidget):
         return md
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_AXES = 8
+AXIS_MIN_PX = 72     # each subplot gets at least this height (the panel grows instead of squashing)
+PLOTS_MAX_MIN_PX = 280  # ...up to this total, so many subplots still fit on screen
 
 
 def _fmt(v, labels=None) -> str:
@@ -199,6 +201,7 @@ class SignalViewer(QWidget):
         self.fig, self.canvas, Toolbar = make_canvas()
         self.fig.set_layout_engine("none")  # margins are set in pixels (_apply_layout)
         self.toolbar = Toolbar(self.canvas, right)
+        self.toolbar.setIconSize(QSize(18, 18))  # compact: leave the height to the plots
         rl.addWidget(self.toolbar)
         rl.addWidget(self.canvas, 1)  # subplots share the panel height (no scrolling)
         self.canvas.setAcceptDrops(True)
@@ -571,6 +574,9 @@ class SignalViewer(QWidget):
             return
         overlay = len(loaded) > 1
         axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
+        m = MARGIN_PX
+        self.canvas.setMinimumHeight(m["top"] + m["bottom"] + 16
+                                     + min(len(shown) * (AXIS_MIN_PX + m["gap"]), PLOTS_MAX_MIN_PX))
         for i, (ax, group) in enumerate(zip(axes, shown)):
             multi = len(group) > 1
             for k, n in enumerate(group):
@@ -609,6 +615,7 @@ class SignalViewer(QWidget):
         ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, color="#6b6b66", wrap=True)
         ax.set_axis_off()
         self.fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+        self.canvas.setMinimumHeight(120)
         self.canvas.draw_idle()
 
     def _enum_ticks(self, ax, enum: dict, y):

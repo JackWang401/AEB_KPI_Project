@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
         self.central_split = QSplitter(Qt.Vertical)
         self.central_split.setChildrenCollapsible(False)
         self.central_split.addWidget(self.tabs)
+        self.tabs.setMinimumHeight(150)  # the tabs give way to the plots when the window is small
         self.central_split.addWidget(self.viewer_wrap)
         self.central_split.setStretchFactor(0, 1)
         self.central_split.setStretchFactor(1, 1)
@@ -186,6 +187,7 @@ class MainWindow(QMainWindow):
         self.issues = QListWidget()
         self.issues.setToolTip("Click a problem to go to the place it is about")
         self.issues.setCursor(Qt.PointingHandCursor)
+        self.issues.setMinimumHeight(44)
         self.issues.itemClicked.connect(lambda item: self.go_to(item.data(Qt.UserRole) or ""))
         holder = QWidget()
         hl = QVBoxLayout(holder)
