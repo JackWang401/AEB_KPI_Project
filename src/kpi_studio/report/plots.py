@@ -13,7 +13,6 @@ from plotly.subplots import make_subplots
 
 from src.kpi_studio.core.model import PlotDef
 from src.kpi_studio.core.results import Status, to_frame
-from src.viz.visualizers.dashboard_visualizer import DashboardVisualizer
 
 # Validated categorical order (fixed, never cycled); 9th+ series fold to gray.
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
@@ -96,7 +95,7 @@ def kpi_figure(p: PlotDef, wide: pd.DataFrame, units: dict, files: list[str]) ->
                 x=g[p.x], y=g[p.y], mode="markers", name=_short(name) if p.color_by == "file" else name,
                 marker=dict(size=9, color=_color(i), line=dict(color=SURFACE, width=2)),
                 customdata=g[["file", "event", "occurrence"]].assign(file=g["file"].map(_short)).values,
-                hovertemplate=f"{p.x}: %{{x:.4g}}<br>{p.y}: %{{y:.4g}}<br>%{{customdata[0]}} · "
+                hovertemplate=f"{p.x}: %{{x:.3f}}<br>{p.y}: %{{y:.3f}}<br>%{{customdata[0]}} · "
                               "%{customdata[1]} #%{customdata[2]}<extra></extra>"))
         fig.update_xaxes(title_text=_label(p.x, units))
         fig.update_yaxes(title_text=_label(p.y, units))
@@ -131,16 +130,40 @@ def kpi_figure(p: PlotDef, wide: pd.DataFrame, units: dict, files: list[str]) ->
     return _layout(fig, title)
 
 
+def _axis_values(fig: go.Figure, axis: str) -> np.ndarray:
+    arrays = []
+    for t in fig.data:
+        v = getattr(t, axis, None)
+        if v is not None:
+            try:
+                arrays.append(np.asarray(v, dtype=float))
+            except (TypeError, ValueError):  # categorical axis (bar labels)
+                return np.array([])
+    vals = np.concatenate(arrays) if arrays else np.array([])
+    return vals[np.isfinite(vals)]
+
+
+def _widen_flat(fig: go.Figure, axis: str) -> None:
+    """All values (nearly) equal: centre them in a sensible range instead of zooming into float noise."""
+    vals = _axis_values(fig, axis)
+    if not vals.size:
+        return
+    lo, hi = float(vals.min()), float(vals.max())
+    mid = (lo + hi) / 2
+    if hi - lo <= 1e-9 * max(abs(mid), 1.0):
+        half = max(abs(mid) * 0.1, 0.5)
+        (fig.update_xaxes if axis == "x" else fig.update_yaxes)(range=[mid - half, mid + half])
+
+
 def _axes(fig: go.Figure, p: PlotDef) -> None:
     """Apply user ranges; an end left empty is taken from the plotted data (with 5 % margin)."""
     for axis, rng in (("x", p.x_range), ("y", p.y_range)):
         if not rng or rng == [None, None]:
+            _widen_flat(fig, axis)
             continue
         lo, hi = rng
         if lo is None or hi is None:
-            vals = np.concatenate([np.asarray(getattr(t, axis), dtype=float) for t in fig.data
-                                   if getattr(t, axis, None) is not None] or [np.array([])])
-            vals = vals[np.isfinite(vals)]
+            vals = _axis_values(fig, axis)
             if not vals.size:
                 continue
             dmin, dmax = float(vals.min()), float(vals.max())
@@ -187,20 +210,27 @@ def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, 
     return fig
 
 
-def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, files: list[str]) -> dict[str, str]:
-    """Write every plot; returns {title: html path}. Uses one shared plotly.min.js for offline use."""
+def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, files: list[str],
+                 collect: Optional[list] = None) -> dict[str, str]:
+    """Write every plot; returns {title: html path}. Uses one shared plotly.min.js for offline use.
+
+    `collect`, if given, receives a FigureEntry per figure (for the dashboard)."""
+    from src.kpi_studio.report.dashboard import FigureEntry
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, str] = {}
     wide = kpi_wide(outcomes)
     n = 0
 
-    def save(fig, title):
+    def save(fig, title, kind, group=""):
         nonlocal n
         n += 1
         path = out_dir / f"Fig_{n:02d} - {_slug(title)}.html"
         fig.write_html(str(path), include_plotlyjs="directory", full_html=True)
         written[title if title not in written else f"{title} ({n})"] = str(path)
+        if collect is not None:
+            collect.append(FigureEntry(title, str(path), fig, kind, group))
 
     for p in profile.plots:
         if p.type == "timeseries":
@@ -215,15 +245,9 @@ def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, file
                     moms = [m for m in out.moments if m.event == tr.event and m.occurrence == tr.occurrence]
                     ks = [k for k in out.results if k.event == tr.event and k.occurrence == tr.occurrence]
                     fig = timeseries_figure(p, tr, occ, moms, ks, units)
-                    save(fig, f"{p.title or p.event} - {Path(tr.file).stem} #{tr.occurrence}")
+                    save(fig, f"{Path(tr.file).stem} #{tr.occurrence}", "timeseries", p.title or p.event)
         else:
             fig = kpi_figure(p, wide, units, files)
             if fig is not None:
-                save(fig, p.title or f"{p.type} {p.y or p.x}")
+                save(fig, fig.layout.title.text or p.title or f"{p.type} {p.y or p.x}", p.type)
     return written
-
-
-def build_dashboard(sections: dict[str, str], out_dir: str | Path) -> Optional[str]:
-    if not sections:
-        return None
-    return DashboardVisualizer(str(out_dir)).build_overview(sections, filename="dashboard.html")

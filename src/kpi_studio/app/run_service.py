@@ -28,7 +28,8 @@ from src.kpi_studio.core.validate import CompiledProfile
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import Recording, as_recording, group_recordings, index_file, read_signals, resolve_recording
 from src.kpi_studio.report.excel_writer import write_workbook
-from src.kpi_studio.report.plots import build_dashboard, render_plots
+from src.kpi_studio.report.dashboard import build_dashboard
+from src.kpi_studio.report.plots import render_plots
 
 log = logging.getLogger(__name__)
 
@@ -262,8 +263,12 @@ class RunService:
         excel = write_workbook(out_dir / "kpi_results.xlsx", outcomes, kpi_order=kpi_order, units=units,
                                events=list(self.cp.events), run_info=run_info, profile_text=profile_text)
         self.progress("plots", 0, 1, "Rendering plots")
-        plots = render_plots(self.resolved, outcomes, out_dir / "plots", units, [r.name for r in self.recordings])
-        dashboard = build_dashboard(plots, out_dir) if plots else None
+        figures: list = []
+        plots = render_plots(self.resolved, outcomes, out_dir / "plots", units, [r.name for r in self.recordings],
+                             collect=figures)
+        dashboard = build_dashboard(figures, out_dir, outcomes=outcomes, kpi_order=kpi_order, units=units,
+                                    profile_name=self.resolved.name, run_time=dict(run_info)["run time"],
+                                    plotly_js=out_dir / "plots" / "plotly.min.js")
         self.progress("done", 1, 1, f"Done: {out_dir}")
         return RunResult(out_dir, excel, plots, dashboard, outcomes, cancelled)
 

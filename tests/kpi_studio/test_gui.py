@@ -382,3 +382,17 @@ def test_plot_axes_applied_to_figure():
     assert hi == 5 and lo < 1.0  # min fitted to the data with a margin
     with pytest.raises(ValueError):
         PlotDef(type="scatter", x="a", y="b", x_range=[5, 1])
+
+
+def test_flat_kpi_axis_is_widened():
+    import pandas as pd
+
+    from src.kpi_studio.core.model import PlotDef
+    from src.kpi_studio.report.plots import kpi_figure
+
+    wide = pd.DataFrame({"file": ["f", "f"], "event": ["e", "e"], "occurrence": [1, 2],
+                         "a": [40.0, 60.0], "b": [0.11, 0.11 + 1e-15]})
+    fig = kpi_figure(PlotDef(type="scatter", x="a", y="b"), wide, {}, ["f"])
+    lo, hi = fig.layout.yaxis.range
+    assert lo < 0.11 < hi and hi - lo >= 0.9  # not zoomed into float noise
+    assert fig.layout.xaxis.range is None     # a normal spread stays automatic
