@@ -145,8 +145,7 @@ class SignalsPage(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
 
-        # libraries are not offered any more; the row only shows for a profile that still imports one,
-        # so those imports can be removed
+        # libraries are not offered in the GUI (a profile that imports one still loads it); never shown
         self.lib_row = QWidget()
         imp = QHBoxLayout(self.lib_row)
         imp.setContentsMargins(0, 0, 0, 0)
@@ -359,7 +358,7 @@ class SignalsPage(QWidget):
         self._loading = True
         self.imports.clear()
         self.imports.addItems(self.state.data.get("imports", []) or [])
-        self.lib_row.setVisible(bool(self.state.data.get("imports")))
+        self.lib_row.setVisible(False)  # libraries are not offered in the GUI
         self._loading = False
         self.refresh_signals()
         self.refresh_derived()

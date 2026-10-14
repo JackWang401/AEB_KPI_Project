@@ -623,12 +623,7 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert state.compiled is not None, [str(i) for i in state.issues]
 
 
-def test_libraries_row_only_for_profiles_that_import(qtbot, window, mf4_dir):
-    _load(qtbot, window, mf4_dir)  # the example imports vehicle + aeb_core
-    page = window.signals_page
-    assert not page.lib_row.isHidden() and page.lib_add.isHidden()  # no importing, only removing
-    assert window.kpi_page.lib_btn.isHidden()
-    for _ in range(page.imports.count()):
-        page.imports.setCurrentRow(0)
-        page.remove_import()
-    assert page.lib_row.isHidden()
+def test_no_libraries_controls(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)  # the example imports vehicle + aeb_core: still loaded, no controls shown
+    assert window.signals_page.lib_row.isHidden() and window.kpi_page.lib_btn.isHidden()
+    assert window.state.compiled is not None
