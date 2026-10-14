@@ -193,6 +193,32 @@ def test_channel_filter_and_viewer_overlay_two_recordings(qtbot, window, mf4_dir
     assert any(lab in t for lab in labels for t in texts)
 
 
+def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
+    import numpy as np
+
+    _load(qtbot, window, mf4_dir)
+    viewer = window.signals_page.viewer
+    recs = window.state.recordings()
+    viewer.select_recordings([r.name for r in recs])
+    viewer.plot_signals(["egoSpeed"])
+    qtbot.waitUntil(lambda: len(viewer.cache) == 2 and viewer.worker is None, timeout=30000)
+    second = recs[1].name
+    t0 = np.asarray(viewer.cache[second]["time"], dtype=float)
+    viewer.files.setCurrentRow(1)
+    viewer.offset_spin.setValue(1.5)  # typed offset shifts only the selected recording
+    assert viewer.offsets == {second: 1.5}
+    assert "+1.500 s" in viewer.files.item(1).text() and "s)" not in viewer.files.item(0).text()
+    xs = [np.asarray(line.get_xdata(), dtype=float) for line in viewer.fig.axes[0].get_lines()[:2]]
+    assert np.allclose(xs[1], t0 + 1.5) and not np.allclose(xs[0], xs[1][: len(xs[0])])
+    # Align A→B: the feature under B (selected recording) moves to A
+    viewer.cursors = [2.0, 3.25]
+    viewer.align_cursors()
+    assert viewer.offsets[second] == 1.5 + (2.0 - 3.25)
+    assert viewer.cursors == [2.0, 2.0] and viewer.offset_spin.value() == 0.25
+    viewer.offset_spin.setValue(0)  # zero removes the shift
+    assert viewer.offsets == {} and "s)" not in viewer.files.item(1).text()
+
+
 def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     from types import SimpleNamespace
 
