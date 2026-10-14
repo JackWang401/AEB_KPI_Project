@@ -28,6 +28,11 @@ def test_run_aeb_profile(mf4_dir, tmp_path, workers):
     assert (files_sheet["status"] == "ok").all()
     assert res.dashboard and len(res.plots) == 3 + 3
     assert (res.output_dir / "profile.resolved.kpi.yaml").exists()
+    from openpyxl import load_workbook
+
+    ws = load_workbook(res.excel)["Summary"]
+    floats = [c for row in ws.iter_rows(min_row=2) for c in row if isinstance(c.value, float)]
+    assert floats and all(c.number_format == "0.000" for c in floats)  # shown with 3 decimals
 
 
 def test_bad_file_is_isolated(mf4_dir, tmp_path):

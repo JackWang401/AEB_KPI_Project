@@ -1181,7 +1181,7 @@ class KpiPage(QWidget):
         res = [r for r in out.results if r.event == ev and r.occurrence == idx]
         self.pv_table.setRowCount(len(res))
         for r, k in enumerate(res):
-            vals = [k.kpi, "" if k.value is None else f"{k.value:.4g}", k.unit, k.status, k.message]
+            vals = [k.kpi, "" if k.value is None else f"{k.value:.3f}", k.unit, k.status, k.message]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v)
                 if c == 3 and k.status != Status.OK:

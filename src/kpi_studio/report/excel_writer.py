@@ -55,14 +55,22 @@ def summary_table(outcomes: list, kpi_order: list[str], units: dict[str, str],
     return rows, failed
 
 
+NUMBER_FORMAT = "0.000"
+
+
 def _style(ws, failed: list[tuple[int, int]] = ()):
     ws.freeze_panes = "A2"
     for cell in ws[1]:
         cell.font = HEADER_FONT
     for r, c in failed:
         ws.cell(row=r + 2, column=c + 1).fill = FAIL_FILL
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, float):
+                cell.number_format = NUMBER_FORMAT  # display only; the full value stays in the cell
     for i, col in enumerate(ws.iter_cols(min_row=1, max_row=min(ws.max_row, 200)), start=1):
-        width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
+        width = max((len(f"{c.value:.3f}" if isinstance(c.value, float) else str(c.value))
+                     for c in col if c.value is not None), default=8)
         ws.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 8), 60)
 
 
