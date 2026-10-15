@@ -722,3 +722,25 @@ def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch)
     bar._check_mouse(); bar._check_mouse()
     assert bar.current is None and not bar.panels[2].isVisible()
     assert side_bar.STRIP_WIDTH == bar.width()
+
+
+def test_events_and_kpis_right_click_menus(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPoint
+
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    texts = lambda m: [a.text() for a in m.actions()]  # noqa: E731
+    lst = page.kpis
+    n = lst.count()
+    on_item = page.list_menu(lst, lst.visualItemRect(lst.item(1)).center(), "KPI", page.new_kpi, page.delete_kpi)
+    assert texts(on_item) == ["Delete KPI", "", "Add KPI"] and lst.currentRow() == 1
+    name = lst.item(1).text()
+    on_item.actions()[0].trigger()
+    assert lst.count() == n - 1 and name not in [lst.item(i).text() for i in range(lst.count())]
+    ev = page.events
+    blank = page.list_menu(ev, ev.viewport().rect().bottomLeft() + QPoint(5, -3), "event",
+                           page.new_event, page.delete_event)
+    assert texts(blank) == ["Add event"]
+    before = len(window.state.data["events"])
+    blank.actions()[0].trigger()
+    assert len(window.state.data["events"]) == before + 1

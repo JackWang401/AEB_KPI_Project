@@ -771,6 +771,13 @@ class KpiPage(QWidget):
         self.del_kpi.clicked.connect(self.delete_kpi)
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
+        # right-click: blank space adds, an item can be deleted
+        for lst, kind, add, delete in ((self.events, "event", self.new_event, self.delete_event),
+                                       (self.kpis, "KPI", self.new_kpi, self.delete_kpi)):
+            lst.setContextMenuPolicy(Qt.CustomContextMenu)
+            lst.customContextMenuRequested.connect(
+                lambda pos, lst=lst, kind=kind, add=add, delete=delete: self.list_menu(
+                    lst, pos, kind, add, delete).exec(lst.viewport().mapToGlobal(pos)))
 
         state.profile_changed.connect(self.refresh)
         state.validated.connect(self.on_validated)
@@ -841,6 +848,18 @@ class KpiPage(QWidget):
             return
         self.kpi_form.load(row)
         self.stack.setCurrentWidget(self.kpi_form)
+
+    @staticmethod
+    def list_menu(lst, pos, kind, add, delete):
+        """Right-click menu of the events / KPIs list: Delete on an item, Add on the blank space."""
+        menu = QMenu(lst)
+        item = lst.itemAt(pos)
+        if item is not None:
+            lst.setCurrentItem(item)
+            menu.addAction(f"Delete {kind}").triggered.connect(delete)
+            menu.addSeparator()  # for when the list is full and there is no blank space left
+        menu.addAction(f"Add {kind}").triggered.connect(add)
+        return menu
 
     def new_event(self):
         events = self.state.data.setdefault("events", {})
