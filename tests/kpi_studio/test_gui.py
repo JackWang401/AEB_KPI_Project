@@ -432,11 +432,10 @@ def test_flat_kpi_axis_is_widened():
     assert fig.layout.xaxis.range is None     # a normal spread stays automatic
 
 
-def test_signal_panel_is_shown_with_the_kpi_tab(window):
+def test_main_window_shows_only_the_signal_viewer(window):
     window.show()
-    for index, visible in [(0, True), (1, False)]:
-        window.tabs.setCurrentIndex(index)
-        assert window.viewer_box.isVisible() == visible
+    assert window.viewer_box.isVisible()
+    assert not window.kpi_page.isVisible() and not window.run_page.isVisible()  # in side panels
 
 
 def test_derived_unit_and_description_columns(qtbot, window, mf4_dir):
@@ -550,7 +549,6 @@ def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
     viewer = window.viewer
     window.resize(1400, 900)
     window.show()
-    window.tabs.setCurrentIndex(0)
     viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
     qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
     assert len(viewer._axes) == 3
@@ -614,7 +612,7 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     item = next(window.issues.item(i) for i in range(window.issues.count())
                 if "moment1" in window.issues.item(i).text())
     window.issues.itemClicked.emit(item)
-    assert window.tabs.currentWidget() is window.kpi_page
+    assert window.side_bar.current == window.side_bar.titles.index("Events & KPIs")
     assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
     at = window.kpi_page.kpi_form.at
     assert at.currentText() == "moment1" and "e34948" in at.styleSheet()  # missing moment shown in red
@@ -681,22 +679,23 @@ def test_side_panel_width_can_be_dragged_and_is_remembered(qtbot, window, mf4_di
     window.resize(1400, 900)
     window.show()
     bar = window.side_bar
-    bar.open(2)
-    grip = bar.grips[2]
-    w0 = bar.panels[2].width()
+    i = bar.titles.index("Time offset")
+    bar.open(i)
+    grip = bar.grips[i]
+    w0 = bar.panels[i].width()
     assert grip.geometry().right() == w0 - 1
     def mouse(kind, x):
         return QMouseEvent(kind, QPointF(2, 50), QPointF(x, 50), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     grip.mousePressEvent(mouse(QMouseEvent.Type.MouseButtonPress, 100))
     bar._over = lambda: False
     bar._check_mouse(); bar._check_mouse()
-    assert bar.current == 2  # dragging keeps it open
+    assert bar.current == i  # dragging keeps it open
     grip.mouseMoveEvent(mouse(QMouseEvent.Type.MouseMove, 250))
     grip.mouseReleaseEvent(mouse(QMouseEvent.Type.MouseButtonRelease, 250))
-    assert bar.panels[2].width() == w0 + 150
+    assert bar.panels[i].width() == w0 + 150
     assert int(window.settings.value("side_panels/width_time_offset")) == w0 + 150
-    bar.set_width(2, 10)
-    assert bar.widths[2] == bar.MIN_WIDTH
+    bar.set_width(i, 10)
+    assert bar.widths[i] == bar.MIN_WIDTH
     assert isinstance(window.settings, QSettings)
 
 
@@ -704,7 +703,8 @@ def test_go_to_a_signal_issue_opens_the_channels_panel(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     window.show()
     window.go_to("signals.egoSpeed")
-    assert window.side_bar.current == 1 and window.signals_page.sig_table.currentRow() == 0
+    assert window.side_bar.current == window.side_bar.titles.index("Channels")
+    assert window.signals_page.sig_table.currentRow() == 0
 
 
 def test_delete_several_selected_signals_and_events(qtbot, window, mf4_dir):
@@ -856,22 +856,21 @@ def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch)
     window.resize(1400, 900)
     window.show()
     bar = window.side_bar
-    assert [t.text for t in bar.tabs] == ["Files", "Channels", "Time offset"]
-    assert [window.tabs.tabText(i) for i in range(window.tabs.count())] == ["1  Events && KPIs", "2  Plots && Run"]
+    assert [t.text for t in bar.tabs] == ["Files", "Time offset", "Channels", "Events & KPIs", "Plots & Run"]
     assert all(not p.isVisible() for p in bar.panels)  # hidden until hovered
-    bar.tabs[1].hovered.emit()
-    assert bar.panels[1].isVisible() and window.signals_page.tree.isVisible()
+    bar.tabs[2].hovered.emit()
+    assert bar.panels[2].isVisible() and window.signals_page.tree.isVisible()
     assert window.signals_page.sig_table.isVisible() and window.signals_page.der_table.isVisible()
-    assert bar.panels[1].height() == bar.host.height()
-    bar.tabs[2].hovered.emit()  # another tab swaps the panel
-    assert bar.panels[2].isVisible() and not bar.panels[1].isVisible()
+    assert bar.panels[2].height() == bar.host.height()
+    bar.tabs[1].hovered.emit()  # another tab swaps the panel
+    assert bar.panels[1].isVisible() and not bar.panels[2].isVisible()
     assert window.offset_panel.table.rowCount() == len(window.state.files)
     monkeypatch.setattr(bar, "_over", lambda: True)
     bar._check_mouse(); bar._check_mouse()
-    assert bar.panels[2].isVisible()  # the mouse is still over it
+    assert bar.panels[1].isVisible()  # the mouse is still over it
     monkeypatch.setattr(bar, "_over", lambda: False)
     bar._check_mouse(); bar._check_mouse()
-    assert bar.current is None and not bar.panels[2].isVisible()
+    assert bar.current is None and not bar.panels[1].isVisible()
     assert side_bar.STRIP_WIDTH == bar.width()
 
 

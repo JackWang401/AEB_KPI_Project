@@ -17,8 +17,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QSplitter,
-    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -101,43 +99,29 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE)
         self.resize(1400, 900)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
         self.files_page = FilesPage(self.state, self.settings)
-        # one signal panel below the tabs, shared by the Channels side panel and the event / KPI preview
+        # the signal viewer fills the window; everything else lives in auto-hide side panels (open on hover)
         self.viewer = SignalViewer(self.state)
         self.signals_page = SignalsPage(self.state, viewer=self.viewer)
         self.kpi_page = KpiPage(self.state, viewer=self.viewer)
         self.run_page = RunPage(self.state, self.settings)
         self.offset_panel = OffsetPanel(self.state)
-        self.tabs.addTab(self.kpi_page, "1  Events && KPIs")
-        self.tabs.addTab(self.run_page, "2  Plots && Run")
+        for page in (self.kpi_page, self.run_page):
+            page.layout().setContentsMargins(0, 0, 0, 0)  # the side panel has its own margins
         self.viewer_box = QGroupBox("Signal viewer && preview")
         vb = QVBoxLayout(self.viewer_box)
         vb.setContentsMargins(10, 10, 10, 10)
         vb.addWidget(self.viewer)
-        # the viewer sits in its own padded frame so it lines up with the page margins above
-        self.viewer_wrap = QWidget()
-        wl = QVBoxLayout(self.viewer_wrap)
-        wl.setContentsMargins(PAGE_MARGINS[0], 0, PAGE_MARGINS[2], PAGE_MARGINS[3])
-        wl.addWidget(self.viewer_box)
-        self.central_split = QSplitter(Qt.Vertical)
-        self.central_split.setChildrenCollapsible(False)
-        self.central_split.addWidget(self.tabs)
-        self.tabs.setMinimumHeight(270)  # lists stay usable; the plots and forms give way first
-        self.central_split.addWidget(self.viewer_wrap)
-        self.central_split.setStretchFactor(0, 1)
-        self.central_split.setStretchFactor(1, 1)
-        self.central_split.setSizes([430, 470])
-        # files, channels and time offsets live in auto-hide panels on the left edge (open on hover)
         content = QWidget()
         cl = QVBoxLayout(content)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.addWidget(self.central_split)
+        cl.setContentsMargins(PAGE_MARGINS[0], PAGE_MARGINS[1], PAGE_MARGINS[2], PAGE_MARGINS[3])
+        cl.addWidget(self.viewer_box)
         self.side_bar = SideBar(content, settings=self.settings)
         self.side_bar.add_panel("Files", self.files_page, 640, buttons=self.files_page.header_buttons)
-        self.side_bar.add_panel("Channels", self.signals_page, 1100)  # channels, signals, derived signals
         self.side_bar.add_panel("Time offset", self.offset_panel, 380)
+        self.side_bar.add_panel("Channels", self.signals_page, 1100)  # channels, signals, derived signals
+        self.side_bar.add_panel("Events & KPIs", self.kpi_page, 1300)
+        self.side_bar.add_panel("Plots & Run", self.run_page, 1200)
         root = QWidget()
         rl = QHBoxLayout(root)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -145,12 +129,10 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.side_bar)
         rl.addWidget(content, 1)
         self.setCentralWidget(root)
-        self.tabs.currentChanged.connect(self._tab_changed)
         # the viewer plots the recording of the file selected in the Files panel
         self.files_page.table.currentCellChanged.connect(
             lambda row, *_: self.viewer.show_recording_of(self.state.files[row])
             if 0 <= row < len(self.state.files) else None)
-        self._tab_changed(self.tabs.currentIndex())
 
         self._build_toolbar()
         self._build_issues_dock()
@@ -245,7 +227,7 @@ class MainWindow(QMainWindow):
                 row = int(name)
             if row is None:
                 return
-            self.tabs.setCurrentWidget(self.kpi_page)
+            self.open_panel("Events & KPIs")
             self.kpi_page.kpis.setCurrentRow(row)
             form = self.kpi_page.kpi_form
             target = {"at": form.at, "duration": form.m1, "between": form.m1, "value": form.expr, "of": form.expr,
@@ -253,10 +235,10 @@ class MainWindow(QMainWindow):
             if target is not None and target.isVisible():
                 target.setFocus()
         elif section == "events":
-            self.tabs.setCurrentWidget(self.kpi_page)
+            self.open_panel("Events & KPIs")
             self.kpi_page.select_event(name)
         elif section in ("signals", "derived"):
-            self.side_bar.open(1, sticky=True)
+            self.open_panel("Channels")
             table = self.signals_page.sig_table if section == "signals" else self.signals_page.der_table
             for r in range(table.rowCount()):
                 if table.item(r, 0) is not None and table.item(r, 0).text() == name:
@@ -264,7 +246,7 @@ class MainWindow(QMainWindow):
                     table.scrollToItem(table.item(r, 0))
                     break
         elif section == "plots":
-            self.tabs.setCurrentWidget(self.run_page)
+            self.open_panel("Plots & Run")
 
     def _load_name(self):
         self.name_edit.setText(self.state.data.get("name", ""))
@@ -390,10 +372,9 @@ class MainWindow(QMainWindow):
         for edit in self.findChildren(ExprEdit):
             edit.check()
 
-    VIEWER_TABS = (0,)  # Events & KPIs
-
-    def _tab_changed(self, index: int):
-        self.viewer_wrap.setVisible(index in self.VIEWER_TABS)
+    def open_panel(self, title: str):
+        """Show a side panel from elsewhere (e.g. a Profile check click); it stays until visited."""
+        self.side_bar.open(self.side_bar.titles.index(title), sticky=True)
 
     def closeEvent(self, event):
         if not self._confirm_discard():
