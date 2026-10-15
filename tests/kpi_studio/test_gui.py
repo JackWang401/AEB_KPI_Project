@@ -982,3 +982,15 @@ def test_clicked_side_panel_stays_open_until_clicked_again(qtbot, window, mf4_di
     bar._check_mouse(); bar._check_mouse()
     assert bar.current is None
     assert QToolTip.font().pixelSize() == 13  # hover text as large as the table text
+
+
+def test_pinned_side_panel_closes_on_a_click_in_the_main_view(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    bar.tabs[2].clicked.emit()
+    qtbot.mouseClick(window.signals_page.sig_table.viewport(), Qt.LeftButton)  # inside the panel
+    assert bar.current == 2 and bar.pinned
+    qtbot.mouseClick(window.viewer.list.viewport(), Qt.LeftButton)  # the main view
+    assert bar.current is None and not bar.panels[2].isVisible()

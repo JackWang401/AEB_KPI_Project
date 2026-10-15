@@ -2,7 +2,7 @@
 
 Hovering a tab slides its panel out over the window; it hides again once the mouse has left both
 the strip and the panel (not while a dialog or popup opened from the panel is up). Clicking a tab
-pins its panel open until the tab is clicked again."""
+pins its panel open until the tab is clicked again or the user clicks elsewhere in the window."""
 
 from __future__ import annotations
 
@@ -195,6 +195,7 @@ class SideBar(QWidget):
         else:
             self.open(i)
             self.pinned = True
+            QApplication.instance().installEventFilter(self)  # a click elsewhere closes it
 
     def open(self, i: int, sticky: bool = False):
         """Show panel `i`. `sticky`: opened from elsewhere (not by hovering its tab), so it stays open
@@ -218,6 +219,7 @@ class SideBar(QWidget):
         self.tabs[self.current].set_active(False)
         self.current = None
         self.pinned = False
+        QApplication.instance().removeEventFilter(self)
         self._timer.stop()
 
     def _place(self):
@@ -253,7 +255,18 @@ class SideBar(QWidget):
         if self._outside >= 2:
             self.close_panel()
 
+    def _clicked_elsewhere(self, obj) -> bool:
+        """A mouse press in this window, outside the strip and the pinned panel (not in a dialog or
+        a popup opened from the panel)."""
+        if not isinstance(obj, QWidget) or obj.window() is not self.host.window() or self._busy():
+            return False
+        panel = self.panels[self.current]
+        return not (obj is self or self.isAncestorOf(obj) or obj is panel or panel.isAncestorOf(obj))
+
     def eventFilter(self, obj, e):
         if obj is self.host and e.type() == QEvent.Resize:
             self._place()
+        elif (e.type() == QEvent.MouseButtonPress and self.pinned and self.current is not None
+              and self._clicked_elsewhere(obj)):
+            self.close_panel()
         return False
