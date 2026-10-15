@@ -634,33 +634,120 @@ def test_library_profile_opens_self_contained(qtbot, window, mf4_dir):
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
 
 
+def _texts(menu):
+    return [a.text() for a in menu.actions()]
+
+
 def test_right_click_deletes_signal_and_derived(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
-    for table, section, delete in ((page.sig_table, "signals", page.delete_signal),
-                                   (page.der_table, "derived", page.delete_derived)):
+    for table, section, labels in ((page.sig_table, "signals", ["Delete", "", "Add from channels…"]),
+                                   (page.der_table, "derived", ["Edit…", "Delete", "", "Add…"])):
         name = table.item(0, 0).data(Qt.UserRole)
         name = name[0] if isinstance(name, tuple) else table.item(0, 0).text()
         table.clearSelection()
-        menu = page.row_menu(table, table.visualRect(table.model().index(0, 1)).center(), delete)
-        assert [a.text() for a in menu.actions()] == ["Delete"]
-        menu.actions()[0].trigger()
+        menu = menu_for(table, table.visualRect(table.model().index(0, 0)).center())
+        assert _texts(menu) == labels
+        menu.actions()[labels.index("Delete")].trigger()
         assert name not in window.state.data[section]
 
 
-def test_right_click_edits_derived(qtbot, window, mf4_dir):
+def test_right_click_edits_and_adds_derived(qtbot, window, mf4_dir, monkeypatch):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
     table = page.der_table
     edited = []
-    pos = table.visualRect(table.model().index(1, 1)).center()
-    menu = page.row_menu(table, pos, page.delete_derived, edit=edited.append)
-    assert [a.text() for a in menu.actions()] == ["Edit…", "Delete"]
+    monkeypatch.setattr(page, "edit_derived", edited.append)
+    monkeypatch.setattr(page, "open_builder", lambda *a: edited.append("added"))  # no dialog in tests
+    menu = menu_for(table, table.visualRect(table.model().index(1, 0)).center())
     menu.actions()[0].trigger()
     assert edited == [table.item(1, 0).data(Qt.UserRole)]
     table.selectAll()
-    menu = page.row_menu(table, pos, page.delete_derived, edit=edited.append)
-    assert [a.text() for a in menu.actions()] == [f"Delete {table.rowCount()} rows"]  # Edit is for one row
+    menu = menu_for(table, table.visualRect(table.model().index(1, 0)).center())
+    assert _texts(menu) == [f"Delete {table.rowCount()} rows", "", "Add…"]  # Edit is for one row
+    menu_for(table, row=-1).actions()[-1].trigger()  # from the column header: Add only
+    assert edited[-1] == "added" and _texts(menu_for(table, row=-1)) == ["Add…"]
+
+
+def test_add_from_channels_opens_the_channels_panel(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    _load(qtbot, window, mf4_dir)
+    window.show()
+    menu_for(window.signals_page.sig_table, row=-1).actions()[0].trigger()
+    bar = window.side_bar
+    assert bar.current == 1 and bar.panels[1].isVisible()
+    bar._over = lambda: False
+    bar._check_mouse(); bar._check_mouse(); bar._check_mouse()
+    assert bar.current == 1  # stays open until the mouse has been over it
+
+
+def test_channel_tree_right_click_adds_signal(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    window.state.data["signals"].pop("throttleValue", None)
+    window.state.edited(structure=True)
+    page.refresh_channels()
+    leaf = next(page.tree.topLevelItem(i).child(j) for i in range(page.tree.topLevelItemCount())
+                for j in range(page.tree.topLevelItem(i).childCount())
+                if page.tree.topLevelItem(i).child(j).text(0) == "throttle_value")
+    page.tree.scrollToItem(leaf)
+    menu = menu_for(page.tree, page.tree.visualItemRect(leaf).center())
+    assert _texts(menu) == ["Add as signal"]
+    n = len(window.state.data["signals"])
+    menu.actions()[0].trigger()
+    assert len(window.state.data["signals"]) == n + 1
+
+
+def test_files_and_plots_right_click_menus(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    _load(qtbot, window, mf4_dir)
+    files = window.files_page.table
+    menu = menu_for(files, files.visualRect(files.model().index(0, 0)).center())
+    assert _texts(menu) == ["Remove file", "", "Add files…", "Add folder…", "Remove all files"]
+    menu.actions()[0].trigger()
+    assert len(window.state.files) == 1
+    plots = window.run_page.plots
+    n = len(window.state.data["plots"])
+    menu_for(plots, row=-1).actions()[0].trigger()
+    assert len(window.state.data["plots"]) == n + 1
+    menu = menu_for(plots, row=0)
+    assert _texts(menu) == ["Delete plot", "", "Add plot"]
+    menu.actions()[0].trigger()
+    assert len(window.state.data["plots"]) == n
+
+
+def test_enum_and_condition_dialogs_right_click(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from src.kpi_studio.gui.pages.signals_page import EnumDialog
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    dlg = EnumDialog("gear", {"P": 0, "D": 1})
+    qtbot.addWidget(dlg)
+    assert _texts(menu_for(dlg.table, row=-1)) == ["Add value"]
+    menu_for(dlg.table, row=-1).actions()[0].trigger()
+    assert dlg.table.rowCount() == 3
+    menu_for(dlg.table, row=0).actions()[0].trigger()
+    assert dlg.table.rowCount() == 2
+    cb = ConditionBuilder(["a", "b"])
+    qtbot.addWidget(cb)
+    cb.show()
+    cb.menu_at(QPoint(1, 1)).actions()[-1].trigger()
+    assert len(cb.rows) == 2
+    op = cb.rows[1][1]
+    menu = cb.menu_at(op.geometry().center())
+    assert _texts(menu) == ["Delete row", "", "Add row"]
+    menu.actions()[0].trigger()
+    assert len(cb.rows) == 1
 
 
 def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
@@ -674,17 +761,18 @@ def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
     table = form.moments
     texts = lambda m: [a.text() for a in m.actions()]  # noqa: E731
     from PySide6.QtCore import QPoint
-    blank = form.moment_menu(table.viewport().rect().bottomLeft() + QPoint(5, -5))
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+    blank = menu_for(table, table.viewport().rect().bottomLeft() + QPoint(5, -5))
     assert texts(blank) == ["Add moment"]
     blank.actions()[0].trigger()
     assert len(form.ev["moments"]) == 2
-    row_menu = form.moment_menu(row=0)
+    row_menu = menu_for(table, row=0)
     assert texts(row_menu) == ["Build condition…", "Delete moment", "", "Add moment"]
     monkeypatch.setattr(common.ConditionBuilder, "exec", lambda self: common.QDialog.Accepted)
     monkeypatch.setattr(common.ConditionBuilder, "expression", lambda self: "rising(egoSpeed == 3)")
     row_menu.actions()[0].trigger()
     assert form.ev["moments"]["m1"]["first"] == "rising(egoSpeed == 3)"
-    form.moment_menu(row=0).actions()[1].trigger()
+    menu_for(table, row=0).actions()[1].trigger()
     assert "m1" not in form.ev["moments"] and len(form.ev["moments"]) == 1
 
 
@@ -727,20 +815,21 @@ def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch)
 def test_events_and_kpis_right_click_menus(qtbot, window, mf4_dir):
     from PySide6.QtCore import QPoint
 
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
     _load(qtbot, window, mf4_dir)
     page = window.kpi_page
-    texts = lambda m: [a.text() for a in m.actions()]  # noqa: E731
+    assert not hasattr(page, "add_ev") and not hasattr(page, "add_kpi")  # no + / − buttons
     lst = page.kpis
     n = lst.count()
-    on_item = page.list_menu(lst, lst.visualItemRect(lst.item(1)).center(), "KPI", page.new_kpi, page.delete_kpi)
-    assert texts(on_item) == ["Delete KPI", "", "Add KPI"] and lst.currentRow() == 1
+    on_item = menu_for(lst, lst.visualItemRect(lst.item(1)).center())
+    assert _texts(on_item) == ["Delete KPI", "", "Add KPI"] and lst.currentRow() == 1
     name = lst.item(1).text()
     on_item.actions()[0].trigger()
     assert lst.count() == n - 1 and name not in [lst.item(i).text() for i in range(lst.count())]
     ev = page.events
-    blank = page.list_menu(ev, ev.viewport().rect().bottomLeft() + QPoint(5, -3), "event",
-                           page.new_event, page.delete_event)
-    assert texts(blank) == ["Add event"]
+    blank = menu_for(ev, ev.viewport().rect().bottomLeft() + QPoint(5, -3))
+    assert _texts(blank) == ["Add event"]
     before = len(window.state.data["events"])
     blank.actions()[0].trigger()
     assert len(window.state.data["events"]) == before + 1

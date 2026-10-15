@@ -9,10 +9,8 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -20,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.workers import IndexWorker
 
 
@@ -36,20 +35,11 @@ class FilesPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
-        intro = QLabel("Drag and drop works too. Files of the same recording (one per logger) are read together.")
+        intro = QLabel("Right-click to add or remove files; drag and drop works too. Files of the same recording "
+                       "(one per logger) are read together.")
         intro.setWordWrap(True)
         intro.setObjectName("hint")
         lay.addWidget(intro)
-
-        bar = QHBoxLayout()
-        self.add_files_btn = QPushButton("Add files…")
-        self.add_folder_btn = QPushButton("Add folder…")
-        self.remove_btn = QPushButton("Remove")
-        self.clear_btn = QPushButton("Clear")
-        for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
-            bar.addWidget(b)
-        bar.addStretch(1)
-        lay.addLayout(bar)
 
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
@@ -66,10 +56,12 @@ class FilesPage(QWidget):
         self.summary.setObjectName("hint")
         lay.addWidget(self.summary)
 
-        self.add_files_btn.clicked.connect(self.pick_files)
-        self.add_folder_btn.clicked.connect(self.pick_folder)
-        self.remove_btn.clicked.connect(self.remove_selected)
-        self.clear_btn.clicked.connect(lambda: self.state.set_files([]))
+        context_menu.install(
+            self.table,
+            add=[("Add files…", self.pick_files), ("Add folder…", self.pick_folder),
+                 ("Remove all files", lambda: self.state.set_files([]))],
+            item=lambda rows: [("Remove file" if len(rows) == 1 else f"Remove {len(rows)} files",
+                                self.remove_selected)])
         state.files_changed.connect(self.refresh)
         self.refresh()
 

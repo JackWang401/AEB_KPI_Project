@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio.app.run_service import default_workers, preflight
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS
 from src.kpi_studio.gui.workers import RunWorker
 
@@ -128,12 +129,9 @@ class RunPage(QWidget):
         for col, width in ((0, 110), (2, 190), (3, 190), (4, 130), (5, 170), (7, 100)):
             self.plots.setColumnWidth(col, width)
         pl.addWidget(self.plots)
-        prow = QHBoxLayout()
-        self.add_plot, self.del_plot = QPushButton("Add plot"), QPushButton("Delete plot")
-        prow.addWidget(self.add_plot)
-        prow.addWidget(self.del_plot)
-        prow.addStretch(1)
-        pl.addLayout(prow)
+        context_menu.install(self.plots, add=[("Add plot", self.new_plot)],
+                             item=lambda rows: [("Delete plot" if len(rows) == 1 else f"Delete {len(rows)} plots",
+                                                 self.delete_plot)])
         lay.addWidget(pbox, 1)
 
         # ---- run
@@ -188,8 +186,6 @@ class RunPage(QWidget):
         browse.clicked.connect(self.pick_out)
         self.out_mode.currentIndexChanged.connect(lambda *_: self.update_output_hint())
         state.files_changed.connect(self.update_output_hint)
-        self.add_plot.clicked.connect(self.new_plot)
-        self.del_plot.clicked.connect(self.delete_plot)
         self.check_btn.clicked.connect(self.check)
         self.run_btn.clicked.connect(self.start_run)
         self.cancel_btn.clicked.connect(self.cancel)

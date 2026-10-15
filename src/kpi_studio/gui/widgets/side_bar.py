@@ -83,6 +83,7 @@ class SideBar(QWidget):
         self.widths: list[int] = []
         self.current: int | None = None
         self._outside = 0
+        self._sticky = False
         self._timer = QTimer(self)
         self._timer.setInterval(self.HIDE_DELAY_MS // 2)
         self._timer.timeout.connect(self._check_mouse)
@@ -114,9 +115,12 @@ class SideBar(QWidget):
         return i
 
     # ------------------------------------------------------------------ open / close
-    def open(self, i: int):
+    def open(self, i: int, sticky: bool = False):
+        """Show panel `i`. `sticky`: opened from elsewhere (not by hovering its tab), so it stays open
+        until the mouse has been over it once and left again."""
         if self.current is not None and self.current != i:
             self.close_panel()
+        self._sticky = sticky
         self.current = i
         self.tabs[i].set_active(True)
         self._place()
@@ -154,6 +158,9 @@ class SideBar(QWidget):
             return
         if self._over() or self._busy():
             self._outside = 0
+            self._sticky = False
+            return
+        if self._sticky:
             return
         self._outside += 1
         if self._outside >= 2:

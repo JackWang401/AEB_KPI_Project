@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -40,6 +39,7 @@ from src.kpi_studio.core.model import (
 from src.kpi_studio.core.rename import rename_kpi, rename_moment
 from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import (
     PAGE_MARGINS,
     ConditionBuilder,
@@ -168,14 +168,8 @@ class EventForm(QWidget):
             w.valueChanged.connect(lambda v, k=key: self.set(k, v))
         self.pre.valueChanged.connect(lambda v: self.set_window("pre", v))
         self.post.valueChanged.connect(lambda v: self.set_window("post", v))
-        # right-click: on a moment, Build condition… / Delete moment; on the blank space, Add moment
-        self.moments.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.moments.customContextMenuRequested.connect(
-            lambda pos: self._exec_menu(self.moment_menu(pos), self.moments.viewport().mapToGlobal(pos)))
-        vh = self.moments.verticalHeader()
-        vh.setContextMenuPolicy(Qt.CustomContextMenu)
-        vh.customContextMenuRequested.connect(
-            lambda pos: self._exec_menu(self.moment_menu(row=vh.logicalIndexAt(pos)), vh.mapToGlobal(pos)))
+        # right-click: on a moment, Build condition… / Delete moment; Add moment anywhere
+        context_menu.install(self.moments, add=[("Add moment", self.add_moment)], item=self._moment_actions)
         self.moments.itemChanged.connect(self.moment_renamed)
         for w in (self.start, self.end):
             w.focused.connect(page.set_target)
@@ -406,32 +400,13 @@ class EventForm(QWidget):
         edit.setText(format_options(opts))
         self.save_moment(row)
 
-    @staticmethod
-    def _exec_menu(menu, global_pos):
-        if menu is not None:
-            menu.exec(global_pos)
-
-    def moment_menu(self, pos=None, row=None):
-        """The right-click menu of the moments table at viewport `pos` (or for `row`)."""
-        if self.name is None:
-            return None
-        if row is None:
-            index = self.moments.indexAt(pos)
-            row = index.row() if index.isValid() else -1
-        menu = QMenu(self.moments)
-        if row < 0:
-            menu.addAction("Add moment").triggered.connect(self.add_moment)
-            return menu
-        if not self.moments.selectionModel().isRowSelected(row, self.moments.rootIndex()):
-            self.moments.selectRow(row)
-        rows = {i.row() for i in self.moments.selectedIndexes()}
+    def _moment_actions(self, rows):
+        actions = []
         if len(rows) == 1:
-            menu.addAction("Build condition…").triggered.connect(lambda: self.build_moment_row(row))
-        menu.addAction("Delete moment" if len(rows) == 1 else f"Delete {len(rows)} moments").triggered.connect(
-            self.delete_moment)
-        menu.addSeparator()  # for when the moments fill the table and there is no blank space left
-        menu.addAction("Add moment").triggered.connect(self.add_moment)
-        return menu
+            row = next(iter(rows))
+            actions.append(("Build condition…", lambda: self.build_moment_row(row)))
+        actions.append(("Delete moment" if len(rows) == 1 else f"Delete {len(rows)} moments", self.delete_moment))
+        return actions
 
     def build_moment_row(self, row: int):
         dlg = ConditionBuilder(self.state.signal_names(), self, initial=self.moments.cellWidget(row, 2).text())
@@ -713,15 +688,12 @@ class KpiPage(QWidget):
                 row.addWidget(b)
             return row
 
-        self.add_ev, self.del_ev = QPushButton("+"), QPushButton("−")
-        ll.addLayout(header("Events", [(self.add_ev, "Add an event"), (self.del_ev, "Delete the selected event")]))
+        ll.addLayout(header("Events", []))
         self.events = QListWidget()
         self.events.setMinimumHeight(52)
         ll.addWidget(self.events, 1)
-        self.add_kpi, self.del_kpi = QPushButton("+"), QPushButton("−")
         self.up, self.down = QPushButton("↑"), QPushButton("↓")
-        krow = header("KPIs", [(self.add_kpi, "Add a KPI"), (self.del_kpi, "Delete the selected KPI"),
-                               (self.up, "Move up"), (self.down, "Move down")])
+        krow = header("KPIs", [(self.up, "Move up"), (self.down, "Move down")])
         ll.addLayout(krow)
         self.kpis = QListWidget()
         self.kpis.setMinimumHeight(60)
@@ -765,19 +737,13 @@ class KpiPage(QWidget):
 
         self.events.currentRowChanged.connect(self.event_selected)
         self.kpis.currentRowChanged.connect(self.kpi_selected)
-        self.add_ev.clicked.connect(self.new_event)
-        self.del_ev.clicked.connect(self.delete_event)
-        self.add_kpi.clicked.connect(self.new_kpi)
-        self.del_kpi.clicked.connect(self.delete_kpi)
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
-        # right-click: blank space adds, an item can be deleted
-        for lst, kind, add, delete in ((self.events, "event", self.new_event, self.delete_event),
-                                       (self.kpis, "KPI", self.new_kpi, self.delete_kpi)):
-            lst.setContextMenuPolicy(Qt.CustomContextMenu)
-            lst.customContextMenuRequested.connect(
-                lambda pos, lst=lst, kind=kind, add=add, delete=delete: self.list_menu(
-                    lst, pos, kind, add, delete).exec(lst.viewport().mapToGlobal(pos)))
+        # right-click: Add anywhere in the list, Delete on an item
+        context_menu.install(self.events, add=[("Add event", self.new_event)],
+                             item=lambda rows: [("Delete event", self.delete_event)])
+        context_menu.install(self.kpis, add=[("Add KPI", self.new_kpi)],
+                             item=lambda rows: [("Delete KPI", self.delete_kpi)])
 
         state.profile_changed.connect(self.refresh)
         state.validated.connect(self.on_validated)
@@ -848,18 +814,6 @@ class KpiPage(QWidget):
             return
         self.kpi_form.load(row)
         self.stack.setCurrentWidget(self.kpi_form)
-
-    @staticmethod
-    def list_menu(lst, pos, kind, add, delete):
-        """Right-click menu of the events / KPIs list: Delete on an item, Add on the blank space."""
-        menu = QMenu(lst)
-        item = lst.itemAt(pos)
-        if item is not None:
-            lst.setCurrentItem(item)
-            menu.addAction(f"Delete {kind}").triggered.connect(delete)
-            menu.addSeparator()  # for when the list is full and there is no blank space left
-        menu.addAction(f"Add {kind}").triggered.connect(add)
-        return menu
 
     def new_event(self):
         events = self.state.data.setdefault("events", {})

@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         self.side_bar.add_panel("Files", self.files_page, 640)
         self.side_bar.add_panel("Channels", self.signals_page.channels_panel, 440)
         self.side_bar.add_panel("Time offset", self.offset_panel, 380)
+        self.signals_page.channels_requested.connect(lambda: self.side_bar.open(1, sticky=True))
         root = QWidget()
         rl = QHBoxLayout(root)
         rl.setContentsMargins(0, 0, 0, 0)

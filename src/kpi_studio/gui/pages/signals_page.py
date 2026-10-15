@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,9 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -30,6 +28,7 @@ from PySide6.QtWidgets import (
 from src.kpi_studio.core.model import derived_to_yaml, signal_units
 from src.kpi_studio.core.rename import rename_signal_references
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
@@ -84,6 +83,7 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
+    channels_requested = Signal()  # "Add from channels…": open the Channels side panel
     DER_COLS = ["Name", "Expression", "Unit", "Description"]
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
@@ -122,9 +122,6 @@ class SignalsPage(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter… (wildcards: * ?  e.g. lmc*it)")
         head.addWidget(self.search, 1)
-        self.add_sig_btn = QPushButton("Add →")
-        self.add_sig_btn.setToolTip("Add the selected channels as signals (or double-click a channel)")
-        head.addWidget(self.add_sig_btn)
         ll.addLayout(head)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Channel", "Unit", "Files"])
@@ -165,15 +162,12 @@ class SignalsPage(QWidget):
         dl.setContentsMargins(0, 0, 0, 0)
         dl.setSpacing(4)
         drow = QHBoxLayout()
-        drow.addWidget(title("Derived signals", "Pick a signal and a processing method (Add / Edit), "
-                                                "or type an expression, e.g. lowpass(x, 10)"))
+        drow.addWidget(title("Derived signals", "Right-click to add or edit one: pick a signal and a processing "
+                                                "method, or type an expression, e.g. lowpass(x, 10)"))
         dhint = QLabel("a signal + a method, or an expression")
         dhint.setObjectName("hint")
         drow.addWidget(dhint)
         drow.addStretch(1)
-        self.add_der_btn = QPushButton("Add…")
-        self.add_der_btn.setToolTip("Build a derived signal: pick a signal, a method and its arguments")
-        drow.addWidget(self.add_der_btn)
         dl.addLayout(drow)
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
@@ -188,11 +182,14 @@ class SignalsPage(QWidget):
         split.addWidget(right)
 
         self.search.textChanged.connect(self.refresh_channels)
-        self.add_sig_btn.clicked.connect(self.add_selected_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
-        self._delete_menu(self.sig_table, self.delete_signal)
-        self.add_der_btn.clicked.connect(self.add_derived)
-        self._delete_menu(self.der_table, self.delete_derived, edit=self.edit_derived)
+        # right-click menus: every add / delete is in one
+        context_menu.install(self.tree, item=lambda rows: [("Add as signal", self.add_selected_channels)])
+        self.tree.setToolTip("Right-click a channel (or double-click it) to add it as a signal")
+        context_menu.install(self.sig_table, add=[("Add from channels…", self.channels_requested.emit)],
+                             item=lambda rows: [("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows",
+                                                 self.delete_signal)])
+        context_menu.install(self.der_table, add=[("Add…", self.add_derived)], item=self._derived_actions)
         self.sig_table.itemChanged.connect(self.signal_cell_changed)
         self.sig_table.itemDoubleClicked.connect(self._enum_double_clicked)
         self.der_table.itemChanged.connect(self.derived_cell_changed)
@@ -420,33 +417,13 @@ class SignalsPage(QWidget):
         sigs[name]["enum"] = dlg.values() or None
         self.state.edited(structure=True)
 
-    def _delete_menu(self, table, delete, edit=None):
-        """Right-click a row: Edit… (one row, when `edit` is given) and Delete (the clicked row, or the
-        whole selection when it is part of it)."""
-        table.setContextMenuPolicy(Qt.CustomContextMenu)
-
-        def show(pos):
-            menu = self.row_menu(table, pos, delete, edit)
-            if menu is not None:
-                menu.exec(table.viewport().mapToGlobal(pos))
-
-        table.customContextMenuRequested.connect(show)
-
-    @staticmethod
-    def row_menu(table, pos, delete, edit=None):
-        index = table.indexAt(pos)
-        if not index.isValid():
-            return None
-        if not table.selectionModel().isRowSelected(index.row(), index.parent()):
-            table.selectRow(index.row())
-        rows = {i.row() for i in table.selectedIndexes()}
-        menu = QMenu(table)
-        if edit is not None and len(rows) == 1:
-            name = table.item(index.row(), 0).data(Qt.UserRole)
-            menu.addAction("Edit…").triggered.connect(lambda: edit(name))
-        act = menu.addAction("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows")
-        act.triggered.connect(delete)
-        return menu
+    def _derived_actions(self, rows):
+        actions = []
+        if len(rows) == 1:
+            name = self.der_table.item(next(iter(rows)), 0).data(Qt.UserRole)
+            actions.append(("Edit…", lambda: self.edit_derived(name)))
+        actions.append(("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows", self.delete_derived))
+        return actions
 
     def delete_signal(self):
         rows = sorted({i.row() for i in self.sig_table.selectedIndexes()}, reverse=True)
@@ -623,20 +600,17 @@ class EnumDialog(QDialog):
         for text, value in sorted(enum.items(), key=lambda kv: kv[1]):
             self._add(_num(value), text)
         lay.addWidget(self.table, 1)
-        row = QHBoxLayout()
-        add = QPushButton("Add value")
-        delete = QPushButton("Delete value")
-        add.clicked.connect(lambda: self._add("", ""))
-        delete.clicked.connect(lambda: [self.table.removeRow(r) for r in
-                                        sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)])
-        row.addWidget(add)
-        row.addWidget(delete)
-        row.addStretch(1)
-        lay.addLayout(row)
+        context_menu.install(self.table, add=[("Add value", lambda: self._add("", ""))],
+                             item=lambda rows: [("Delete value" if len(rows) == 1 else f"Delete {len(rows)} values",
+                                                 self.delete_selected)])
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+
+    def delete_selected(self):
+        for r in sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True):
+            self.table.removeRow(r)
 
     def _add(self, value: str, text: str):
         r = self.table.rowCount()

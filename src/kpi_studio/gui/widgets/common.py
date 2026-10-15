@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -354,16 +353,14 @@ class ConditionBuilder(QDialog):
         lay = QVBoxLayout(self)
         info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL.\n"
                       "'changes to / from' are true only at the sample where the signal switches to or away "
-                      "from the value;\n'changes from → to' takes two values, e.g. 0, 3.")
+                      "from the value;\n'changes from → to' takes two values, e.g. 0, 3.\n"
+                      "Right-click a row's operator, or the space around the rows, to add or delete rows.")
         lay.addWidget(info)
         self.rows_box = QVBoxLayout()
         lay.addLayout(self.rows_box)
         bar = QHBoxLayout()
-        add = QPushButton("Add row")
-        add.clicked.connect(self.add_row)
         self.join = QComboBox()
         self.join.addItems(["and", "or"])
-        bar.addWidget(add)
         bar.addWidget(QLabel("Join rows with"))
         bar.addWidget(self.join)
         bar.addStretch(1)
@@ -399,6 +396,38 @@ class ConditionBuilder(QDialog):
         self.rows_box.addLayout(row)
         self.rows.append((sig, op, val))
         self.update_preview()
+
+    def delete_row(self, i: int):
+        sig, op, val = self.rows.pop(i)
+        row = self.rows_box.takeAt(i)
+        for w in (sig, op, val):
+            w.setParent(None)
+            w.deleteLater()
+        row.layout().deleteLater()
+        if not self.rows:
+            self.add_row()
+        self.update_preview()
+
+    def row_at(self, pos) -> int:
+        """Index of the row under `pos` (dialog coordinates), or -1."""
+        for i, (sig, op, val) in enumerate(self.rows):
+            top = min(w.geometry().top() for w in (sig, op, val))
+            bottom = max(w.geometry().bottom() for w in (sig, op, val))
+            if top - 3 <= pos.y() <= bottom + 3:
+                return i
+        return -1
+
+    def menu_at(self, pos) -> QMenu:
+        menu = QMenu(self)
+        i = self.row_at(pos)
+        if i >= 0:
+            menu.addAction("Delete row").triggered.connect(lambda: self.delete_row(i))
+            menu.addSeparator()
+        menu.addAction("Add row").triggered.connect(self.add_row)
+        return menu
+
+    def contextMenuEvent(self, e):
+        self.menu_at(e.pos()).exec(e.globalPos())
 
     @staticmethod
     def _is(s: str, v: str) -> str:
