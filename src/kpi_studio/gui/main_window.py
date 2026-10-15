@@ -109,6 +109,9 @@ class MainWindow(QMainWindow):
         self.kpi_page = KpiPage(self.state, viewer=self.viewer)
         self.run_page = RunPage(self.state, self.settings)
         self.offset_panel = OffsetPanel(self.state)
+        # right-click a column header to pick the columns shown (remembered between sessions)
+        columns.install_picker(self.files_page.table, self.settings, "columns/files")
+        columns.install_picker(self.signals_page.sig_table, self.settings, "columns/signals")
         for page in (self.kpi_page, self.run_page):
             page.layout().setContentsMargins(0, 0, 0, 0)  # the side panel has its own margins
         self.viewer_box = QGroupBox("Signal viewer && preview")

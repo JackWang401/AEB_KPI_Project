@@ -7,7 +7,7 @@ or header whose text is cut off shows its full text on hover."""
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QToolTip
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QMenu, QToolTip
 
 TIP_FONT_PX = 13  # the size of the text in the tables
 
@@ -219,3 +219,76 @@ def install(app) -> None:
     if _filter is None:
         _filter = _AppFilter()
         app.installEventFilter(_filter)
+
+
+# ---------------------------------------------------------------------------- column picker
+class _StayOpenMenu(QMenu):
+    """A menu whose checkable entries toggle without closing it."""
+
+    def mouseReleaseEvent(self, e):
+        action = self.actionAt(e.position().toPoint())
+        if action is not None and action.isCheckable() and action.isEnabled():
+            action.trigger()
+            return
+        super().mouseReleaseEvent(e)
+
+
+def column_menu(view: QAbstractItemView) -> QMenu:
+    """Every column of `view`, ticked when shown; clicking one shows or hides it (one stays shown)."""
+    header = view.horizontalHeader() if hasattr(view, "horizontalHeader") else view.header()
+    model = header.model()
+    menu = _StayOpenMenu(view)
+    actions = []
+    for c in range(header.count()):
+        text = str(model.headerData(c, Qt.Horizontal, Qt.DisplayRole) or f"Column {c + 1}")
+        a = menu.addAction(text)
+        a.setCheckable(True)
+        a.setChecked(not header.isSectionHidden(c))
+        a.toggled.connect(lambda on, c=c: _set_shown(view, header, c, on))
+        actions.append(a)
+
+    def lock_last():
+        shown = [a for a in actions if a.isChecked()]
+        for a in actions:
+            a.setEnabled(not (len(shown) == 1 and a is shown[0]))  # never hide every column
+    for a in actions:
+        a.toggled.connect(lambda *_: lock_last())
+    lock_last()
+    return menu
+
+
+def _set_shown(view, header: QHeaderView, c: int, on: bool) -> None:
+    header.setSectionHidden(c, not on)
+    if on:
+        sizer = getattr(header, "_column_sizer", None)
+        width = sizer.header_width(c) if sizer is not None else header.sectionSizeHint(c)
+        if header.sectionSize(c) < width:
+            header.resizeSection(c, max(width, view.sizeHintForColumn(c)))
+    key = view.property("columnsKey")
+    settings = getattr(view, "_columns_settings", None)
+    if key and settings is not None:
+        hidden = [str(model_text) for i in range(header.count()) if header.isSectionHidden(i)
+                  for model_text in [header.model().headerData(i, Qt.Horizontal, Qt.DisplayRole)]]
+        settings.setValue(key, hidden)
+
+
+def install_picker(view: QAbstractItemView, settings=None, key: str = "") -> None:
+    """Right-click the column header of `view` to pick the columns shown; remembered under `key`."""
+    header = view.horizontalHeader() if hasattr(view, "horizontalHeader") else view.header()
+    view.setProperty("columnsKey", key)
+    view._columns_settings = settings
+    if settings is not None and key:
+        hidden = settings.value(key, []) or []
+        hidden = [hidden] if isinstance(hidden, str) else list(hidden)
+        names = [str(header.model().headerData(c, Qt.Horizontal, Qt.DisplayRole)) for c in range(header.count())]
+        for c, name in enumerate(names):
+            header.setSectionHidden(c, name in hidden)
+        if all(header.isSectionHidden(c) for c in range(header.count())):
+            header.setSectionHidden(0, False)
+    header.setContextMenuPolicy(Qt.CustomContextMenu)
+    try:
+        header.customContextMenuRequested.disconnect()  # replaces the header's add / delete menu
+    except (RuntimeError, TypeError):
+        pass
+    header.customContextMenuRequested.connect(lambda pos: column_menu(view).exec(header.mapToGlobal(pos)))
+    header.setToolTip("Right-click to choose the columns shown")

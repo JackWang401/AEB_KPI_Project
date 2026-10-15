@@ -1086,3 +1086,35 @@ def test_cut_off_text_tip_sits_under_the_cell(qtbot, window, mf4_dir):
     assert label.pos() == table.viewport().mapToGlobal(rect.bottomLeft()) + QPoint(0, 2)
     QToolTip.hideText()
     assert not window.viewer.toolbar.coordinates  # no (x, y) readout in the plot toolbar
+
+
+def test_right_click_a_header_to_pick_the_columns_shown(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets import columns
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    _load(qtbot, window, mf4_dir)
+    for view, key in ((window.files_page.table, "columns/files"), (window.signals_page.sig_table, "columns/signals")):
+        h = view.horizontalHeader()
+        menu = columns.column_menu(view)
+        names = [view.horizontalHeaderItem(c).text() for c in range(view.columnCount())]
+        assert [a.text() for a in menu.actions()] == names and all(a.isChecked() for a in menu.actions())
+        menu.actions()[1].trigger()  # untick the second column: hidden, and remembered
+        assert h.isSectionHidden(1) and window.settings.value(key) == [names[1]]
+        assert not menu.actions()[1].isChecked()
+        menu.actions()[1].trigger()  # tick it again
+        assert not h.isSectionHidden(1) and h.sectionSize(1) > 0
+        for a in menu.actions()[1:]:
+            a.trigger()
+        assert not menu.actions()[0].isEnabled()  # the last shown column can't be hidden
+        for a in menu.actions()[1:]:
+            a.trigger()
+        assert not any(h.isSectionHidden(c) for c in range(h.count()))
+    # the rows still have their own menus
+    table = window.files_page.table
+    assert "Remove file" in [a.text() for a in menu_for(table, table.visualRect(table.model().index(0, 0)).center()).actions()]
+    # hidden columns come back hidden in a new session
+    window.settings.setValue("columns/signals", ["Enum"])
+    columns.install_picker(window.signals_page.sig_table, window.settings, "columns/signals")
+    sig = window.signals_page.sig_table
+    enum = [sig.horizontalHeaderItem(c).text() for c in range(sig.columnCount())].index("Enum")
+    assert sig.horizontalHeader().isSectionHidden(enum)
