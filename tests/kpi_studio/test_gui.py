@@ -69,7 +69,9 @@ def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     listed = [text for by_sig in viewer.kpi_lines.values() for lines in by_sig.values() for text, _ in lines]
     assert listed and all(" = " in t for t in listed)
     texts = [a.get_text() for a in viewer._artists if hasattr(a, "get_text")]
-    assert all(t in texts for t in listed)  # drawn in the lists right of the subplots
+    cut = [t for t in texts if t.startswith("… ") and t.endswith("more KPI(s)")]
+    shown = [t for t in listed if t in texts]  # drawn in the lists right of the subplots
+    assert shown and (len(shown) == len(listed) or cut)  # those that don't fit are counted
     for ax, by_sig in viewer.kpi_lines.items():  # under a signal that subplot shows
         assert all(sig in viewer._names[ax] for sig in by_sig)
     n_res = sum(1 for r in viewer.preview["outcome"].results if r.event == "aeb" and r.occurrence == 1)
