@@ -213,8 +213,12 @@ class SignalViewer(QWidget):
         self.list = SignalList()
         self.list.setToolTip("Tick signals to plot them. Drag a signal onto a plot to draw it in that subplot.")
         ll.addWidget(self.list, 1)
+        check_row = QHBoxLayout()
+        check_all = QPushButton("Check all")
         clear = QPushButton("Uncheck all")
-        ll.addWidget(clear)
+        check_row.addWidget(check_all)
+        check_row.addWidget(clear)
+        ll.addLayout(check_row)
         split.addWidget(left)
 
         right = QWidget()
@@ -248,6 +252,7 @@ class SignalViewer(QWidget):
         self._reload_timer.setInterval(400)
         self._reload_timer.timeout.connect(self._reload_shifted)
         self.list.itemChanged.connect(lambda *_: self._files_ticked())  # ticking a signal loads and plots it
+        check_all.clicked.connect(self.check_all)
         clear.clicked.connect(self.uncheck_all)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
@@ -387,6 +392,11 @@ class SignalViewer(QWidget):
             elif only:
                 it.setCheckState(Qt.Unchecked)
         self.list.blockSignals(False)
+
+    def check_all(self):
+        self.set_checked([self.list.item(i).text() for i in range(self.list.count())
+                          if not self.list.item(i).isHidden()])
+        self._files_ticked()
 
     def uncheck_all(self):
         self.set_checked([], only=True)

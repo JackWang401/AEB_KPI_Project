@@ -685,3 +685,13 @@ def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
     assert form.ev["moments"]["m1"]["first"] == "rising(egoSpeed == 3)"
     form.moment_menu(row=0).actions()[1].trigger()
     assert "m1" not in form.ev["moments"] and len(form.ev["moments"]) == 1
+
+
+def test_check_all_and_uncheck_all(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.signals_page.viewer
+    viewer.check_all()
+    assert set(viewer.checked()) == {viewer.list.item(i).text() for i in range(viewer.list.count())}
+    qtbot.waitUntil(lambda: bool(viewer.cache) and viewer.worker is None, timeout=30000)
+    viewer.uncheck_all()
+    assert not viewer.checked()
