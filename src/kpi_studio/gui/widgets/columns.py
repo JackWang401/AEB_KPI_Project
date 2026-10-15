@@ -44,14 +44,29 @@ class ColumnSizer(QObject):
                         model.layoutChanged):
                 sig.connect(self.schedule)
         self.fit()
+        for c in range(n):  # widths set before (e.g. setColumnWidth) respect the header text too
+            if header.sectionSize(c) < self.header_width(c) and not header.isSectionHidden(c):
+                header.resizeSection(c, self.header_width(c))
 
     def schedule(self, *_):
         if not self.user_sized:
             self._timer.start(0)
 
-    def _resized(self, *_):
-        if self._pressed and not self._fitting:
+    def header_width(self, c: int) -> int:
+        """The width the column's header text needs: no column gets narrower than that."""
+        return max(self.header.sectionSizeHint(c), self.header.minimumSectionSize())
+
+    def _resized(self, c: int, _old: int = 0, new: int = 0):
+        if self._fitting:
+            return
+        if self._pressed:
             self.user_sized = True  # from now on the user's widths stay
+        if 0 <= c < self.header.count() and new < self.header_width(c) and not self.header.isSectionHidden(c):
+            self._fitting = True
+            try:
+                self.header.resizeSection(c, self.header_width(c))
+            finally:
+                self._fitting = False
 
     def eventFilter(self, obj, e):
         t = e.type()
@@ -80,7 +95,7 @@ class ColumnSizer(QObject):
                 want = max(self.view.sizeHintForColumn(c), h.sectionSizeHint(c))
                 if self.modes[c] != QHeaderView.ResizeToContents:
                     want = min(want, MAX_FIT)  # long text: the full value shows on hover
-                h.resizeSection(c, max(want, h.minimumSectionSize()))
+                h.resizeSection(c, max(want, self.header_width(c)))
             if stretch:
                 last = n - 1 if h.stretchLastSection() else -1
                 used = sum(h.sectionSize(c) for c in range(n)
@@ -90,7 +105,7 @@ class ColumnSizer(QObject):
                     free -= h.sectionSizeHint(last)
                 each = max(MIN_STRETCH, free // len(stretch))
                 for c in stretch:
-                    h.resizeSection(c, each)
+                    h.resizeSection(c, max(each, self.header_width(c)))
         finally:
             self._fitting = False
 

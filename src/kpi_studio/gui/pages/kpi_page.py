@@ -49,6 +49,7 @@ from src.kpi_studio.gui.widgets.common import (
     format_options,
     parse_options,
 )
+from src.kpi_studio.gui.widgets.flow_layout import FlowLayout
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
@@ -123,22 +124,26 @@ class EventForm(QWidget):
         form.addRow(self.preset_label, self.preset)
         form.addRow(self.inputs_label, self.preset_inputs)
         form.addRow(self.params_label, self.preset_params)
-        occ = QHBoxLayout()
-        occ.setSpacing(8)
-        for label, w in (("ignore shorter than", self.min_dur), ("merge gaps below", self.merge)):
-            occ.addWidget(QLabel(label))
-            occ.addWidget(w)
-            w.setSuffix(" s")
-        occ.addStretch(1)
-        form.addRow("Occurrences", occ)
-        win = QHBoxLayout()
-        win.setSpacing(8)
-        for label, w in (("before start", self.pre), ("after end", self.post)):
-            win.addWidget(QLabel(label))
-            win.addWidget(w)
-            w.setSuffix(" s")
-        win.addStretch(1)
-        form.addRow("Window", win)
+        def pairs(*items):
+            """Label + spin box pairs that wrap onto a second line when the panel is narrow."""
+            box = QWidget()
+            policy = box.sizePolicy()
+            policy.setHeightForWidth(True)
+            box.setSizePolicy(policy)
+            flow = FlowLayout(box, spacing=12)
+            for label, w in items:
+                pair = QWidget()
+                pl = QHBoxLayout(pair)
+                pl.setContentsMargins(0, 0, 0, 0)
+                pl.setSpacing(8)
+                pl.addWidget(QLabel(label))
+                pl.addWidget(w)
+                w.setSuffix(" s")
+                flow.addWidget(pair)
+            return box
+
+        form.addRow("Occurrences", pairs(("ignore shorter than", self.min_dur), ("merge gaps below", self.merge)))
+        form.addRow("Window", pairs(("before start", self.pre), ("after end", self.post)))
         lay.addLayout(form)
 
         box = QGroupBox()
@@ -148,8 +153,9 @@ class EventForm(QWidget):
         mtitle = QLabel("Moments: the exact instants KPIs are read at (start, end, window_start, window_end "
                         "are built in)")
         mtitle.setObjectName("sectionTitle")
-        mrow.addWidget(mtitle)
-        mrow.addStretch(1)
+        mtitle.setWordWrap(True)  # wraps in a narrow panel instead of widening the form
+        mtitle.setMinimumWidth(120)
+        mrow.addWidget(mtitle, 1)
         for b in context_menu.plus_minus(add=self.add_moment, remove=self.delete_moment, add_tip="Add a moment",
                                          remove_tip="Delete the selected moments"):
             mrow.addWidget(b)
@@ -742,6 +748,11 @@ class KpiPage(QWidget):
                                 QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored)
             self.stack.adjustSize()
         self.stack.currentChanged.connect(fit_current)
+        # in a narrow panel the fields get narrower; buttons beside them (Build…) stay in view
+        for form in (self.event_form, self.kpi_form):
+            for combo in form.findChildren(QComboBox):
+                combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(6)
         fit_current(0)
         top.addWidget(self.form_scroll)
 

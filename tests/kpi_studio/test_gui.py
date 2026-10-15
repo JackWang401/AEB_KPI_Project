@@ -944,19 +944,23 @@ def test_every_column_can_be_dragged_and_cut_text_shows_on_hover(qtbot, window, 
     assert h.sectionSize(1) >= columns.MIN_STRETCH  # the stretching column still takes the free width
     # the user drags a column edge: that width stays, even when the table refills
     sizer._pressed = True
-    h.resizeSection(0, 50)
+    h.resizeSection(0, 5)  # never narrower than the header text
+    assert h.sectionSize(0) == sizer.header_width(0) > 5
+    h.resizeSection(0, 70)
     sizer._pressed = False
     assert sizer.user_sized
     window.state.edited(structure=True)
     qtbot.wait(50)
-    assert h.sectionSize(0) == 50
+    assert h.sectionSize(0) == 70
     # a cut-off name shows in full on hover; one that fits keeps its own tooltip
     name = table.item(0, 0).text()
     pos = table.visualRect(table.model().index(0, 0)).center()
     assert columns.tip_at(table, pos).startswith(name)
     h.resizeSection(0, 400)
     assert columns.tip_at(table, table.visualRect(table.model().index(0, 0)).center()) is None
-    h.resizeSection(1, 60)
+    sizer._fitting = True  # (squeeze it below the header width, as only a too-narrow panel can)
+    h.resizeSection(1, sizer.header_width(1) - 30)
+    sizer._fitting = False
     hpos = h.sectionViewportPosition(1) + 10
     from PySide6.QtCore import QPoint
     assert columns.tip_at(h, QPoint(hpos, 5)) == table.horizontalHeaderItem(1).text()
@@ -1024,3 +1028,26 @@ def test_files_can_be_unchecked_to_leave_them_out_of_the_analysis(qtbot, window,
     assert "No files checked" in window.run_page.log.toPlainText() and window.run_page.worker is None
     state.set_files([state.files[0]])  # removing a file forgets its check state
     assert state.unchecked == {state.files[0]}
+
+
+def test_build_buttons_stay_in_view_in_a_narrow_events_panel(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPoint
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1100, 800)
+    window.show()
+    bar = window.side_bar
+    i = bar.titles.index("Events & KPIs")
+    bar.set_width(i, 900)
+    bar.open(i, sticky=True)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 0.5"}  # a condition event
+    state.edited(structure=True)
+    kp = window.kpi_page
+    kp.events.setCurrentRow(list(state.data["events"]).index("served"))
+    qtbot.wait(100)
+    view = kp.form_scroll.viewport()
+    for b in kp.event_form.build_buttons:
+        right = b.mapTo(view, QPoint(b.width(), 0)).x()
+        assert b.isVisible() and right <= view.width(), (right, view.width())
+    assert kp.form_scroll.horizontalScrollBar().maximum() == 0  # the fields got narrower instead
