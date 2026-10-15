@@ -255,18 +255,21 @@ class SideBar(QWidget):
         if self._outside >= 2:
             self.close_panel()
 
-    def _clicked_elsewhere(self, obj) -> bool:
+    def _clicked_elsewhere(self, obj, global_pos: QPoint) -> bool:
         """A mouse press in this window, outside the strip and the pinned panel (not in a dialog or
-        a popup opened from the panel)."""
+        a popup opened from the panel). Judged by where the click is: a press on blank space in the
+        panel is passed on to the panel's parents, which lie outside it."""
         if not isinstance(obj, QWidget) or obj.window() is not self.host.window() or self._busy():
             return False
         panel = self.panels[self.current]
-        return not (obj is self or self.isAncestorOf(obj) or obj is panel or panel.isAncestorOf(obj))
+        inside = (QRect(self.mapToGlobal(QPoint(0, 0)), self.size()).contains(global_pos)
+                  or QRect(panel.mapToGlobal(QPoint(0, 0)), panel.size()).contains(global_pos))
+        return not inside
 
     def eventFilter(self, obj, e):
         if obj is self.host and e.type() == QEvent.Resize:
             self._place()
         elif (e.type() == QEvent.MouseButtonPress and self.pinned and self.current is not None
-              and self._clicked_elsewhere(obj)):
+              and self._clicked_elsewhere(obj, e.globalPosition().toPoint())):
             self.close_panel()
         return False
