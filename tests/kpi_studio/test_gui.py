@@ -65,7 +65,18 @@ def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     viewer.run_preview()
     qtbot.waitUntil(lambda: bool(viewer.preview is not None and viewer.preview_worker is None
                                  and viewer.worker is None), timeout=20000)
-    assert viewer.kpi_table.rowCount() > 10
+    assert not hasattr(viewer, "kpi_table")  # no separate KPI table: values sit in the plot's signal list
+    listed = [text for by_sig in viewer.kpi_lines.values() for lines in by_sig.values() for text, _ in lines]
+    assert listed and all(" = " in t for t in listed)
+    texts = [a.get_text() for a in viewer._artists if hasattr(a, "get_text")]
+    assert all(t in texts for t in listed)  # drawn in the lists right of the subplots
+    for ax, by_sig in viewer.kpi_lines.items():  # under a signal that subplot shows
+        assert all(sig in viewer._names[ax] for sig in by_sig)
+    n_res = sum(1 for r in viewer.preview["outcome"].results if r.event == "aeb" and r.occurrence == 1)
+    assert len(listed) + len(viewer.kpi_others) == n_res  # the rest are named in the status tip
+    if viewer.kpi_others:
+        assert "not plotted" in viewer.pv_status.text() and viewer.kpi_others[0] in viewer.pv_status.toolTip()
+    assert viewer.kpi_signals("aeb", "vehSpd") == ["egoSpeedKph"]
     run = window.run_page
     run.out_dir.setText(str(tmp_path / "out"))
     run.workers.setValue(1)

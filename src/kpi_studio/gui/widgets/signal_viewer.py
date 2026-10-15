@@ -21,11 +21,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
-    QHeaderView,
     QSizePolicy,
     QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -233,15 +230,8 @@ class SignalViewer(QWidget):
         self.canvas.setAcceptDrops(True)
         self.canvas.installEventFilter(self)
         split.addWidget(right)
-        self.kpi_table = QTableWidget(0, 5)
-        self.kpi_table.setHorizontalHeaderLabels(["KPI", "Value", "Unit", "Status", "Message"])
-        self.kpi_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        self.kpi_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.kpi_table.verticalHeader().setDefaultSectionSize(22)
-        self.kpi_table.setVisible(False)
-        split.addWidget(self.kpi_table)
         split.setStretchFactor(1, 1)
-        split.setSizes([230, 800, 360])
+        split.setSizes([230, 1160])
         lay.addWidget(split, 1)
 
         self.load_btn.clicked.connect(self.load)
@@ -569,11 +559,13 @@ class SignalViewer(QWidget):
         self.fig.clear()
         self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()
         self._legend = {}
+        self._names = {}        # axes -> signal name of each series (same order as _series)
+        self.kpi_lines = {}     # axes -> {signal: [(text, ok)]}: preview KPIs listed under their signal
+        self.kpi_others = []    # preview KPIs whose signals are not plotted
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
         self.separate_btn.setVisible(bool(self.host))
         if not loaded:
-            self.kpi_table.setVisible(False)
             self._message("Tick signals on the left to plot them")
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
@@ -603,6 +595,7 @@ class SignalViewer(QWidget):
                     enum = d.get("labels", {}).get(n)
                     self._series.setdefault(ax, []).append((label, t, y, enum))
                     self._legend.setdefault(ax, []).append((label, c, ls, d["units"].get(n, "")))
+                    self._names.setdefault(ax, []).append(n)
                     if enum and not multi:
                         self._enum_ticks(ax, enum, y)
             if ax not in self._enum_axes:
@@ -746,15 +739,15 @@ class SignalViewer(QWidget):
         self.pv_status.setText(f"{rec.label}: {len(out.occurrences)} occurrence(s)"
                                + (f", {n} of '{ev}'" if ev else "")
                                + (f"  ·  {len(issues)} warning(s)" if issues else ""))
-        self.pv_status.setToolTip("\n".join(issues))
+        self._issues_tip = "\n".join(issues)
+        self.pv_status.setToolTip(self._issues_tip)
         self.draw()
 
     def _decorate_preview(self, axes, loaded):
-        """Zoom to the chosen occurrence, shade it, mark its moments and list its KPIs."""
-        self.kpi_table.setRowCount(0)
+        """Zoom to the chosen occurrence, shade it, mark its moments and list its KPIs next to the signals
+        they read (KPIs of no plotted signal under the first subplot's list)."""
         ev = self.current_event()
         active = bool(self.preview and ev and any(r.name == self.preview["rec"] for r, _ in loaded))
-        self.kpi_table.setVisible(active)
         if not active:
             return
         out = self.preview["outcome"]
@@ -789,14 +782,44 @@ class SignalViewer(QWidget):
                 pad = 0.08 * (y1 - y0) or max(abs(y0) * 0.1, 0.5)
                 ax.set_ylim(y0 - pad, y1 + pad)
         res = [r for r in out.results if r.event == ev and r.occurrence == idx]
-        self.kpi_table.setRowCount(len(res))
-        for r, k in enumerate(res):
-            vals = [k.kpi, "" if k.value is None else f"{k.value:.3f}", k.unit, k.status, k.message]
-            for c, v in enumerate(vals):
-                item = QTableWidgetItem(v)
-                if c == 3 and k.status != Status.OK:
-                    item.setForeground(Qt.red)
-                self.kpi_table.setItem(r, c, item)
+        self._place_kpis(axes, res)
+
+    def kpi_signals(self, event: str, kpi: str) -> list[str]:
+        """The signals a KPI reads (its value or reduced expression), for listing it next to them."""
+        compiled = self.state.compiled
+        k = next((k for k in (compiled.kpis_for(event) if compiled else []) if k.name == kpi), None)
+        if k is None:
+            return []
+        deps = [*(sorted(k.value.deps) if k.value is not None else []),
+                *(sorted(k.of.deps) if k.of is not None else [])]
+        return [d for d in deps if d != "time"]
+
+    def _place_kpis(self, axes, results):
+        """Each KPI goes under the first plotted signal it reads; the others are listed in the status tip."""
+        others = []
+        for k in results:
+            ok = k.status == Status.OK
+            value = "—" if k.value is None else f"{k.value:.3f}"
+            text = f"{k.kpi} = {value}" + (f" {k.unit}" if k.unit and k.value is not None else "")
+            if not ok:
+                why = k.message or k.status
+                text += f"  ({why[:28] + '…' if len(why) > 29 else why})"
+            reads = self.kpi_signals(k.event, k.kpi)
+            spot = next(((ax, n) for n in reads for ax in axes if n in self._names.get(ax, [])), None)
+            if spot is None:
+                others.append(text)
+            else:
+                self.kpi_lines.setdefault(spot[0], {}).setdefault(spot[1], []).append((text, ok))
+        self.kpi_others = others
+        base = self.pv_status.text().split("  ·  KPIs")[0]
+        if others:
+            self.pv_status.setText(f"{base}  ·  KPIs of signals not plotted: {len(others)} (hover)")
+            self.pv_status.setToolTip("\n\n".join(filter(None, [
+                getattr(self, "_issues_tip", ""),
+                "Tick the signal a KPI reads to see its value next to it:\n" + "\n".join(others)])))
+        else:
+            self.pv_status.setText(base)
+            self.pv_status.setToolTip(getattr(self, "_issues_tip", ""))
 
     # ------------------------------------------------------------------ cursors
     def _on_press(self, event):
@@ -890,10 +913,30 @@ class SignalViewer(QWidget):
         for ax in self._axes:
             base = blended_transform_factory(ax.transAxes, ax.transAxes)
             row = 0
-            for (label, t, y, enum), (_, color, ls, unit) in zip(self._series.get(ax, []), self._legend.get(ax, [])):
-                def at(dx_in, rows):
-                    return base + ScaledTranslation(dx_in, -rows * line_h - 2 / 72, self.fig.dpi_scale_trans)
+            kpis = dict(self.kpi_lines.get(ax, {}))
 
+            room = ax.get_position().height * self.fig.get_figheight() / line_h  # text rows the subplot fits
+
+            def kpi_rows(sig, color):
+                nonlocal row
+                lines = kpis.pop(sig, [])
+                for n, (text, ok) in enumerate(lines):
+                    if row + 1 > room and n < len(lines):  # no room left: say how many are not shown
+                        self._artists.append(ax.text(1, 1, f"… {len(lines) - n} more KPI(s)", transform=at(0.28, row),
+                                                     fontsize=8, va="top", ha="left", color="#6b6b66",
+                                                     clip_on=False))
+                        row += 1
+                        return
+                    self._artists.append(ax.text(1, 1, text, transform=at(0.28, row), fontsize=8, va="top",
+                                                 ha="left", color="#1f1f1e" if ok else "#d03b3b", clip_on=False))
+                    row += 1
+
+            def at(dx_in, rows):
+                return base + ScaledTranslation(dx_in, -rows * line_h - 2 / 72, self.fig.dpi_scale_trans)
+
+            names = self._names.get(ax, [])
+            for i, ((label, t, y, enum), (_, color, ls, unit)) in enumerate(
+                    zip(self._series.get(ax, []), self._legend.get(ax, []))):
                 self._artists.append(ax.text(1, 1, "━━" if ls == "-" else "╍╍", transform=at(0.06, row),
                                              fontsize=8, va="top", ha="left", color=color, clip_on=False))
                 self._artists.append(ax.text(1, 1, label + (f" [{unit}]" if unit else ""), transform=at(0.28, row),
@@ -914,6 +957,8 @@ class SignalViewer(QWidget):
                                                  va="top", ha="left", family="monospace", color=color,
                                                  clip_on=False))
                     row += 1
+                if i < len(names):
+                    kpi_rows(names[i], color)  # the preview KPIs that read this signal
                 row += 0.35
 
     def shutdown(self):
