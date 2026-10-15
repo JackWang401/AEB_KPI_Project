@@ -1,11 +1,11 @@
-"""Step 2: pick signals from the channels found in the files, and define derived signals."""
+"""Channels side panel: pick signals from the channels found in the files, and define derived signals."""
 
 from __future__ import annotations
 
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,7 +29,7 @@ from src.kpi_studio.core.model import derived_to_yaml, signal_units
 from src.kpi_studio.core.rename import rename_signal_references
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets import context_menu
-from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit, matches
+from src.kpi_studio.gui.widgets.common import ExprEdit, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
@@ -83,7 +83,6 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
-    channels_requested = Signal()  # "Add from channels…": open the Channels side panel
     DER_COLS = ["Name", "Expression", "Unit", "Description"]
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
@@ -95,7 +94,7 @@ class SignalsPage(QWidget):
 
         split = QSplitter(Qt.Horizontal)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(*PAGE_MARGINS)
+        outer.setContentsMargins(0, 0, 0, 0)  # shown in the "Channels" side panel, which has its own margins
         outer.setSpacing(6)
         outer.addWidget(split, 1)
 
@@ -110,7 +109,7 @@ class SignalsPage(QWidget):
             table.horizontalHeader().setFixedHeight(26)
             table.setMinimumHeight(26 + 22 * min_rows + 4)
 
-        # ---- channels in the files: shown in the "Channels" side panel (filter and add button on one line)
+        # ---- left: channels in the files
         left = QWidget()
         left.setToolTip("Channels in the loaded files. Pick the ones you need and give each a short name. When "
                         "files name the same signal differently, list all channel names; the first one found "
@@ -131,7 +130,8 @@ class SignalsPage(QWidget):
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         ll.addWidget(self.tree, 1)
-        self.channels_panel = left
+        left.setMinimumWidth(220)
+        split.addWidget(left)
 
         # ---- right: profile signals, derived signals
         right = QWidget()
@@ -180,13 +180,14 @@ class SignalsPage(QWidget):
 
         vsplit.setSizes([300, 160])
         split.addWidget(right)
+        split.setSizes([360, 740])
 
         self.search.textChanged.connect(self.refresh_channels)
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         # right-click menus: every add / delete is in one
         context_menu.install(self.tree, item=lambda rows: [("Add as signal", self.add_selected_channels)])
         self.tree.setToolTip("Right-click a channel (or double-click it) to add it as a signal")
-        context_menu.install(self.sig_table, add=[("Add from channels…", self.channels_requested.emit)],
+        context_menu.install(self.sig_table,
                              item=lambda rows: [("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows",
                                                  self.delete_signal)])
         context_menu.install(self.der_table, add=[("Add…", self.add_derived)], item=self._derived_actions)

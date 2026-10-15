@@ -271,7 +271,7 @@ class ToolPalette(QWidget):
         self._names = list(self.names_fn()) if self.names_fn else []
         shown = [n for n in self._names if matches(needle, n)]
         if self.names_fn is not None:
-            top = QTreeWidgetItem([f"Signals ({len(self._names)}, from tab 2)"])
+            top = QTreeWidgetItem([f"Signals ({len(self._names)})"])
             top.setToolTip(0, "Double-click a signal to insert its name into the field you are editing")
             self.tree.addTopLevelItem(top)
             for n in shown:
@@ -280,7 +280,7 @@ class ToolPalette(QWidget):
                 item.setToolTip(0, self.doc_html(item))
                 top.addChild(item)
             if not self._names:
-                top.addChild(QTreeWidgetItem(["(add signals on the Signals tab)"]))
+                top.addChild(QTreeWidgetItem(["(add signals in the Channels panel)"]))
             top.setExpanded(True)
         labels = {"signal": "Signal tools", "condition": "Conditions", "moment": "Moments (rules)",
                   "reducer": "Reducers", "event": "Event presets"}
@@ -311,7 +311,7 @@ class ToolPalette(QWidget):
         spec = item.data(0, Qt.UserRole) if item else None
         name = item.data(0, Qt.UserRole + 1) if item else None
         if name:
-            return f"<b>{name}</b><br>Signal defined on the Signals tab. Double-click to insert it."
+            return f"<b>{name}</b><br>Signal defined in the Channels panel. Double-click to insert it."
         if spec is None:
             return ""
         params = "".join(

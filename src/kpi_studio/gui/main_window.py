@@ -103,15 +103,14 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.files_page = FilesPage(self.state, self.settings)
-        # one signal panel shared by tab 2 (signals) and tab 3 (event / KPI preview), shown below the tabs
+        # one signal panel below the tabs, shared by the Channels side panel and the event / KPI preview
         self.viewer = SignalViewer(self.state)
         self.signals_page = SignalsPage(self.state, viewer=self.viewer)
         self.kpi_page = KpiPage(self.state, viewer=self.viewer)
         self.run_page = RunPage(self.state, self.settings)
         self.offset_panel = OffsetPanel(self.state)
-        self.tabs.addTab(self.signals_page, "1  Signals")
-        self.tabs.addTab(self.kpi_page, "2  Events && KPIs")
-        self.tabs.addTab(self.run_page, "3  Plots && Run")
+        self.tabs.addTab(self.kpi_page, "1  Events && KPIs")
+        self.tabs.addTab(self.run_page, "2  Plots && Run")
         self.viewer_box = QGroupBox("Signal viewer && preview")
         vb = QVBoxLayout(self.viewer_box)
         vb.setContentsMargins(10, 10, 10, 10)
@@ -134,11 +133,10 @@ class MainWindow(QMainWindow):
         cl = QVBoxLayout(content)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self.central_split)
-        self.side_bar = SideBar(content)
+        self.side_bar = SideBar(content, settings=self.settings)
         self.side_bar.add_panel("Files", self.files_page, 640)
-        self.side_bar.add_panel("Channels", self.signals_page.channels_panel, 440)
+        self.side_bar.add_panel("Channels", self.signals_page, 1100)  # channels, signals, derived signals
         self.side_bar.add_panel("Time offset", self.offset_panel, 380)
-        self.signals_page.channels_requested.connect(lambda: self.side_bar.open(1, sticky=True))
         root = QWidget()
         rl = QHBoxLayout(root)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -257,7 +255,7 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(self.kpi_page)
             self.kpi_page.select_event(name)
         elif section in ("signals", "derived"):
-            self.tabs.setCurrentWidget(self.signals_page)
+            self.side_bar.open(1, sticky=True)
             table = self.signals_page.sig_table if section == "signals" else self.signals_page.der_table
             for r in range(table.rowCount()):
                 if table.item(r, 0) is not None and table.item(r, 0).text() == name:
@@ -391,7 +389,7 @@ class MainWindow(QMainWindow):
         for edit in self.findChildren(ExprEdit):
             edit.check()
 
-    VIEWER_TABS = (0, 1)  # Signals, Events & KPIs
+    VIEWER_TABS = (0,)  # Events & KPIs
 
     def _tab_changed(self, index: int):
         self.viewer_wrap.setVisible(index in self.VIEWER_TABS)

@@ -7,6 +7,7 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -740,10 +741,14 @@ class KpiPage(QWidget):
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
         # right-click: Add anywhere in the list, Delete on an item
+        for lst in (self.events, self.kpis):
+            lst.setSelectionMode(QAbstractItemView.ExtendedSelection)  # several can be deleted at once
         context_menu.install(self.events, add=[("Add event", self.new_event)],
-                             item=lambda rows: [("Delete event", self.delete_event)])
+                             item=lambda rows: [("Delete event" if len(rows) == 1 else f"Delete {len(rows)} events",
+                                                 self.delete_event)])
         context_menu.install(self.kpis, add=[("Add KPI", self.new_kpi)],
-                             item=lambda rows: [("Delete KPI", self.delete_kpi)])
+                             item=lambda rows: [("Delete KPI" if len(rows) == 1 else f"Delete {len(rows)} KPIs",
+                                                 self.delete_kpi)])
 
         state.profile_changed.connect(self.refresh)
         state.validated.connect(self.on_validated)
@@ -824,17 +829,22 @@ class KpiPage(QWidget):
         self.state.edited(structure=True)
         self.select_event(f"event{i}")
 
+    def _selected_rows(self, lst) -> list[int]:
+        rows = sorted({lst.row(i) for i in lst.selectedItems()})
+        return rows or ([lst.currentRow()] if lst.currentRow() >= 0 else [])
+
     def delete_event(self):
-        item = self.events.currentItem()
-        if not item:
+        names = [self.events.item(r).text() for r in self._selected_rows(self.events)]
+        if not names:
             return
-        name = item.text()
-        used = [k.get("name") for k in self.state.data.get("kpis", []) if k.get("event") == name]
+        used = [k.get("name") for k in self.state.data.get("kpis", []) if k.get("event") in names]
+        what = f"'{names[0]}'" if len(names) == 1 else f"these {len(names)} events"
         if used and QMessageBox.question(self, "Delete event",
-                                         f"KPIs {', '.join(used)} use '{name}'. Delete the event anyway?") \
+                                         f"KPIs {', '.join(used)} use {what}. Delete anyway?") \
                 != QMessageBox.Yes:
             return
-        del self.state.data["events"][name]
+        for name in names:
+            del self.state.data["events"][name]
         self.stack.setCurrentWidget(self.empty)
         self.state.edited(structure=True)
 
@@ -850,10 +860,11 @@ class KpiPage(QWidget):
         self.kpis.setCurrentRow(len(kpis) - 1)
 
     def delete_kpi(self):
-        row = self.kpis.currentRow()
-        if row < 0:
+        rows = self._selected_rows(self.kpis)
+        if not rows:
             return
-        del self.state.data["kpis"][row]
+        for row in reversed(rows):
+            del self.state.data["kpis"][row]
         self.stack.setCurrentWidget(self.empty)
         self.kpi_form.index = None
         self.state.edited(structure=True)

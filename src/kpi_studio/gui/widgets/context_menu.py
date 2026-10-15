@@ -15,19 +15,17 @@ Action = tuple[str, Callable[[], object]]
 
 
 def _select(view: QAbstractItemView, pos: QPoint) -> None:
-    """Make the right-clicked row part of the selection (keep a multi-selection it belongs to)."""
+    """Make the right-clicked row part of the selection; a multi-selection it belongs to (whole rows
+    or just some cells of them) is kept, so its actions apply to every selected row."""
     index = view.indexAt(pos)
     if not index.isValid():
         return
     sm = view.selectionModel()
-    if isinstance(view, QTreeView):
-        if not sm.isSelected(index):
-            view.setCurrentIndex(index)
+    if any(i.row() == index.row() and i.parent() == index.parent() for i in sm.selectedIndexes()):
         return
-    if not sm.isRowSelected(index.row(), index.parent()):
-        if isinstance(view, QTableView):
-            view.selectRow(index.row())
-        view.setCurrentIndex(index)
+    if isinstance(view, QTableView):
+        view.selectRow(index.row())
+    view.setCurrentIndex(index)
 
 
 def build_menu(view: QAbstractItemView, pos: Optional[QPoint],
@@ -41,7 +39,7 @@ def build_menu(view: QAbstractItemView, pos: Optional[QPoint],
         _select(view, pos)
         row = view.indexAt(pos).row()
     elif row is not None and row >= 0 and isinstance(view, QTableView):
-        if not view.selectionModel().isRowSelected(row, view.rootIndex()):
+        if not any(i.row() == row for i in view.selectionModel().selectedIndexes()):
             view.selectRow(row)
     menu = QMenu(view)
     if row is not None and row >= 0 and item is not None:

@@ -432,9 +432,9 @@ def test_flat_kpi_axis_is_widened():
     assert fig.layout.xaxis.range is None     # a normal spread stays automatic
 
 
-def test_signal_panel_is_shared_by_signals_and_kpi_tabs(window):
+def test_signal_panel_is_shown_with_the_kpi_tab(window):
     window.show()
-    for index, visible in [(0, True), (1, True), (2, False)]:
+    for index, visible in [(0, True), (1, False)]:
         window.tabs.setCurrentIndex(index)
         assert window.viewer_box.isVisible() == visible
 
@@ -643,7 +643,7 @@ def test_right_click_deletes_signal_and_derived(qtbot, window, mf4_dir):
 
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
-    for table, section, labels in ((page.sig_table, "signals", ["Delete", "", "Add from channels…"]),
+    for table, section, labels in ((page.sig_table, "signals", ["Delete"]),
                                    (page.der_table, "derived", ["Edit…", "Delete", "", "Add…"])):
         name = table.item(0, 0).data(Qt.UserRole)
         name = name[0] if isinstance(name, tuple) else table.item(0, 0).text()
@@ -673,17 +673,80 @@ def test_right_click_edits_and_adds_derived(qtbot, window, mf4_dir, monkeypatch)
     assert edited[-1] == "added" and _texts(menu_for(table, row=-1)) == ["Add…"]
 
 
-def test_add_from_channels_opens_the_channels_panel(qtbot, window, mf4_dir):
+def test_side_panel_width_can_be_dragged_and_is_remembered(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPointF, QSettings
+    from PySide6.QtGui import QMouseEvent
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(2)
+    grip = bar.grips[2]
+    w0 = bar.panels[2].width()
+    assert grip.geometry().right() == w0 - 1
+    def mouse(kind, x):
+        return QMouseEvent(kind, QPointF(2, 50), QPointF(x, 50), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    grip.mousePressEvent(mouse(QMouseEvent.Type.MouseButtonPress, 100))
+    bar._over = lambda: False
+    bar._check_mouse(); bar._check_mouse()
+    assert bar.current == 2  # dragging keeps it open
+    grip.mouseMoveEvent(mouse(QMouseEvent.Type.MouseMove, 250))
+    grip.mouseReleaseEvent(mouse(QMouseEvent.Type.MouseButtonRelease, 250))
+    assert bar.panels[2].width() == w0 + 150
+    assert int(window.settings.value("side_panels/width_time_offset")) == w0 + 150
+    bar.set_width(2, 10)
+    assert bar.widths[2] == bar.MIN_WIDTH
+    assert isinstance(window.settings, QSettings)
+
+
+def test_go_to_a_signal_issue_opens_the_channels_panel(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.show()
+    window.go_to("signals.egoSpeed")
+    assert window.side_bar.current == 1 and window.signals_page.sig_table.currentRow() == 0
+
+
+def test_delete_several_selected_signals_and_events(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QItemSelectionModel
+
     from src.kpi_studio.gui.widgets.context_menu import menu_for
 
     _load(qtbot, window, mf4_dir)
-    window.show()
-    menu_for(window.signals_page.sig_table, row=-1).actions()[0].trigger()
-    bar = window.side_bar
-    assert bar.current == 1 and bar.panels[1].isVisible()
-    bar._over = lambda: False
-    bar._check_mouse(); bar._check_mouse(); bar._check_mouse()
-    assert bar.current == 1  # stays open until the mouse has been over it
+    page = window.signals_page
+    table = page.sig_table
+    names = [table.item(r, 0).data(Qt.UserRole)[0] for r in (1, 3)]
+    sm = table.selectionModel()
+    sm.clearSelection()
+    for r in (1, 3):  # cells, not whole rows (cmd-click on cells)
+        sm.select(table.model().index(r, 1), QItemSelectionModel.Select)
+    menu = menu_for(table, table.visualRect(table.model().index(3, 1)).center())
+    assert _texts(menu) == ["Delete 2 rows"]
+    menu.actions()[0].trigger()
+    assert not set(names) & set(window.state.data["signals"])
+    kp = window.kpi_page
+    for name in ("e1", "e2", "e3"):
+        window.state.data["events"][name] = {"start": "egoSpeed > 1"}
+    window.state.edited(structure=True)
+    ev = kp.events
+    rows = [r for r in range(ev.count()) if ev.item(r).text() in ("e1", "e3")]
+    ev.clearSelection()
+    for r in rows:
+        ev.item(r).setSelected(True)
+    menu = menu_for(ev, ev.visualItemRect(ev.item(rows[0])).center())
+    assert _texts(menu) == ["Delete 2 events", "", "Add event"]
+    menu.actions()[0].trigger()
+    assert "e1" not in window.state.data["events"] and "e3" not in window.state.data["events"]
+    assert "e2" in window.state.data["events"]
+    k = kp.kpis
+    n = k.count()
+    k.clearSelection()
+    k.item(0).setSelected(True)
+    k.item(2).setSelected(True)
+    menu = menu_for(k, k.visualItemRect(k.item(2)).center())
+    assert _texts(menu)[0] == "Delete 2 KPIs"
+    menu.actions()[0].trigger()
+    assert k.count() == n - 2
 
 
 def test_channel_tree_right_click_adds_signal(qtbot, window, mf4_dir):
@@ -794,11 +857,11 @@ def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch)
     window.show()
     bar = window.side_bar
     assert [t.text for t in bar.tabs] == ["Files", "Channels", "Time offset"]
-    assert [window.tabs.tabText(i) for i in range(window.tabs.count())] == \
-        ["1  Signals", "2  Events && KPIs", "3  Plots && Run"]
+    assert [window.tabs.tabText(i) for i in range(window.tabs.count())] == ["1  Events && KPIs", "2  Plots && Run"]
     assert all(not p.isVisible() for p in bar.panels)  # hidden until hovered
     bar.tabs[1].hovered.emit()
     assert bar.panels[1].isVisible() and window.signals_page.tree.isVisible()
+    assert window.signals_page.sig_table.isVisible() and window.signals_page.der_table.isVisible()
     assert bar.panels[1].height() == bar.host.height()
     bar.tabs[2].hovered.emit()  # another tab swaps the panel
     assert bar.panels[2].isVisible() and not bar.panels[1].isVisible()

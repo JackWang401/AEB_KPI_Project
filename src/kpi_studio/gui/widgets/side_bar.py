@@ -63,14 +63,52 @@ class VerticalTab(QWidget):
         p.drawText(QRect(0, 0, self.height(), self.width()), Qt.AlignCenter, self.text)
 
 
+class ResizeGrip(QWidget):
+    """The right edge of a side panel: drag it to change the panel's width."""
+
+    def __init__(self, bar: "SideBar", index: int, parent: QWidget):
+        super().__init__(parent)
+        self.bar, self.index = bar, index
+        self.setCursor(Qt.SizeHorCursor)
+        self.setToolTip("Drag to resize")
+        self._start = None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._start = (e.globalPosition().x(), self.bar.widths[self.index])
+            self.bar.dragging = True
+
+    def mouseMoveEvent(self, e):
+        if self._start is not None:
+            x0, w0 = self._start
+            self.bar.set_width(self.index, int(w0 + e.globalPosition().x() - x0))
+
+    def mouseReleaseEvent(self, e):
+        if self._start is not None:
+            self._start = None
+            self.bar.dragging = False
+            self.bar.save_width(self.index)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#c7c7cc"))
+        h = 36
+        p.drawRoundedRect(QRect(self.width() // 2 - 1, (self.height() - h) // 2, 3, h), 1.5, 1.5)
+
+
 class SideBar(QWidget):
     """The strip of vertical tabs. Panels are added with add_panel and float over `host`."""
 
     HIDE_DELAY_MS = 350
+    MIN_WIDTH = 260
+    GRIP = 8
 
-    def __init__(self, host: QWidget, parent=None):
+    def __init__(self, host: QWidget, parent=None, settings=None):
         super().__init__(parent)
         self.host = host
+        self.settings = settings
+        self.dragging = False
         self.setFixedWidth(STRIP_WIDTH)
         self.setObjectName("sideStrip")
         self.setAttribute(Qt.WA_StyledBackground)
@@ -81,6 +119,8 @@ class SideBar(QWidget):
         self.tabs: list[VerticalTab] = []
         self.panels: list[QFrame] = []
         self.widths: list[int] = []
+        self.titles: list[str] = []
+        self.grips: list[ResizeGrip] = []
         self.current: int | None = None
         self._outside = 0
         self._sticky = False
@@ -97,7 +137,7 @@ class SideBar(QWidget):
         frame = QFrame(self.host)
         frame.setObjectName("sidePanel")
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setContentsMargins(14, 10, 14 + self.GRIP, 14)
         lay.setSpacing(6)
         head = QLabel(title)
         head.setObjectName("sectionTitle")
@@ -111,8 +151,25 @@ class SideBar(QWidget):
         frame.hide()
         self.tabs.append(tab)
         self.panels.append(frame)
+        self.titles.append(title)
+        self.grips.append(ResizeGrip(self, i, frame))
+        if self.settings is not None:
+            width = int(self.settings.value(self._key(i), width))
         self.widths.append(width)
         return i
+
+    # ------------------------------------------------------------------ width
+    def _key(self, i: int) -> str:
+        return "side_panels/width_" + self.titles[i].replace(" ", "_").lower()
+
+    def set_width(self, i: int, width: int):
+        self.widths[i] = max(self.MIN_WIDTH, min(width, max(self.MIN_WIDTH, self.host.width() - 40)))
+        if self.current == i:
+            self._place()
+
+    def save_width(self, i: int):
+        if self.settings is not None:
+            self.settings.setValue(self._key(i), self.widths[i])
 
     # ------------------------------------------------------------------ open / close
     def open(self, i: int, sticky: bool = False):
@@ -140,8 +197,12 @@ class SideBar(QWidget):
     def _place(self):
         if self.current is None:
             return
-        width = min(self.widths[self.current], max(260, self.host.width() - 40))
-        self.panels[self.current].setGeometry(0, 0, width, self.host.height())
+        width = min(self.widths[self.current], max(self.MIN_WIDTH, self.host.width() - 40))
+        h = self.host.height()
+        self.panels[self.current].setGeometry(0, 0, width, h)
+        grip = self.grips[self.current]
+        grip.setGeometry(width - self.GRIP, 0, self.GRIP, h)
+        grip.raise_()
 
     def _over(self) -> bool:
         pos = QCursor.pos()
@@ -156,7 +217,7 @@ class SideBar(QWidget):
     def _check_mouse(self):
         if self.current is None:
             return
-        if self._over() or self._busy():
+        if self.dragging or self._over() or self._busy():
             self._outside = 0
             self._sticky = False
             return
