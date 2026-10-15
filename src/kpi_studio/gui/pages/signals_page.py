@@ -121,6 +121,9 @@ class SignalsPage(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter… (wildcards: * ?  e.g. lmc*it)")
         head.addWidget(self.search, 1)
+        for b in context_menu.plus_minus(add=self.add_selected_channels,
+                                         add_tip="Add the selected channels as signals"):
+            head.addWidget(b)
         ll.addLayout(head)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Channel", "Unit", "Files"])
@@ -149,6 +152,8 @@ class SignalsPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(title("Signals", "Signals this profile reads from the files"))
         row.addStretch(1)
+        for b in context_menu.plus_minus(remove=self.delete_signal, remove_tip="Delete the selected signals"):
+            row.addWidget(b)
         sl.addLayout(row)
         self.sig_table = QTableWidget(0, len(self.SIG_COLS))
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
@@ -168,6 +173,10 @@ class SignalsPage(QWidget):
         dhint.setObjectName("hint")
         drow.addWidget(dhint)
         drow.addStretch(1)
+        for b in context_menu.plus_minus(add=self.add_derived, remove=self.delete_derived,
+                                         add_tip="Add a derived signal: a signal + a method",
+                                         remove_tip="Delete the selected derived signals"):
+            drow.addWidget(b)
         dl.addLayout(drow)
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
@@ -593,6 +602,12 @@ class EnumDialog(QDialog):
         info = QLabel("Use the text in conditions, e.g. " + signal + ' == "' + (next(iter(enum), "") or "TEXT") + '"')
         info.setWordWrap(True)
         lay.addWidget(info)
+        erow = QHBoxLayout()
+        erow.addStretch(1)
+        for b in context_menu.plus_minus(add=lambda: self._add("", ""), remove=self.delete_selected,
+                                         add_tip="Add a value", remove_tip="Delete the selected values"):
+            erow.addWidget(b)
+        lay.addLayout(erow)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Value", "Text"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)

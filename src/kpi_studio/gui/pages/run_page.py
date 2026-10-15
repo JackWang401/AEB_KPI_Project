@@ -120,8 +120,18 @@ class RunPage(QWidget):
         lay.setSpacing(12)
 
         # ---- plots
-        pbox = QGroupBox("Plots (written as interactive HTML next to the Excel file)")
+        pbox = QGroupBox()
+        pbox.setObjectName("plainBox")  # no title strip: the title row inside carries the buttons
         pl = QVBoxLayout(pbox)
+        prow = QHBoxLayout()  # title with + / − in the top right corner
+        ptitle = QLabel("Plots (written as interactive HTML next to the Excel file)")
+        ptitle.setObjectName("sectionTitle")
+        prow.addWidget(ptitle)
+        prow.addStretch(1)
+        for b in context_menu.plus_minus(add=self.new_plot, remove=self.delete_plot, add_tip="Add a plot",
+                                         remove_tip="Delete the selected plots"):
+            prow.addWidget(b)
+        pl.addLayout(prow)
         self.plots = QTableWidget(0, len(self.PLOT_COLS))
         self.plots.setHorizontalHeaderLabels(self.PLOT_COLS)
         self.plots.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)

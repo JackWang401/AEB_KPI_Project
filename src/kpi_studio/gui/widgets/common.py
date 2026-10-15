@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.expr import ExprError, compile_expr
+from src.kpi_studio.gui.widgets.context_menu import plus_minus
 
 # outer padding of every page (left, top, right, bottom), macOS-style generous margins
 PAGE_MARGINS = (20, 16, 20, 16)
@@ -356,6 +357,12 @@ class ConditionBuilder(QDialog):
                       "from the value;\n'changes from → to' takes two values, e.g. 0, 3.\n"
                       "Right-click a row's operator, or the space around the rows, to add or delete rows.")
         lay.addWidget(info)
+        top = QHBoxLayout()  # + / − in the top right corner
+        top.addStretch(1)
+        for b in plus_minus(add=self.add_row, remove=lambda: self.delete_row(len(self.rows) - 1),
+                            add_tip="Add a row", remove_tip="Delete the last row"):
+            top.addWidget(b)
+        lay.addLayout(top)
         self.rows_box = QVBoxLayout()
         lay.addLayout(self.rows_box)
         bar = QHBoxLayout()

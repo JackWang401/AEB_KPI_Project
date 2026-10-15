@@ -56,6 +56,9 @@ class FilesPage(QWidget):
         self.summary.setObjectName("hint")
         lay.addWidget(self.summary)
 
+        self.header_buttons = context_menu.plus_minus(
+            remove=self.remove_selected, add_tip="Add files or a folder", remove_tip="Remove the selected files",
+            add_menu=[("Add files…", self.pick_files), ("Add folder…", self.pick_folder)])
         context_menu.install(
             self.table,
             add=[("Add files…", self.pick_files), ("Add folder…", self.pick_folder),

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QGraphicsDropShadowEffect,
+    QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
@@ -129,7 +130,7 @@ class SideBar(QWidget):
         self._timer.timeout.connect(self._check_mouse)
         host.installEventFilter(self)
 
-    def add_panel(self, title: str, widget: QWidget, width: int) -> int:
+    def add_panel(self, title: str, widget: QWidget, width: int, buttons=()) -> int:
         i = len(self.tabs)
         tab = VerticalTab(title)
         tab.hovered.connect(lambda i=i: self.open(i))
@@ -139,9 +140,14 @@ class SideBar(QWidget):
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(14, 10, 14 + self.GRIP, 14)
         lay.setSpacing(6)
-        head = QLabel(title)
-        head.setObjectName("sectionTitle")
-        lay.addWidget(head)
+        head = QHBoxLayout()
+        label = QLabel(title)
+        label.setObjectName("sectionTitle")
+        head.addWidget(label)
+        head.addStretch(1)
+        for b in buttons:  # + / − in the top right corner
+            head.addWidget(b)
+        lay.addLayout(head)
         lay.addWidget(widget, 1)
         shadow = QGraphicsDropShadowEffect(frame)
         shadow.setBlurRadius(24)

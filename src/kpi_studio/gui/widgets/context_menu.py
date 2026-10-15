@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Callable, Iterable, Optional
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMenu, QTableView, QTreeView
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMenu, QPushButton, QTableView, QTreeView
 
 Action = tuple[str, Callable[[], object]]
 
@@ -94,3 +94,34 @@ def install(view: QAbstractItemView, add: Iterable[Action] = (),
         ("Right-click a row for its actions" if item is not None else "")
     if tip and not view.toolTip():
         view.setToolTip(tip)
+
+
+def plus_minus(add: Optional[Callable[[], object]] = None, remove: Optional[Callable[[], object]] = None,
+               add_tip: str = "Add", remove_tip: str = "Delete the selected rows",
+               add_menu: Iterable[Action] = ()) -> list[QPushButton]:
+    """Small + / − buttons for the top right of a section (the right-click menus offer the same).
+
+    `add_menu`: several ways to add (e.g. files or a folder); + then opens a menu with them."""
+    buttons = []
+    add_menu = list(add_menu)
+    if add is not None or add_menu:
+        plus = QPushButton("+")
+        plus.setToolTip(add_tip)
+        if add_menu:
+            menu = QMenu(plus)
+            for label, fn in add_menu:
+                menu.addAction(label).triggered.connect(lambda *_, fn=fn: fn())
+            plus.setMenu(menu)
+            plus.setStyleSheet("QPushButton::menu-indicator { width: 0; }")
+        else:
+            plus.clicked.connect(lambda *_: add())
+        buttons.append(plus)
+    if remove is not None:
+        minus = QPushButton("−")
+        minus.setToolTip(remove_tip)
+        minus.clicked.connect(lambda *_: remove())
+        buttons.append(minus)
+    for b in buttons:
+        b.setFixedSize(30, 26)
+        b.setStyleSheet(b.styleSheet() + " QPushButton { padding: 0; font-size: 15px; }")
+    return buttons

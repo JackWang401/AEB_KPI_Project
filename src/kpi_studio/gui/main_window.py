@@ -65,6 +65,7 @@ QListWidget::item { padding: 3px 8px; border-radius: 5px; }
 QListWidget::item:selected { background: #007aff; color: white; }
 QGroupBox { font-weight: 600; background: #ffffff; border: 1px solid #e5e5ea; border-radius: 10px;
             margin-top: 22px; padding: 10px 8px 8px 8px; }
+QGroupBox#plainBox { margin-top: 0; padding-top: 6px; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 4px; padding: 0 0 4px 0;
                    color: #1d1d1f; }
 QLabel { background: transparent; }
@@ -134,7 +135,7 @@ class MainWindow(QMainWindow):
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self.central_split)
         self.side_bar = SideBar(content, settings=self.settings)
-        self.side_bar.add_panel("Files", self.files_page, 640)
+        self.side_bar.add_panel("Files", self.files_page, 640, buttons=self.files_page.header_buttons)
         self.side_bar.add_panel("Channels", self.signals_page, 1100)  # channels, signals, derived signals
         self.side_bar.add_panel("Time offset", self.offset_panel, 380)
         root = QWidget()

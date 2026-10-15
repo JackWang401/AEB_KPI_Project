@@ -896,3 +896,30 @@ def test_events_and_kpis_right_click_menus(qtbot, window, mf4_dir):
     before = len(window.state.data["events"])
     blank.actions()[0].trigger()
     assert len(window.state.data["events"]) == before + 1
+
+
+def test_plus_minus_buttons_in_every_section(qtbot, window, mf4_dir):
+    from PySide6.QtWidgets import QPushButton
+
+    _load(qtbot, window, mf4_dir)
+
+    def pm(widget):
+        return [b for b in widget.findChildren(QPushButton) if b.text() in ("+", "−")]
+
+    assert [b.text() for b in window.files_page.header_buttons] == ["+", "−"]
+    assert [a.text() for a in window.files_page.header_buttons[0].menu().actions()] == ["Add files…", "Add folder…"]
+    assert len(pm(window.signals_page)) == 4  # channels +, signals −, derived + −
+    assert len(pm(window.kpi_page)) >= 6  # events, KPIs, moments
+    assert len(pm(window.run_page)) == 2  # plots
+    page = window.kpi_page
+    n = len(window.state.data["kpis"])
+    plus = next(b for b in pm(page) if b.text() == "+" and b.toolTip() == "Add a KPI")
+    plus.click()
+    assert len(window.state.data["kpis"]) == n + 1
+    minus = next(b for b in pm(page) if b.toolTip() == "Delete the selected KPIs")
+    minus.click()
+    assert len(window.state.data["kpis"]) == n
+    files_minus = window.files_page.header_buttons[1]
+    window.files_page.table.selectRow(0)
+    files_minus.click()
+    assert len(window.state.files) == 1

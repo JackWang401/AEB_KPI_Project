@@ -141,8 +141,19 @@ class EventForm(QWidget):
         form.addRow("Window", win)
         lay.addLayout(form)
 
-        box = QGroupBox("Moments: the exact instants KPIs are read at (start, end, window_start, window_end are built in)")
+        box = QGroupBox()
+        box.setObjectName("plainBox")  # no title strip: the title row inside carries the buttons
         bl = QVBoxLayout(box)
+        mrow = QHBoxLayout()  # title with + / − in the top right corner
+        mtitle = QLabel("Moments: the exact instants KPIs are read at (start, end, window_start, window_end "
+                        "are built in)")
+        mtitle.setObjectName("sectionTitle")
+        mrow.addWidget(mtitle)
+        mrow.addStretch(1)
+        for b in context_menu.plus_minus(add=self.add_moment, remove=self.delete_moment, add_tip="Add a moment",
+                                         remove_tip="Delete the selected moments"):
+            mrow.addWidget(b)
+        bl.addLayout(mrow)
         self.moments = QTableWidget(0, 4)
         self.moments.setHorizontalHeaderLabels(["Name", "Rule", "Expression / target moment", "Options"])
         self.moments.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -682,19 +693,23 @@ class KpiPage(QWidget):
             lab.setObjectName("sectionTitle")
             row.addWidget(lab)
             row.addStretch(1)
-            for b, tip in buttons:
-                b.setToolTip(tip)
-                b.setFixedSize(30, 26)
-                b.setStyleSheet("QPushButton { padding: 0; font-size: 15px; }")
+            for b in buttons:
                 row.addWidget(b)
             return row
 
-        ll.addLayout(header("Events", []))
+        ll.addLayout(header("Events", context_menu.plus_minus(
+            add=self.new_event, remove=self.delete_event, add_tip="Add an event",
+            remove_tip="Delete the selected events")))
         self.events = QListWidget()
         self.events.setMinimumHeight(52)
         ll.addWidget(self.events, 1)
         self.up, self.down = QPushButton("↑"), QPushButton("↓")
-        krow = header("KPIs", [(self.up, "Move up"), (self.down, "Move down")])
+        for b, tip in ((self.up, "Move up"), (self.down, "Move down")):
+            b.setToolTip(tip)
+            b.setFixedSize(30, 26)
+            b.setStyleSheet("QPushButton { padding: 0; font-size: 15px; }")
+        krow = header("KPIs", context_menu.plus_minus(add=self.new_kpi, remove=self.delete_kpi, add_tip="Add a KPI",
+                                                      remove_tip="Delete the selected KPIs") + [self.up, self.down])
         ll.addLayout(krow)
         self.kpis = QListWidget()
         self.kpis.setMinimumHeight(60)
