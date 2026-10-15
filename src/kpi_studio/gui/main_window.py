@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QFileDialog,
     QGroupBox,
@@ -29,6 +30,7 @@ from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
+from src.kpi_studio.gui.widgets import columns
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit
 from src.kpi_studio.gui.widgets.side_bar import SideBar
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
@@ -90,6 +92,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, settings: QSettings | None = None, parent=None):
         super().__init__(parent)
+        columns.install(QApplication.instance())  # draggable columns, full text on hover
         self.settings = settings or QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
         if self.settings.value("tools/user_enabled", False, type=bool):
             folder = self.settings.value("tools/user_folder", "")

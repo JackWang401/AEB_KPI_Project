@@ -922,3 +922,40 @@ def test_plus_minus_buttons_in_every_section(qtbot, window, mf4_dir):
     window.files_page.table.selectRow(0)
     files_minus.click()
     assert len(window.state.files) == 1
+
+
+def test_every_column_can_be_dragged_and_cut_text_shows_on_hover(qtbot, window, mf4_dir):
+    from PySide6.QtWidgets import QHeaderView
+
+    from src.kpi_studio.gui.widgets import columns
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Channels"))
+    table = window.signals_page.sig_table
+    h = table.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    assert all(h.sectionResizeMode(c) == QHeaderView.Interactive for c in range(h.count()))
+    sizer = h._column_sizer
+    sizer.fit()
+    assert h.sectionSize(1) >= columns.MIN_STRETCH  # the stretching column still takes the free width
+    # the user drags a column edge: that width stays, even when the table refills
+    sizer._pressed = True
+    h.resizeSection(0, 50)
+    sizer._pressed = False
+    assert sizer.user_sized
+    window.state.edited(structure=True)
+    qtbot.wait(50)
+    assert h.sectionSize(0) == 50
+    # a cut-off name shows in full on hover; one that fits keeps its own tooltip
+    name = table.item(0, 0).text()
+    pos = table.visualRect(table.model().index(0, 0)).center()
+    assert columns.tip_at(table, pos).startswith(name)
+    h.resizeSection(0, 400)
+    assert columns.tip_at(table, table.visualRect(table.model().index(0, 0)).center()) is None
+    h.resizeSection(1, 60)
+    hpos = h.sectionViewportPosition(1) + 10
+    from PySide6.QtCore import QPoint
+    assert columns.tip_at(h, QPoint(hpos, 5)) == table.horizontalHeaderItem(1).text()
