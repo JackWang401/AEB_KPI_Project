@@ -6,8 +6,8 @@ or header whose text is cut off shows its full text on hover."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QToolTip
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QToolTip
 
 TIP_FONT_PX = 13  # the size of the text in the tables
 
@@ -155,6 +155,31 @@ def tip_at(view: QAbstractItemView, pos) -> str | None:
     return _cell_tip(view, pos)
 
 
+def cell_rect(view: QAbstractItemView, pos) -> QRect:
+    """The cell (or header section) at viewport `pos`, in viewport coordinates."""
+    if isinstance(view, QHeaderView):
+        s = view.logicalIndexAt(pos)
+        if view.orientation() == Qt.Horizontal:
+            return QRect(view.sectionViewportPosition(s), 0, view.sectionSize(s), view.height())
+        return QRect(0, view.sectionViewportPosition(s), view.width(), view.sectionSize(s))
+    return view.visualRect(view.indexAt(pos))
+
+
+def _tip_label():
+    return next((w for w in QApplication.topLevelWidgets()
+                 if w.metaObject().className() == "QTipLabel" and w.isVisible()), None)
+
+
+def show_tip(viewport, rect: QRect, text: str) -> None:
+    """Show `text` right under the cut-off cell `rect`, starting where its text starts (not at the
+    mouse pointer); it hides once the mouse leaves the cell."""
+    below = viewport.mapToGlobal(rect.bottomLeft()) + QPoint(0, 2)
+    QToolTip.showText(below, text, viewport, rect)
+    label = _tip_label()
+    if label is not None:
+        label.move(below)
+
+
 class _AppFilter(QObject):
     def eventFilter(self, obj, e):
         t = e.type()
@@ -162,8 +187,12 @@ class _AppFilter(QObject):
             view = obj.parent() if obj is not None else None
             if isinstance(view, QAbstractItemView) and obj is view.viewport():
                 tip = tip_at(view, e.pos())
+                if not tip and not isinstance(view, QHeaderView):  # a cell's own tip goes there too
+                    index = view.indexAt(e.pos())
+                    own = index.data(Qt.ToolTipRole) if index.isValid() else None
+                    tip = str(own) if own else None
                 if tip:
-                    QToolTip.showText(e.globalPos(), tip, obj)
+                    show_tip(obj, cell_rect(view, e.pos()), tip)
                     return True
         elif t == QEvent.Show and isinstance(obj, QHeaderView):
             make_resizable(obj)

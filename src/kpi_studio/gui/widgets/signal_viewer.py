@@ -226,7 +226,7 @@ class SignalViewer(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         self.fig, self.canvas, Toolbar = make_canvas()
         self.fig.set_layout_engine("none")  # margins are set in pixels (_apply_layout)
-        self.toolbar = Toolbar(self.canvas, right)
+        self.toolbar = Toolbar(self.canvas, right, coordinates=False)  # no (x, y) readout
         self.toolbar.setIconSize(QSize(18, 18))  # compact: leave the height to the plots
         rl.addWidget(self.toolbar)
         rl.addWidget(self.canvas, 1)  # subplots share the panel height (no scrolling)

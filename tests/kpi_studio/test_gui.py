@@ -1059,3 +1059,30 @@ def test_build_buttons_stay_in_view_in_a_narrow_events_panel(qtbot, window, mf4_
         right = b.mapTo(view, QPoint(b.width(), 0)).x()
         assert b.isVisible() and right <= view.width(), (right, view.width())
     assert kp.form_scroll.horizontalScrollBar().maximum() == 0  # the fields got narrower instead
+
+
+def test_cut_off_text_tip_sits_under_the_cell(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QHelpEvent
+    from PySide6.QtWidgets import QApplication, QToolTip
+
+    from src.kpi_studio.gui.widgets import columns
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Channels"), sticky=True)
+    table = window.signals_page.sig_table
+    h = table.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    h.resizeSection(0, h._column_sizer.header_width(0))
+    rect = table.visualRect(table.model().index(0, 0))
+    pos = rect.center() + QPoint(5, 0)
+    QApplication.sendEvent(table.viewport(), QHelpEvent(QHelpEvent.Type.ToolTip, pos,
+                                                        table.viewport().mapToGlobal(pos)))
+    label = columns._tip_label()
+    assert label is not None and QToolTip.text().startswith(table.item(0, 0).text())
+    assert label.pos() == table.viewport().mapToGlobal(rect.bottomLeft()) + QPoint(0, 2)
+    QToolTip.hideText()
+    assert not window.viewer.toolbar.coordinates  # no (x, y) readout in the plot toolbar
