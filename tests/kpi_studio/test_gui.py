@@ -774,8 +774,9 @@ def test_files_and_plots_right_click_menus(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     files = window.files_page.table
     menu = menu_for(files, files.visualRect(files.model().index(0, 0)).center())
-    assert _texts(menu) == ["Remove file", "", "Add files…", "Add folder…", "Remove all files"]
-    menu.actions()[0].trigger()
+    assert _texts(menu) == ["Check selected", "Uncheck selected", "Remove file", "", "Add files…", "Add folder…",
+                            "Check all files", "Uncheck all files", "Remove all files"]
+    menu.actions()[2].trigger()
     assert len(window.state.files) == 1
     plots = window.run_page.plots
     n = len(window.state.data["plots"])
@@ -994,3 +995,32 @@ def test_pinned_side_panel_closes_on_a_click_in_the_main_view(qtbot, window, mf4
     assert bar.current == 2 and bar.pinned
     qtbot.mouseClick(window.viewer.list.viewport(), Qt.LeftButton)  # the main view
     assert bar.current is None and not bar.panels[2].isVisible()
+
+
+def test_files_can_be_unchecked_to_leave_them_out_of_the_analysis(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.context_menu import menu_for
+
+    _load(qtbot, window, mf4_dir)
+    state, page = window.state, window.files_page
+    table = page.table
+    assert all(table.item(r, 0).checkState() == Qt.Checked for r in range(table.rowCount()))
+    b = state.files[1]
+    table.item(1, 0).setCheckState(Qt.Unchecked)  # the user unticks b.mf4
+    assert state.checked_files == [state.files[0]] and b in state.unchecked
+    assert all(b not in r.files for r in state.recordings())  # not analysed, not in the viewer
+    assert window.viewer.files.count() == 1
+    assert page.summary.text().startswith("1 of 2 file(s) checked")
+    assert table.item(1, 0).checkState() == Qt.Unchecked  # still unchecked after the refresh
+    page.check_all(True)
+    assert state.checked_files == state.files
+    table.selectRow(0)
+    menu = menu_for(table, table.visualRect(table.model().index(0, 0)).center())
+    next(a for a in menu.actions() if a.text() == "Uncheck selected").trigger()
+    assert state.checked_files == [b]
+    page.check_all(False)
+    assert not state.checked_files and not state.recordings()
+    window.run_page.log.clear()
+    window.run_page.start_run()
+    assert "No files checked" in window.run_page.log.toPlainText() and window.run_page.worker is None
+    state.set_files([state.files[0]])  # removing a file forgets its check state
+    assert state.unchecked == {state.files[0]}

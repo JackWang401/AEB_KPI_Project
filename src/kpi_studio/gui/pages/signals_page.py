@@ -218,7 +218,7 @@ class SignalsPage(QWidget):
     # ------------------------------------------------------------------ channels
     def _channel_union(self) -> dict[str, dict]:
         union: dict[str, dict] = {}
-        for f in self.state.files:
+        for f in self.state.checked_files:
             idx = self.state.indexes.get(f)
             if idx is None or not idx.ok:
                 continue
@@ -231,7 +231,7 @@ class SignalsPage(QWidget):
     def refresh_channels(self):
         needle = self.search.text().strip()
         union = self._channel_union()
-        n_files = sum(1 for f in self.state.files if self.state.indexes.get(f) and self.state.indexes[f].ok)
+        n_files = sum(1 for f in self.state.checked_files if self.state.indexes.get(f) and self.state.indexes[f].ok)
         self.tree.clear()
         groups: dict[str, QTreeWidgetItem] = {}
         shown = 0
@@ -295,7 +295,7 @@ class SignalsPage(QWidget):
 
         Runs by itself whenever files are indexed or the signals change; never overwrites what the user set."""
         sigs = self.state.data.get("signals", {}) or {}
-        channels = [c for f in self.state.files if (idx := self.state.indexes.get(f)) is not None and idx.ok
+        channels = [c for f in self.state.checked_files if (idx := self.state.indexes.get(f)) is not None and idx.ok
                     for c in idx.channels]
         if not channels or not sigs:
             return []

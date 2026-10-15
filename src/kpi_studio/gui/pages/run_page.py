@@ -339,10 +339,10 @@ class RunPage(QWidget):
             return
         from src.kpi_studio.app.run_service import input_results_dir
 
-        if not self.state.files:
+        if not self.state.checked_files:
             self.out_hint.setText("Results go to a 'kpi_results' folder next to the input files.")
             return
-        target = input_results_dir(self.state.files)
+        target = input_results_dir(self.state.checked_files)
         self.out_hint.setText(f"Results go to {target}"
                               + (" (replaces the existing result)" if target.exists() else ""))
 
@@ -357,16 +357,22 @@ class RunPage(QWidget):
             errors = [str(i) for i in self.state.issues if i.severity == "error"]
             self.log.appendPlainText("Profile has errors:\n  " + "\n  ".join(errors))
             return False
-        missing_idx = [f for f in self.state.files if f not in self.state.indexes]
+        if not self.state.checked_files:
+            self.log.appendPlainText("No files checked: check the files to analyse in the Files panel.")
+            return False
+        missing_idx = [f for f in self.state.checked_files if f not in self.state.indexes]
         if missing_idx:
             self.log.appendPlainText("Still reading file headers; try again in a moment.")
             return False
-        report = preflight(self.state.compiled, self.state.files, self.state.indexes)
+        report = preflight(self.state.compiled, self.state.checked_files, self.state.indexes)
         self.log.appendPlainText(report.text())
         return report.ok
 
     def start_run(self):
         if self.worker is not None:
+            return
+        if not self.state.checked_files:
+            self.log.appendPlainText("No files checked: check the files to analyse in the Files panel.")
             return
         if not self.check():
             if QMessageBox.question(self, "Run", "The check found problems (see the log). Run anyway?") \
@@ -378,7 +384,7 @@ class RunPage(QWidget):
         self.settings.setValue("run/output_mode", self.out_mode.currentData())
         self.settings.setValue("run/workers", self.workers.value())
         self.log.appendPlainText("— run started —")
-        self.worker = RunWorker(self.state.resolved, list(self.state.files), self.output_root(),
+        self.worker = RunWorker(self.state.resolved, list(self.state.checked_files), self.output_root(),
                                 self.workers.value(), base_dir=self.state.base_dir,
                                 indexes=dict(self.state.indexes),
                                 offsets=dict(self.state.offsets), parent=self)

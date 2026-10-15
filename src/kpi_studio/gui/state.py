@@ -43,7 +43,8 @@ class AppState(QObject):
         self.data: dict = copy.deepcopy(NEW_PROFILE)
         self.path: Optional[Path] = None
         self.dirty = False
-        self.files: list[str] = []
+        self.files: list[str] = []          # every file in the Files panel
+        self.unchecked: set[str] = set()    # files the user unticked: not analysed
         self.indexes: dict[str, RecordingIndex] = {}
         self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
         self.offsets: dict[str, float] = {}  # file -> manual time shift [s] (viewer and KPI run; not saved)
@@ -251,7 +252,23 @@ class AppState(QObject):
         self.files = list(dict.fromkeys(files))
         self.indexes = {f: i for f, i in self.indexes.items() if f in self.files}
         self.offsets = {f: v for f, v in self.offsets.items() if f in self.files}
+        self.unchecked &= set(self.files)
         self.files_changed.emit()
+
+    @property
+    def checked_files(self) -> list[str]:
+        """The files to analyse: the ticked ones, in the Files panel's order."""
+        return [f for f in self.files if f not in self.unchecked]
+
+    def set_checked(self, files, checked: bool):
+        """Tick (analyse) or untick files."""
+        before = set(self.unchecked)
+        if checked:
+            self.unchecked -= set(files)
+        else:
+            self.unchecked |= set(files) & set(self.files)
+        if self.unchecked != before:
+            self.files_changed.emit()
 
     def set_index(self, path: str, index: RecordingIndex):
         self.indexes[path] = index
@@ -259,7 +276,7 @@ class AppState(QObject):
 
     def recordings(self) -> list[Recording]:
         """What gets processed: the files grouped into recordings (files of one recording are always combined)."""
-        return group_recordings(self.files, self.indexes, offsets=self.offsets)
+        return group_recordings(self.checked_files, self.indexes, offsets=self.offsets)
 
     def set_offsets(self, changes: dict[str, float]):
         """Set the manual time shift [s] of files (0 removes it); positive moves a file later."""

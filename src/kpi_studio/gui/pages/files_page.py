@@ -9,8 +9,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -35,8 +37,8 @@ class FilesPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
-        intro = QLabel("Right-click to add or remove files; drag and drop works too. Files of the same recording "
-                       "(one per logger) are read together.")
+        intro = QLabel("Check the files to analyse. Right-click to add or remove files; drag and drop works too. "
+                       "Files of the same recording (one per logger) are read together.")
         intro.setWordWrap(True)
         intro.setObjectName("hint")
         lay.addWidget(intro)
@@ -49,12 +51,18 @@ class FilesPage(QWidget):
         for c in range(len(self.COLS) - 1):
             self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setToolTip("Select a file to show its recording in the signal viewer")
+        self.table.setToolTip("Check the files to analyse; select one to show its recording in the signal viewer")
         lay.addWidget(self.table, 1)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.summary.setObjectName("hint")
-        lay.addWidget(self.summary)
+        foot = QHBoxLayout()
+        foot.addWidget(self.summary, 1)
+        for text, value in (("Check all", True), ("Uncheck all", False)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda *_, v=value: self.check_all(v))
+            foot.addWidget(b)
+        lay.addLayout(foot)
 
         self.header_buttons = context_menu.plus_minus(
             remove=self.remove_selected, add_tip="Add files or a folder", remove_tip="Remove the selected files",
@@ -62,9 +70,14 @@ class FilesPage(QWidget):
         context_menu.install(
             self.table,
             add=[("Add files…", self.pick_files), ("Add folder…", self.pick_folder),
+                 ("Check all files", lambda: self.check_all(True)),
+                 ("Uncheck all files", lambda: self.check_all(False)),
                  ("Remove all files", lambda: self.state.set_files([]))],
-            item=lambda rows: [("Remove file" if len(rows) == 1 else f"Remove {len(rows)} files",
+            item=lambda rows: [("Check selected", lambda: self.check_selected(True)),
+                               ("Uncheck selected", lambda: self.check_selected(False)),
+                               ("Remove file" if len(rows) == 1 else f"Remove {len(rows)} files",
                                 self.remove_selected)])
+        self.table.itemChanged.connect(self._item_changed)
         state.files_changed.connect(self.refresh)
         self.refresh()
 
@@ -95,6 +108,17 @@ class FilesPage(QWidget):
         worker.finished.connect(lambda w=worker: self.workers.remove(w) if w in self.workers else None)
         self.workers.append(worker)
         worker.start()
+
+    def check_selected(self, checked: bool):
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        self.state.set_checked([f for i, f in enumerate(self.state.files) if i in rows], checked)
+
+    def check_all(self, checked: bool):
+        self.state.set_checked(self.state.files, checked)
+
+    def _item_changed(self, item):
+        if item.column() == 0 and 0 <= item.row() < len(self.state.files):
+            self.state.set_checked([self.state.files[item.row()]], item.checkState() == Qt.Checked)
 
     def remove_selected(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
@@ -140,12 +164,19 @@ class FilesPage(QWidget):
             for c, text in enumerate([p.name, rec_text, dur, chans, status, str(p.parent)]):
                 item = QTableWidgetItem(text)
                 item.setToolTip(f)
+                if c == 0:
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Unchecked if f in self.state.unchecked else Qt.Checked)
+                elif f in self.state.unchecked:
+                    item.setForeground(QColor("#aeaeb2"))  # not analysed
                 if c == 4 and idx is not None and not idx.ok:
                     item.setForeground(Qt.red)
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)
         multi = sum(1 for r in recs if len(r.files) > 1)
-        self.summary.setText(f"{len(self.state.files)} file(s), {indexed} ready · {len(recs)} recording(s) to process"
+        ticked = len(self.state.checked_files)
+        self.summary.setText(f"{ticked} of {len(self.state.files)} file(s) checked, {indexed} ready · "
+                             f"{len(recs)} recording(s) to process"
                              + (f", {multi} of them combined from several files" if multi else ""))
 
     def shutdown(self):

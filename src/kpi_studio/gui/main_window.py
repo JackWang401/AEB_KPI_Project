@@ -30,7 +30,7 @@ from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
-from src.kpi_studio.gui.widgets import columns
+from src.kpi_studio.gui.widgets import check_style, columns
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit
 from src.kpi_studio.gui.widgets.side_bar import SideBar
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
             if folder:
                 toolbox.load_user_tools(folder)
         self.state = AppState(self)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(STYLE + check_style.style())
         self.resize(1400, 900)
 
         self.files_page = FilesPage(self.state, self.settings)
