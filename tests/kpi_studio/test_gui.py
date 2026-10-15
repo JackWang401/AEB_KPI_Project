@@ -959,3 +959,26 @@ def test_every_column_can_be_dragged_and_cut_text_shows_on_hover(qtbot, window, 
     hpos = h.sectionViewportPosition(1) + 10
     from PySide6.QtCore import QPoint
     assert columns.tip_at(h, QPoint(hpos, 5)) == table.horizontalHeaderItem(1).text()
+
+
+def test_clicked_side_panel_stays_open_until_clicked_again(qtbot, window, mf4_dir, monkeypatch):
+    from PySide6.QtWidgets import QToolTip
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    monkeypatch.setattr(bar, "_over", lambda: False)  # the mouse is away from the strip and the panel
+    bar.tabs[0].clicked.emit()
+    bar._check_mouse(); bar._check_mouse(); bar._check_mouse()
+    assert bar.current == 0 and bar.panels[0].isVisible()  # pinned
+    bar.tabs[2].hovered.emit()
+    assert bar.current == 0  # hovering another tab leaves the pinned panel
+    bar.tabs[2].clicked.emit()  # clicking another tab pins that one
+    assert bar.current == 2 and bar.pinned and not bar.panels[0].isVisible()
+    bar.tabs[2].clicked.emit()  # clicking the pinned tab closes it
+    assert bar.current is None and not bar.panels[2].isVisible()
+    bar.tabs[1].hovered.emit()  # hovering still hides once the mouse leaves
+    bar._check_mouse(); bar._check_mouse()
+    assert bar.current is None
+    assert QToolTip.font().pixelSize() == 13  # hover text as large as the table text

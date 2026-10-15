@@ -1,7 +1,8 @@
 """Auto-hide side panels: a strip of vertical tabs on the window's left edge.
 
 Hovering a tab slides its panel out over the window; it hides again once the mouse has left both
-the strip and the panel (not while a dialog or popup opened from the panel is up)."""
+the strip and the panel (not while a dialog or popup opened from the panel is up). Clicking a tab
+pins its panel open until the tab is clicked again."""
 
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ class VerticalTab(QWidget):
     """A tab label written bottom to top."""
 
     hovered = Signal()
+    clicked = Signal()
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
@@ -46,7 +48,8 @@ class VerticalTab(QWidget):
         super().enterEvent(e)
 
     def mousePressEvent(self, e):
-        self.hovered.emit()
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -125,6 +128,7 @@ class SideBar(QWidget):
         self.current: int | None = None
         self._outside = 0
         self._sticky = False
+        self.pinned = False
         self._timer = QTimer(self)
         self._timer.setInterval(self.HIDE_DELAY_MS // 2)
         self._timer.timeout.connect(self._check_mouse)
@@ -133,7 +137,8 @@ class SideBar(QWidget):
     def add_panel(self, title: str, widget: QWidget, width: int, buttons=()) -> int:
         i = len(self.tabs)
         tab = VerticalTab(title)
-        tab.hovered.connect(lambda i=i: self.open(i))
+        tab.hovered.connect(lambda i=i: self.hover(i))
+        tab.clicked.connect(lambda i=i: self.toggle_pin(i))
         self._lay.insertWidget(i, tab)
         frame = QFrame(self.host)
         frame.setObjectName("sidePanel")
@@ -178,12 +183,26 @@ class SideBar(QWidget):
             self.settings.setValue(self._key(i), self.widths[i])
 
     # ------------------------------------------------------------------ open / close
+    def hover(self, i: int):
+        """Hovering a tab shows its panel until the mouse leaves; a pinned panel stays put."""
+        if not self.pinned:
+            self.open(i)
+
+    def toggle_pin(self, i: int):
+        """A click pins the tab's panel open; clicking the pinned tab again closes it."""
+        if self.pinned and self.current == i:
+            self.close_panel()
+        else:
+            self.open(i)
+            self.pinned = True
+
     def open(self, i: int, sticky: bool = False):
         """Show panel `i`. `sticky`: opened from elsewhere (not by hovering its tab), so it stays open
         until the mouse has been over it once and left again."""
         if self.current is not None and self.current != i:
             self.close_panel()
         self._sticky = sticky
+        self.pinned = False
         self.current = i
         self.tabs[i].set_active(True)
         self._place()
@@ -198,6 +217,7 @@ class SideBar(QWidget):
         self.panels[self.current].hide()
         self.tabs[self.current].set_active(False)
         self.current = None
+        self.pinned = False
         self._timer.stop()
 
     def _place(self):
@@ -221,7 +241,7 @@ class SideBar(QWidget):
         return QApplication.activeModalWidget() is not None or QApplication.activePopupWidget() is not None
 
     def _check_mouse(self):
-        if self.current is None:
+        if self.current is None or self.pinned:
             return
         if self.dragging or self._over() or self._busy():
             self._outside = 0

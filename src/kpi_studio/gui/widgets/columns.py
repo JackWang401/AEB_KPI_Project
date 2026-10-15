@@ -9,6 +9,8 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QToolTip
 
+TIP_FONT_PX = 13  # the size of the text in the tables
+
 MIN_STRETCH = 120
 MAX_FIT = 260
 PADDING = 12
@@ -167,6 +169,9 @@ _filter: _AppFilter | None = None
 def install(app) -> None:
     """Resizable columns and hover tips for every view in the application (idempotent)."""
     global _filter
+    font = app.font()
+    font.setPixelSize(TIP_FONT_PX)
+    QToolTip.setFont(font)  # hover text as large as the text it shows
     if _filter is None:
         _filter = _AppFilter()
         app.installEventFilter(_filter)
