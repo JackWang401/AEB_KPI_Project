@@ -1095,11 +1095,13 @@ def test_right_click_a_header_to_pick_the_columns_shown(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     for view, key in ((window.files_page.table, "columns/files"), (window.signals_page.sig_table, "columns/signals")):
         h = view.horizontalHeader()
+        columns.make_resizable(h)  # as when the panel is first shown
         menu = columns.column_menu(view)
         names = [view.horizontalHeaderItem(c).text() for c in range(view.columnCount())]
         assert [a.text() for a in menu.actions()] == names and all(a.isChecked() for a in menu.actions())
         menu.actions()[1].trigger()  # untick the second column: hidden, and remembered
         assert h.isSectionHidden(1) and window.settings.value(key) == [names[1]]
+        assert h.sectionViewportPosition(2) == h.sectionViewportPosition(0) + h.sectionSize(0)  # no gap left
         assert not menu.actions()[1].isChecked()
         menu.actions()[1].trigger()  # tick it again
         assert not h.isSectionHidden(1) and h.sectionSize(1) > 0

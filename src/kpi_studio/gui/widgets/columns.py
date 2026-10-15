@@ -61,6 +61,8 @@ class ColumnSizer(QObject):
             return
         if self._pressed:
             self.user_sized = True  # from now on the user's widths stay
+        if new == 0:  # the column was just hidden (Qt reports that as a resize to 0): leave it hidden
+            return
         if 0 <= c < self.header.count() and new < self.header_width(c) and not self.header.isSectionHidden(c):
             self._fitting = True
             try:
