@@ -110,15 +110,15 @@ class SignalsPage(QWidget):
             table.horizontalHeader().setFixedHeight(26)
             table.setMinimumHeight(26 + 22 * min_rows + 4)
 
-        # ---- left: channels in files (title, filter and add button on one line)
+        # ---- channels in the files: shown in the "Channels" side panel (filter and add button on one line)
         left = QWidget()
+        left.setToolTip("Channels in the loaded files. Pick the ones you need and give each a short name. When "
+                        "files name the same signal differently, list all channel names; the first one found "
+                        "in a file is used.")
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(6)
         head = QHBoxLayout()
-        head.addWidget(title("Channels", "Channels in the loaded files. Pick the ones you need and give each a "
-                                         "short name. When files name the same signal differently, list all "
-                                         "channel names; the first one found in a file is used."))
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter… (wildcards: * ?  e.g. lmc*it)")
         head.addWidget(self.search, 1)
@@ -133,9 +133,8 @@ class SignalsPage(QWidget):
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        left.setMinimumWidth(300)
         ll.addWidget(self.tree, 1)
-        split.addWidget(left)
+        self.channels_panel = left
 
         # ---- right: profile signals, derived signals
         right = QWidget()
@@ -187,7 +186,6 @@ class SignalsPage(QWidget):
 
         vsplit.setSizes([300, 160])
         split.addWidget(right)
-        split.setSizes([380, 820])
 
         self.search.textChanged.connect(self.refresh_channels)
         self.add_sig_btn.clicked.connect(self.add_selected_channels)

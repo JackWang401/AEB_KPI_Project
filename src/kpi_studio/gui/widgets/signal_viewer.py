@@ -170,7 +170,7 @@ class SignalViewer(QWidget):
         self.load_btn = QPushButton("Load signals")
         self.load_btn.setToolTip("Read the ticked signals from the recording")
         bar.addWidget(self.load_btn)
-        # which recordings are plotted: the one selected on the Files tab (several can be overlaid
+        # which recordings are plotted: the one selected in the Files panel (several can be overlaid
         # through select_recordings); not shown
         self.files = QListWidget(self)
         self.files.setVisible(False)
@@ -318,7 +318,7 @@ class SignalViewer(QWidget):
         self.load()
 
     def show_recording_of(self, path: str):
-        """Plot the recording a file belongs to (the row selected on the Files tab)."""
+        """Plot the recording a file belongs to (the row selected in the Files panel)."""
         rec = next((r for r in self.state.recordings() if path in r.files), None)
         if rec is not None and self.selected_names() != [rec.name]:
             self.select_recordings([rec.name])
@@ -426,7 +426,7 @@ class SignalViewer(QWidget):
 
     def load(self):
         if not self.state.files:
-            self.status.setText("Add MF4 files on the Files tab first.")
+            self.status.setText("Add MF4 files in the Files panel on the left edge first.")
             return
         if not self.selected() and self.files.count():
             self.select_recordings([self.files.item(0).data(Qt.UserRole)])
@@ -574,7 +574,7 @@ class SignalViewer(QWidget):
         self.separate_btn.setVisible(bool(self.host))
         if not loaded:
             self.kpi_table.setVisible(False)
-            self._message("Tick signals on the left, then press Load signals")
+            self._message("Tick signals on the left to plot them")
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
         groups = self._groups(available)
@@ -694,7 +694,7 @@ class SignalViewer(QWidget):
 
     def run_preview(self):
         if not self.state.files:
-            self.pv_status.setText("Add files on the Files tab first.")
+            self.pv_status.setText("Add files in the Files panel on the left edge first.")
             return
         if self.state.compiled is None:
             self.pv_status.setText("Fix the errors under Profile check first; signals can still be plotted.")

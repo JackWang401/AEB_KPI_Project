@@ -199,7 +199,7 @@ def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
     viewer = window.signals_page.viewer
     recs = window.state.recordings()
     assert not viewer.files.isVisible()  # no recordings list in the panel; a compact picker instead
-    assert not hasattr(viewer, "rec_combo")  # no recording picker: the Files tab selection decides
+    assert not hasattr(viewer, "rec_combo")  # no recording picker: the Files panel selection decides
     window.files_page.table.setCurrentCell(1, 0)
     assert viewer.selected_names() == [recs[1].name]
     viewer.select_recordings([r.name for r in recs])
@@ -207,17 +207,18 @@ def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
     qtbot.waitUntil(lambda: len(viewer.cache) == 2 and viewer.worker is None, timeout=30000)
     second = recs[1].name
     t0 = np.asarray(viewer.cache[second]["time"], dtype=float)
-    window.files_page.table.item(1, 2).setText("1.5")  # Offset [s] on the Files tab
+    offsets = window.offset_panel.table
+    offsets.item(1, 1).setText("1.5")  # Offset [s] in the Time offset panel
     assert window.state.offsets == {recs[1].files[0]: 1.5}
     assert window.state.recordings()[1].offsets == {recs[1].files[0]: 1.5}  # what the KPI run reads
-    assert window.files_page.table.item(1, 2).text() == "+1.500"
+    assert offsets.item(1, 1).text() == "+1.500"
     # the shifted recording is read again with the offset applied
     qtbot.waitUntil(lambda: second in viewer.cache and viewer.worker is None, timeout=30000)
     assert np.allclose(np.asarray(viewer.cache[second]["time"], dtype=float)[:5], t0[:5] + 1.5)
-    window.files_page.table.item(1, 2).setText("0")  # zero removes the shift
+    offsets.item(1, 1).setText("0")  # zero removes the shift
     assert window.state.offsets == {}
-    window.files_page.table.item(0, 2).setText("abc")  # invalid input is ignored
-    assert window.state.offsets == {} and window.files_page.table.item(0, 2).text() == "0"
+    offsets.item(0, 1).setText("abc")  # invalid input is ignored
+    assert window.state.offsets == {} and offsets.item(0, 1).text() == "0"
 
 
 def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
@@ -431,9 +432,9 @@ def test_flat_kpi_axis_is_widened():
     assert fig.layout.xaxis.range is None     # a normal spread stays automatic
 
 
-def test_signal_panel_is_shared_by_tabs_2_and_3(window):
+def test_signal_panel_is_shared_by_signals_and_kpi_tabs(window):
     window.show()
-    for index, visible in [(0, False), (1, True), (2, True), (3, False)]:
+    for index, visible in [(0, True), (1, True), (2, False)]:
         window.tabs.setCurrentIndex(index)
         assert window.viewer_box.isVisible() == visible
 
@@ -549,7 +550,7 @@ def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
     viewer = window.viewer
     window.resize(1400, 900)
     window.show()
-    window.tabs.setCurrentIndex(1)
+    window.tabs.setCurrentIndex(0)
     viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
     qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
     assert len(viewer._axes) == 3
@@ -695,3 +696,29 @@ def test_check_all_and_uncheck_all(qtbot, window, mf4_dir):
     qtbot.waitUntil(lambda: bool(viewer.cache) and viewer.worker is None, timeout=30000)
     viewer.uncheck_all()
     assert not viewer.checked()
+
+
+def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch):
+    from src.kpi_studio.gui.widgets import side_bar
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    bar = window.side_bar
+    assert [t.text for t in bar.tabs] == ["Files", "Channels", "Time offset"]
+    assert [window.tabs.tabText(i) for i in range(window.tabs.count())] == \
+        ["1  Signals", "2  Events && KPIs", "3  Plots && Run"]
+    assert all(not p.isVisible() for p in bar.panels)  # hidden until hovered
+    bar.tabs[1].hovered.emit()
+    assert bar.panels[1].isVisible() and window.signals_page.tree.isVisible()
+    assert bar.panels[1].height() == bar.host.height()
+    bar.tabs[2].hovered.emit()  # another tab swaps the panel
+    assert bar.panels[2].isVisible() and not bar.panels[1].isVisible()
+    assert window.offset_panel.table.rowCount() == len(window.state.files)
+    monkeypatch.setattr(bar, "_over", lambda: True)
+    bar._check_mouse(); bar._check_mouse()
+    assert bar.panels[2].isVisible()  # the mouse is still over it
+    monkeypatch.setattr(bar, "_over", lambda: False)
+    bar._check_mouse(); bar._check_mouse()
+    assert bar.current is None and not bar.panels[2].isVisible()
+    assert side_bar.STRIP_WIDTH == bar.width()

@@ -26,12 +26,13 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import __version__, toolbox
 from src.kpi_studio.core.validate import ProfileError
-from src.kpi_studio.gui.pages.files_page import FilesPage
+from src.kpi_studio.gui.pages.files_page import FilesPage, OffsetPanel
 from src.kpi_studio.gui.pages.kpi_page import KpiPage
 from src.kpi_studio.gui.pages.run_page import RunPage
 from src.kpi_studio.gui.pages.signals_page import SignalsPage
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets.common import PAGE_MARGINS, ExprEdit
+from src.kpi_studio.gui.widgets.side_bar import SideBar
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io import profile_store
 
@@ -79,6 +80,8 @@ QSplitter::handle:horizontal { width: 14px; }
 QSplitter::handle:vertical { height: 12px; }
 QDockWidget { font-weight: 600; }
 QDockWidget::title { padding: 8px 20px; }
+QWidget#sideStrip { background: #ececf0; border-right: 1px solid #dcdce1; }
+QFrame#sidePanel { background: #f9f9fb; border-right: 1px solid #d2d2d7; }
 """
 
 
@@ -105,10 +108,10 @@ class MainWindow(QMainWindow):
         self.signals_page = SignalsPage(self.state, viewer=self.viewer)
         self.kpi_page = KpiPage(self.state, viewer=self.viewer)
         self.run_page = RunPage(self.state, self.settings)
-        self.tabs.addTab(self.files_page, "1  Files")
-        self.tabs.addTab(self.signals_page, "2  Signals")
-        self.tabs.addTab(self.kpi_page, "3  Events && KPIs")
-        self.tabs.addTab(self.run_page, "4  Plots && Run")
+        self.offset_panel = OffsetPanel(self.state)
+        self.tabs.addTab(self.signals_page, "1  Signals")
+        self.tabs.addTab(self.kpi_page, "2  Events && KPIs")
+        self.tabs.addTab(self.run_page, "3  Plots && Run")
         self.viewer_box = QGroupBox("Signal viewer && preview")
         vb = QVBoxLayout(self.viewer_box)
         vb.setContentsMargins(10, 10, 10, 10)
@@ -126,9 +129,24 @@ class MainWindow(QMainWindow):
         self.central_split.setStretchFactor(0, 1)
         self.central_split.setStretchFactor(1, 1)
         self.central_split.setSizes([430, 470])
-        self.setCentralWidget(self.central_split)
+        # files, channels and time offsets live in auto-hide panels on the left edge (open on hover)
+        content = QWidget()
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self.central_split)
+        self.side_bar = SideBar(content)
+        self.side_bar.add_panel("Files", self.files_page, 640)
+        self.side_bar.add_panel("Channels", self.signals_page.channels_panel, 440)
+        self.side_bar.add_panel("Time offset", self.offset_panel, 380)
+        root = QWidget()
+        rl = QHBoxLayout(root)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(0)
+        rl.addWidget(self.side_bar)
+        rl.addWidget(content, 1)
+        self.setCentralWidget(root)
         self.tabs.currentChanged.connect(self._tab_changed)
-        # the viewer plots the recording of the file selected on the Files tab
+        # the viewer plots the recording of the file selected in the Files panel
         self.files_page.table.currentCellChanged.connect(
             lambda row, *_: self.viewer.show_recording_of(self.state.files[row])
             if 0 <= row < len(self.state.files) else None)
@@ -372,7 +390,7 @@ class MainWindow(QMainWindow):
         for edit in self.findChildren(ExprEdit):
             edit.check()
 
-    VIEWER_TABS = (1, 2)  # Signals, Events & KPIs
+    VIEWER_TABS = (0, 1)  # Signals, Events & KPIs
 
     def _tab_changed(self, index: int):
         self.viewer_wrap.setVisible(index in self.VIEWER_TABS)
