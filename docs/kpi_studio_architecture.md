@@ -65,7 +65,7 @@ signals:
     kind: continuous            # continuous -> linear interpolation
   aebRequest:
     channels: [AEB_Req, aebRequest]
-    kind: discrete              # discrete -> zero-order hold, never interpolated
+    kind: discrete              # discrete, boolean, enum -> zero-order hold, never interpolated
     enum: AutoEmergencyBrakingRequestType        # optional, from enum_definitions.yaml
   longActAccel:
     channels: [LongAccel, longActAccel]

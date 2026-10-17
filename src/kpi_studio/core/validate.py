@@ -191,7 +191,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
                 enums[name] = dict(enum_tables[sdef.enum])
             else:
                 err(f"signals.{name}.enum", f"unknown enum '{sdef.enum}'")
-    discrete = {n for n, s in profile.signals.items() if s.kind == "discrete"}
+    discrete = {n for n, s in profile.signals.items() if s.held}
 
     for name in profile.derived:
         if name in profile.signals:

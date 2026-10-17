@@ -55,7 +55,7 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     qtbot.waitUntil(lambda: sigs["VehicleSpeed"].get("unit") == "kph", timeout=5000)
     assert sigs["VehicleSpeed"]["unit"] == "kph"
     assert sigs["VehicleSpeed"]["description"].startswith("Use in conjunction")
-    assert sigs["Mot"]["unit"] == "-" and sigs["Mot"]["kind"] == "discrete"  # filled units are kept
+    assert sigs["Mot"]["unit"] == "-" and sigs["Mot"]["kind"] == "enum"  # filled units are kept
     assert sigs["Mot"]["enum"] == {"OFF": 0, "SERVED": 3}
     row = next(r for r in range(w.signals_page.sig_table.rowCount())
                if w.signals_page.sig_table.item(r, 0).text() == "Mot")
@@ -77,7 +77,7 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     item.setSelected(True)
     page.add_selected_channels()
     new = sigs["MotType"]
-    assert new["kind"] == "discrete" and new["description"] == "motion type"
+    assert new["kind"] == "enum" and new["description"] == "motion type"
     # a table typed by hand is kept
     sigs["Mot2"] = {"channels": ["MotType"], "enum": {"A": 0, "B": 3}}
     w.state.edited(structure=True)

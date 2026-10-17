@@ -125,6 +125,7 @@ class SignalList(QListWidget):
         self.reordered.emit()
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 AXIS_MIN_PX = 70     # each subplot gets at least this height: with more, the plots scroll
+BOOL_RATIO = 0.4  # height of a boolean subplot, relative to the others
 
 
 class ElideLabel(QLabel):
@@ -644,6 +645,7 @@ class SignalViewer(QWidget):
 
         self.fig.clear()
         self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()
+        self._bool_axes = set()
         self._legend = {}
         self._names = {}        # axes -> signal name of each series (same order as _series)
         self.kpi_lines = {}     # axes -> {signal: [(text, ok)]}: preview KPIs listed under their signal
@@ -661,10 +663,16 @@ class SignalViewer(QWidget):
             self._message("Not available in the ticked recordings: " + ", ".join(names) if names
                           else "Tick one or more signals on the left")
             return
+        # boolean subplots go to the bottom, as low strips with the true spans shaded (as in ETAS MDA)
+        flags = [all(self.kind(n) == "boolean" for n in g) for g in shown]
+        shown = [g for g, f in zip(shown, flags) if not f] + [g for g, f in zip(shown, flags) if f]
+        ratios = sorted((BOOL_RATIO if f else 1.0 for f in flags), reverse=True)
         overlay = len(loaded) > 1
-        axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
+        axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False,
+                                 gridspec_kw={"height_ratios": ratios})[:, 0]
         m = MARGIN_PX
-        self.canvas.setMinimumHeight(m["top"] + m["bottom"] + 16 + len(shown) * (AXIS_MIN_PX + m["gap"]))
+        self.canvas.setMinimumHeight(int(m["top"] + m["bottom"] + 16
+                                         + sum(r * AXIS_MIN_PX + m["gap"] for r in ratios)))
         for i, (ax, group) in enumerate(zip(axes, shown)):
             multi = len(group) > 1
             for k, n in enumerate(group):
@@ -678,6 +686,9 @@ class SignalViewer(QWidget):
                     ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
                     ax.plot(t, y, color=c, lw=1.2, ls=ls,
                             drawstyle="steps-post" if step else "default")  # (right-click)
+                    if self.kind(n) == "boolean":
+                        ax.fill_between(t, 0, np.where(np.isfinite(y), y, 0), step="post" if step else None,
+                                        color=c, alpha=0.18, lw=0)
                     label = f"{n} · {Path(r.name).name}" if overlay else n
                     enum = d.get("labels", {}).get(n)
                     self._series.setdefault(ax, []).append((label, t, y, enum))
@@ -685,13 +696,18 @@ class SignalViewer(QWidget):
                     self._names.setdefault(ax, []).append(n)
                     if enum and not multi:
                         self._enum_ticks(ax, enum, y)
-            if ax not in self._enum_axes:
+            if all(self.kind(n) == "boolean" for n in group):
+                ax.set_yticks([0, 1])
+                ax.set_ylim(-0.15, 1.25)
+                self._bool_axes.add(ax)
+            elif ax not in self._enum_axes:
                 ax.yaxis.set_major_locator(MaxNLocator(nbins=4, min_n_ticks=2))
             for lo, hi in self.spans:
                 ax.axvspan(lo, hi, color="#2a78d6", alpha=0.08, lw=0)
             ax.grid(True, color="#e6e5e0", lw=0.6)
             ax.tick_params(labelsize=7.5)
-            ax.margins(y=0.08)
+            if ax not in self._bool_axes:
+                ax.margins(y=0.08)
             self._ax_groups[ax] = group
         axes[-1].set_xlabel("time [s]", fontsize=8)
         self._decorate_preview(list(axes), loaded)
@@ -918,12 +934,18 @@ class SignalViewer(QWidget):
         act.triggered.connect(lambda on, ns=list(names): self.set_stepped(ns, on))
         return menu
 
+    def kind(self, name: str) -> str:
+        """The signal's Kind (Selected signals); derived signals count as continuous."""
+        d = (self.state.data.get("signals") or {}).get(name)
+        if d is None and self.state.resolved is not None and name in self.state.resolved.signals:
+            return self.state.resolved.signals[name].kind
+        return (d or {}).get("kind") or "continuous"
+
     def is_stepped(self, name: str) -> bool:
-        """Drawn as a stepped line: the right-click choice, else whether the signal's Kind is discrete."""
+        """Drawn as a stepped line: the right-click choice, else any Kind but continuous."""
         if name in self.step_choice:
             return self.step_choice[name]
-        d = (self.state.data.get("signals") or {}).get(name) or {}
-        return d.get("kind") == "discrete"
+        return self.kind(name) != "continuous"
 
     def set_stepped(self, names, on: bool):
         for n in names:

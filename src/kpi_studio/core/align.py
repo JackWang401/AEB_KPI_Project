@@ -142,7 +142,7 @@ def build_frame(
     grid = t0 + np.arange(n) * dt
     values = {}
     for name, (t, v) in prepared.items():
-        if defs[name].kind == "discrete":
+        if defs[name].held:
             idx = np.searchsorted(t, grid, side="right") - 1
             out = np.where(idx >= 0, v[np.clip(idx, 0, None)], np.nan)
             out[grid > t[-1]] = np.nan

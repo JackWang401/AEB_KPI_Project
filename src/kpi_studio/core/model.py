@@ -33,11 +33,17 @@ class _Strict(BaseModel):
 class SignalDef(_Strict):
     channels: list[str] = Field(min_length=1, description="candidate MF4 channel names, first match wins")
     unit: Optional[str] = None
-    kind: Literal["continuous", "discrete"] = "continuous"
+    # boolean, enum and discrete signals are held between samples; continuous ones are interpolated
+    kind: Literal["continuous", "discrete", "boolean", "enum"] = "continuous"
     # an enum table name (enum tables file), or the values themselves: {text: raw value}
     enum: Optional[Union[str, dict[str, float]]] = None
     required: bool = True
     description: str = ""
+
+    @property
+    def held(self) -> bool:
+        """Held between samples (zero-order hold) rather than linearly interpolated."""
+        return self.kind != "continuous"
 
     @field_validator("channels", mode="before")
     @classmethod

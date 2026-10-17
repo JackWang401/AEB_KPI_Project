@@ -1645,3 +1645,37 @@ def test_discrete_signals_are_stepped_unless_switched_off_in_the_plot(qtbot, win
     assert act.isChecked()
     act.trigger()  # the plot's choice wins over Kind
     assert style("egoSpeed") == "default"
+
+
+def test_boolean_signals_are_shaded_strips_at_the_bottom(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    window.state.data["signals"]["longActAccel"]["kind"] = "boolean"
+    viewer.plot_signals(["longActAccel", "egoSpeed"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    top, bottom = viewer._axes
+    assert viewer._names[top] == ["egoSpeed"] and viewer._names[bottom] == ["longActAccel"]
+    line = bottom.get_lines()[0]
+    assert line.get_drawstyle() == "steps-post"
+    assert bottom.collections and bottom.collections[0].get_facecolor()[0][3] < 0.5  # light shade
+    assert list(bottom.get_yticks()) == [0, 1]
+    assert bottom.get_position().height < top.get_position().height  # a low strip
+
+
+def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.pages.signals_page import KINDS
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    table = page.sig_table
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "egoSpeed")
+    ix = table.model().index(row, 3)
+    delegate = table.itemDelegateForColumn(3)
+    box = delegate.createEditor(table.viewport(), None, ix)
+    box.hidePopup()
+    assert [box.itemText(i) for i in range(box.count())] == KINDS == ["continuous", "discrete", "boolean", "enum"]
+    box.setCurrentIndex(KINDS.index("boolean"))
+    delegate.setModelData(box, table.model(), ix)
+    assert window.state.data["signals"]["egoSpeed"]["kind"] == "boolean"

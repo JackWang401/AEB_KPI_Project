@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
+    QStyle,
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QSplitter,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
@@ -56,6 +59,47 @@ def _dot_icon(on: bool) -> QIcon:
             p.end()
         _DOTS[on] = QIcon(pm)
     return _DOTS[on]
+
+
+KINDS = ["continuous", "discrete", "boolean", "enum"]
+KIND_TIPS = {
+    "continuous": "Measured values: linearly interpolated between samples, drawn as a plain line",
+    "discrete": "Counters, states and other step values: held until the next sample, drawn as a stepped line",
+    "boolean": "0/1 flags: held, drawn as a shaded stepped line at the bottom of the plot",
+    "enum": "Values with names (a value table): held, drawn as a stepped line",
+}
+
+
+class KindDelegate(QStyledItemDelegate):
+    """The Kind column: a drop-down list, opened with one click."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        r = option.rect
+        cx, cy = r.right() - 9, r.center().y() + 1
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(option.palette.highlightedText() if option.state & QStyle.State_Selected
+                         else QColor("#8e8e93"))
+        painter.drawPolygon(QPolygonF([QPointF(cx - 4, cy - 2), QPointF(cx + 4, cy - 2), QPointF(cx, cy + 3)]))
+        painter.restore()
+
+    def createEditor(self, parent, option, index):
+        box = QComboBox(parent)
+        for i, k in enumerate(KINDS):
+            box.addItem(k)
+            box.setItemData(i, KIND_TIPS[k], Qt.ToolTipRole)
+        box.activated.connect(lambda _i, b=box: (self.commitData.emit(b), self.closeEditor.emit(b)))
+        QTimer.singleShot(0, box.showPopup)
+        return box
+
+    def setEditorData(self, editor, index):
+        text = str(index.data() or "continuous")
+        editor.setCurrentIndex(KINDS.index(text) if text in KINDS else 0)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText())
 
 
 def _num(v) -> str:
@@ -182,6 +226,9 @@ class SignalsPage(QWidget):
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
         self.sig_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         compact_table(self.sig_table, 2)
+        self.sig_table.setItemDelegateForColumn(3, KindDelegate(self.sig_table))
+        self.sig_table.clicked.connect(lambda ix: ix.column() == 3 and ix.flags() & Qt.ItemIsEditable
+                                       and self.sig_table.edit(ix))
         sl.addWidget(self.sig_table, 1)
         vsplit.addWidget(sig_box)
 
@@ -428,7 +475,7 @@ class SignalsPage(QWidget):
             d["unit"] = c.unit
         if c.enum and not d.get("enum"):
             d["enum"] = {text: value for text, value in c.enum}  # the file's value table
-            d["kind"] = "discrete"
+            d["kind"] = "enum"
         if c.comment and not (only_empty and d.get("description")):
             d["description"] = c.comment
         return d
@@ -510,6 +557,8 @@ class SignalsPage(QWidget):
                 item.setData(Qt.UserRole, (name, from_lib))
                 if c == 0 and d.get("description"):
                     item.setToolTip(d["description"])
+                if c == 3:
+                    item.setToolTip(KIND_TIPS.get(v, "") + "\n\nClick to change")
                 if c == 4:
                     if isinstance(d.get("enum"), dict):
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # edited in the table dialog
@@ -549,7 +598,7 @@ class SignalsPage(QWidget):
         elif col == 2:
             d["unit"] = text or None
         elif col == 3:
-            d["kind"] = "discrete" if text.lower().startswith("d") else "continuous"
+            d["kind"] = text.lower() if text.lower() in KINDS else "continuous"
         elif col == 4:
             d["enum"] = parse_enum(text)
         elif col == 5:
