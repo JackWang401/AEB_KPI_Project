@@ -1706,6 +1706,30 @@ def test_kind_changed_in_the_table_shows_in_the_plot_at_once(qtbot, window, mf4_
     assert viewer._names[viewer._axes[-1]] == ["egoSpeed"] and len(viewer._axes) == 2
 
 
+def test_drag_the_border_to_widen_the_value_list(qtbot, window, mf4_dir):
+    from types import SimpleNamespace
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    ax = viewer._axes[0]
+    x1, y = ax.bbox.x1, (ax.bbox.y0 + ax.bbox.y1) / 2
+    ev = SimpleNamespace(x=x1 + 2, y=y, button=1, inaxes=None, xdata=None, key=None)
+    assert viewer.on_side_border(ev)
+    assert not viewer.on_side_border(SimpleNamespace(x=x1 - 80, y=y))
+    viewer._on_motion(ev)
+    assert viewer.canvas.cursor().shape() == Qt.SplitHCursor
+    before = viewer.side_px
+    viewer._on_press(ev)
+    viewer._on_motion(SimpleNamespace(x=x1 - 150 * viewer.canvas.devicePixelRatioF(), y=y, button=1,
+                                      inaxes=ax, xdata=None, key=None))
+    viewer._on_release(ev)
+    assert viewer.side_px > before + 100 and ax.bbox.x1 < x1 - 100  # the plots give the room
+    assert viewer.cursors == [None, None]  # dragging the border places no cursor
+
+
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
     from src.kpi_studio.gui.pages.signals_page import KINDS
     _load(qtbot, window, mf4_dir)

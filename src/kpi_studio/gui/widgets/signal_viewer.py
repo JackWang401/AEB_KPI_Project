@@ -226,6 +226,8 @@ class SignalViewer(QWidget):
         self._series: dict = {}              # axes -> [(label, time, values, enum labels)]
         self._artists: list = []
         self._dragging = None
+        self.side_px = MARGIN_PX["right"]  # width of the signal / value list right of the plots (drag its border)
+        self._side_drag = False
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
@@ -636,7 +638,7 @@ class SignalViewer(QWidget):
         if not n:
             return
         w, h = max(self.canvas.width(), 1), max(self.canvas.height(), 1)
-        m = dict(MARGIN_PX)
+        m = dict(MARGIN_PX, right=self.side_px)
         if any(ax.get_title() for ax in self._axes):
             m["top"] += 16
         if self._enum_axes:
@@ -1011,7 +1013,25 @@ class SignalViewer(QWidget):
         """The subplot whose signal list (right of it) is under a mouse event, or None."""
         return next((ax for ax in self._axes if ax.bbox.y0 <= event.y <= ax.bbox.y1 and event.x > ax.bbox.x1), None)
 
+    def on_side_border(self, event) -> bool:
+        """Mouse event over the border between the plots and the value list right of them."""
+        if not self._axes or self.toolbar.mode or getattr(event, "x", None) is None:
+            return False
+        ratio = self.canvas.devicePixelRatioF()
+        x1 = self._axes[0].bbox.x1
+        top, bottom = self._axes[0].bbox.y1, self._axes[-1].bbox.y0
+        return -4 * ratio <= event.x - x1 <= 10 * ratio and bottom <= event.y <= top
+
+    def set_side_width(self, px: float):
+        """Width of the value list right of the plots, in pixels (the plots keep at least 200)."""
+        self.side_px = int(min(max(px, 120), max(self.canvas.width() - MARGIN_PX["left"] - 200, 120)))
+        self._apply_layout()
+        self._update_cursors()
+
     def _on_press(self, event):
+        if event.button == 1 and self.on_side_border(event):
+            self._side_drag = True
+            return
         if event.button == 3 and not self.toolbar.mode and event.inaxes not in self._axes:
             ax = self._legend_axes(event)
             if ax is not None:
@@ -1028,11 +1048,20 @@ class SignalViewer(QWidget):
         self.set_cursor(self._dragging, event.xdata)
 
     def _on_motion(self, event):
+        if self._side_drag:
+            ratio = self.canvas.devicePixelRatioF()
+            self.set_side_width((self.fig.bbox.width - event.x) / ratio)
+            return
+        if self.on_side_border(event):
+            self.canvas.setCursor(Qt.SplitHCursor)
+        elif self.canvas.cursor().shape() == Qt.SplitHCursor:
+            self.canvas.unsetCursor()
         if self._dragging is not None and event.xdata is not None and event.inaxes in self._axes:
             self.set_cursor(self._dragging, event.xdata)
 
     def _on_release(self, _event):
         self._dragging = None
+        self._side_drag = False
 
     def set_cursor(self, which: int, t):
         self.cursors[which] = None if t is None else float(t)
