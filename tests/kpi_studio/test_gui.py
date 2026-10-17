@@ -1260,3 +1260,28 @@ def test_dragging_a_column_edge_trades_width_with_its_right_neighbour(qtbot, win
     sizer._pressed = False
     assert h.sectionSize(0) == signal
     assert h.sectionSize(2) == sizer.header_width(2)
+
+
+def test_channels_already_added_as_signals_get_a_dot(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    tree = page.tree
+    sigs = window.state.data["signals"]
+    for name in [n for n, s in sigs.items() if "throttle_value" in str(s)]:
+        del sigs[name]
+    window.state.edited(structure=True)
+    qtbot.wait(50)
+
+    def channel():
+        return next(it for it in tree.findItems("*", Qt.MatchWildcard | Qt.MatchRecursive) if it.childCount() == 0
+                    and it.text(0) == "throttle_value")
+
+    leaves = [it for it in tree.findItems("*", Qt.MatchWildcard | Qt.MatchRecursive) if it.childCount() == 0]
+    assert any(it.data(0, Qt.UserRole + 1) for it in leaves)  # the profile's signals are marked
+    assert not channel().data(0, Qt.UserRole + 1)
+    tree.clearSelection()
+    channel().setSelected(True)
+    page.add_selected_channels()
+    qtbot.wait(50)
+    assert channel().data(0, Qt.UserRole + 1)  # added: now it has the dot
+    assert not channel().icon(0).isNull()

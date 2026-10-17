@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -35,6 +35,25 @@ from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
 
 LIB_COLOR = QColor("#6b6b66")
+
+
+_DOTS: dict[bool, QIcon] = {}
+
+
+def _dot_icon(on: bool) -> QIcon:
+    """A small blue dot (or the same-sized blank, so the names stay lined up)."""
+    if on not in _DOTS:
+        pm = QPixmap(10, 10)
+        pm.fill(Qt.transparent)
+        if on:
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#007aff"))
+            p.drawEllipse(2, 2, 6, 6)
+            p.end()
+        _DOTS[on] = QIcon(pm)
+    return _DOTS[on]
 
 
 def _num(v) -> str:
@@ -126,6 +145,7 @@ class SignalsPage(QWidget):
             head.addWidget(b)
         ll.addLayout(head)
         self.tree = QTreeWidget()
+        self.tree.setIconSize(QSize(10, 10))  # the dot in front of channels already added as signals
         self.tree.setHeaderLabels(["Signal", "Unit", "Files"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.header().setStretchLastSection(False)
@@ -261,6 +281,45 @@ class SignalsPage(QWidget):
                 break
         if needle or len(groups) < 8:
             self.tree.expandAll()
+        self.mark_used_channels()
+
+    def used_channel_keys(self) -> set[str]:
+        """The channels the Signals table already reads (each signal's first matching channel)."""
+        infos = [e["info"] for e in self._channel_union().values()]
+        # the same tiers as match_channel, as lookups (files can hold many thousands of channels)
+        tiers = (lambda c: c.name, lambda c: c.name.lower(), lambda c: c.clean.lower(), lambda c: c.base.lower())
+        lookups = []
+        for tier in tiers:
+            first: dict[str, list] = {}
+            for c in infos:
+                first.setdefault(tier(c), []).append(c)
+            lookups.append(first)
+        used = set()
+        for _name, d, _lib in self._rows():
+            for cand in d.get("channels", []) or []:
+                group, name = (s.strip() for s in cand.split("::", 1)) if "::" in cand else (None, cand.strip())
+                hit = None
+                for i, first in enumerate(lookups):
+                    hits = [c for c in first.get(name if i == 0 else name.lower(), [])
+                            if group is None or c.group_name.lower() == group.lower()]
+                    if hits:
+                        hit = hits[0]
+                        break
+                if hit is not None:
+                    used.add(f"{hit.group_name}::{hit.name}")
+                    break
+        return used
+
+    def mark_used_channels(self):
+        """A small dot in front of each channel already added as a signal."""
+        used = self.used_channel_keys()
+        for g in range(self.tree.topLevelItemCount()):
+            group = self.tree.topLevelItem(g)
+            for i in range(group.childCount()):
+                item = group.child(i)
+                on = item.data(0, Qt.UserRole) in used
+                item.setIcon(0, _dot_icon(on))
+                item.setData(0, Qt.UserRole + 1, on)
 
     def eventFilter(self, obj, e):
         """Channels dragged from the tree are added as signals when dropped on the Signals table."""
@@ -399,6 +458,7 @@ class SignalsPage(QWidget):
                     item.setForeground(QColor("#c27a00") if not d.get("required", True) else QColor("#e34948"))
                 self.sig_table.setItem(r, c, item)
         self._loading = False
+        self.mark_used_channels()
 
     def signal_cell_changed(self, item: QTableWidgetItem):
         if self._loading:
