@@ -126,7 +126,7 @@ class SignalsPage(QWidget):
             head.addWidget(b)
         ll.addLayout(head)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Channel", "Unit", "Files"])
+        self.tree.setHeaderLabels(["Signal", "Unit", "Files"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)

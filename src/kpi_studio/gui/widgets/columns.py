@@ -55,8 +55,9 @@ class ColumnSizer(QObject):
             QTimer.singleShot(0, self.fill)
 
     def fill(self, dragged: int = -1):
-        """After the user sized columns, keep them spanning the whole width: the free (or missing)
-        width goes to a stretching column (else the last one), never the column being dragged."""
+        """After the user sized columns, keep them spanning the whole width. Like a splitter, a dragged
+        column trades width with the columns to its right (nearest first); otherwise the free (or
+        missing) width goes to a stretching column, else the last one. Never the dragged column."""
         h = self.header
         if h.stretchLastSection() or self.view is None:
             return  # Qt already fills with the last column
@@ -64,9 +65,11 @@ class ColumnSizer(QObject):
         if len(shown) < 2:
             return
         stretch = [c for c in shown if c < len(self.modes) and self.modes[c] == QHeaderView.Stretch]
-        # who gives or takes the width: a stretching column first, then the others right to left, and
-        # the dragged column last (it can't push the table wider than the view)
-        order = [c for c in dict.fromkeys(stretch + shown[::-1]) if c != dragged]
+        # who gives or takes the width: the columns right of the dragged one, then a stretching column,
+        # then the others right to left, and the dragged column last (it can't push the table wider
+        # than the view)
+        right = [c for c in shown if dragged in shown and c > dragged]
+        order = [c for c in dict.fromkeys(right + stretch + shown[::-1]) if c != dragged]
         if dragged in shown:
             order.append(dragged)
         free = h.viewport().width() - sum(h.sectionSize(c) for c in shown)
@@ -75,7 +78,7 @@ class ColumnSizer(QObject):
         self._fitting = True
         try:
             if free > 0:
-                h.resizeSection(order[0], h.sectionSize(order[0]) + free)
+                h.resizeSection(order[0], h.sectionSize(order[0]) + free)  # e.g. the right neighbour
             else:
                 for c in order:
                     give = min(-free, h.sectionSize(c) - self.header_width(c))

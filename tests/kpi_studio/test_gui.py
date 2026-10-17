@@ -1229,3 +1229,27 @@ def test_drag_channels_onto_the_signals_table(qtbot, window, mf4_dir):
     assert len(sigs) < before
     assert page.eventFilter(viewport, Drop(QEvent.Type.Drop, tree))
     assert any("throttle_value" in str(s) for s in sigs.values())  # dropped channel added as a signal
+
+
+def test_dragging_a_column_edge_trades_width_with_its_right_neighbour(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Signals"), sticky=True)
+    tree = window.signals_page.tree
+    h = tree.header()
+    assert [tree.headerItem().text(c) for c in range(3)] == ["Signal", "Unit", "Files"]
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    sizer = h._column_sizer
+    sizer._pressed = True
+    h.resizeSection(1, 200)
+    signal, unit, files = (h.sectionSize(c) for c in range(3))
+    h.resizeSection(1, unit - 80)  # the Unit | Files edge dragged left: Files gets wider
+    assert (h.sectionSize(0), h.sectionSize(2)) == (signal, files + 80)
+    signal, unit, files = (h.sectionSize(c) for c in range(3))
+    grow = 60
+    h.resizeSection(1, unit + grow)  # the Unit | Files edge dragged right: Files gets narrower
+    sizer._pressed = False
+    assert h.sectionSize(0) == signal  # the Signal column keeps its width
+    assert h.sectionSize(2) == files - grow
