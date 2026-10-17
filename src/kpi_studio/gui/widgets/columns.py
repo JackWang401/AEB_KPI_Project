@@ -7,7 +7,7 @@ or header whose text is cut off shows its full text on hover."""
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QMenu, QToolTip
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QLineEdit, QMenu, QToolTip
 
 TIP_FONT_PX = 13  # the size of the text in the tables
 
@@ -235,7 +235,19 @@ class _AppFilter(QObject):
                     return True
         elif t == QEvent.Show and isinstance(obj, QHeaderView):
             make_resizable(obj)
+        elif t in (QEvent.Show, QEvent.FocusOut) and isinstance(obj, QLineEdit):
+            start_aligned(obj)
         return False
+
+
+def start_aligned(edit: QLineEdit) -> None:
+    """Text too long for the box shows its start, not its end, unless the user is typing in it
+    (also whenever the text is set later, e.g. when another item is loaded)."""
+    if not edit.property("startAligned"):
+        edit.setProperty("startAligned", True)
+        edit.textChanged.connect(lambda *_: None if edit.hasFocus() else edit.setCursorPosition(0))
+    if not edit.hasFocus():
+        edit.setCursorPosition(0)
 
 
 def make_resizable(header: QHeaderView) -> None:

@@ -1174,3 +1174,25 @@ def test_dragged_columns_still_span_the_whole_width(qtbot, window, mf4_dir):
     bar.set_width(bar.current, bar.widths[bar.current] - 150)  # the panel narrows: still filled
     qtbot.wait(50)
     assert total() == h.viewport().width()
+
+
+def test_long_text_in_a_box_shows_its_start(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.common import ExprEdit
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Events & KPIs"), sticky=True)
+    form = window.kpi_page.event_form
+    window.kpi_page.events.setCurrentRow(0)
+    qtbot.wait(50)
+    edits = [w for w in form.moments.findChildren(ExprEdit) if w.isVisible()]
+    assert edits and all(e.cursorPosition() == 0 for e in edits)
+    form.desc.setText("a very long description " * 10)  # set while shown (another item loaded)
+    assert form.desc.cursorPosition() == 0
+    form.desc.setFocus()
+    qtbot.waitUntil(form.desc.hasFocus, timeout=2000)
+    form.desc.end(False)  # while typing, the cursor stays where the user puts it
+    form.desc.insert("x")
+    assert form.desc.cursorPosition() == len(form.desc.text())
