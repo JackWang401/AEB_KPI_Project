@@ -1145,3 +1145,32 @@ def test_moment_expression_column_is_the_widest(qtbot, window, mf4_dir):
     qtbot.wait(100)
     h = window.kpi_page.event_form.moments.horizontalHeader()
     assert h.sectionSize(2) > h.sectionSize(3) and h.sectionSize(2) > h.sectionSize(1)
+
+
+def test_dragged_columns_still_span_the_whole_width(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Events & KPIs"), sticky=True)
+    window.kpi_page.events.setCurrentRow(0)
+    qtbot.wait(100)
+    h = window.kpi_page.event_form.moments.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    sizer = h._column_sizer
+
+    def total():
+        return sum(h.sectionSize(c) for c in range(h.count()) if not h.isSectionHidden(c))
+
+    for col, width in ((1, 100), (3, 220), (2, 150), (3, 2000)):  # Rule narrower, Options wider, …
+        before = h.sectionSize(col)
+        sizer._pressed = True
+        h.resizeSection(col, width)
+        sizer._pressed = False
+        assert total() == h.viewport().width()  # the columns still fill the table exactly
+        after = h.sectionSize(col)
+        assert (after >= before) if width > before else (after <= before)  # and the drag took effect
+        assert after == max(width, sizer.header_width(col)) or width == 2000  # (2000: capped to the view)
+    bar.set_width(bar.current, bar.widths[bar.current] - 150)  # the panel narrows: still filled
+    qtbot.wait(50)
+    assert total() == h.viewport().width()

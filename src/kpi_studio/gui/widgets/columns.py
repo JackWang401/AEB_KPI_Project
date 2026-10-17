@@ -51,6 +51,41 @@ class ColumnSizer(QObject):
     def schedule(self, *_):
         if not self.user_sized:
             self._timer.start(0)
+        else:
+            QTimer.singleShot(0, self.fill)
+
+    def fill(self, dragged: int = -1):
+        """After the user sized columns, keep them spanning the whole width: the free (or missing)
+        width goes to a stretching column (else the last one), never the column being dragged."""
+        h = self.header
+        if h.stretchLastSection() or self.view is None:
+            return  # Qt already fills with the last column
+        shown = [c for c in range(h.count()) if not h.isSectionHidden(c)]
+        if len(shown) < 2:
+            return
+        stretch = [c for c in shown if c < len(self.modes) and self.modes[c] == QHeaderView.Stretch]
+        # who gives or takes the width: a stretching column first, then the others right to left, and
+        # the dragged column last (it can't push the table wider than the view)
+        order = [c for c in dict.fromkeys(stretch + shown[::-1]) if c != dragged]
+        if dragged in shown:
+            order.append(dragged)
+        free = h.viewport().width() - sum(h.sectionSize(c) for c in shown)
+        if free == 0:
+            return
+        self._fitting = True
+        try:
+            if free > 0:
+                h.resizeSection(order[0], h.sectionSize(order[0]) + free)
+            else:
+                for c in order:
+                    give = min(-free, h.sectionSize(c) - self.header_width(c))
+                    if give > 0:
+                        h.resizeSection(c, h.sectionSize(c) - give)
+                        free += give
+                    if free >= 0:
+                        break
+        finally:
+            self._fitting = False
 
     def header_width(self, c: int) -> int:
         """The width the column's header text needs: no column gets narrower than that."""
@@ -69,6 +104,8 @@ class ColumnSizer(QObject):
                 self.header.resizeSection(c, self.header_width(c))
             finally:
                 self._fitting = False
+        if self.user_sized:
+            self.fill(dragged=c)
 
     def eventFilter(self, obj, e):
         t = e.type()
@@ -77,7 +114,7 @@ class ColumnSizer(QObject):
         elif t == QEvent.MouseButtonRelease:
             self._pressed = False
         elif t == QEvent.Resize and obj is self.header:
-            self.schedule()
+            self.schedule()  # (once the user sized columns: refill the width)
         return False
 
     def fit(self):
@@ -266,6 +303,9 @@ def _set_shown(view, header: QHeaderView, c: int, on: bool) -> None:
         width = sizer.header_width(c) if sizer is not None else header.sectionSizeHint(c)
         if header.sectionSize(c) < width:
             header.resizeSection(c, max(width, view.sizeHintForColumn(c)))
+    sizer = getattr(header, "_column_sizer", None)
+    if sizer is not None:
+        sizer.schedule()  # the shown columns span the width again
     key = view.property("columnsKey")
     settings = getattr(view, "_columns_settings", None)
     if key and settings is not None:
