@@ -803,18 +803,15 @@ def test_files_and_plots_right_click_menus(qtbot, window, mf4_dir):
 
 def test_enum_and_condition_dialogs_right_click(qtbot):
     from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QPushButton
 
     from src.kpi_studio.gui.pages.signals_page import EnumDialog
     from src.kpi_studio.gui.widgets.common import ConditionBuilder
-    from src.kpi_studio.gui.widgets.context_menu import menu_for
 
     dlg = EnumDialog("gear", {"P": 0, "D": 1})
     qtbot.addWidget(dlg)
-    assert _texts(menu_for(dlg.table, row=-1)) == ["Add value"]
-    menu_for(dlg.table, row=-1).actions()[0].trigger()
-    assert dlg.table.rowCount() == 3
-    menu_for(dlg.table, row=0).actions()[0].trigger()
-    assert dlg.table.rowCount() == 2
+    assert dlg.table.contextMenuPolicy() == Qt.NoContextMenu  # the enum values are only shown: no add / delete
+    assert not [b for b in dlg.findChildren(QPushButton) if b.text() in ("+", "−", "-")]
     cb = ConditionBuilder(["a", "b"])
     qtbot.addWidget(cb)
     cb.show()

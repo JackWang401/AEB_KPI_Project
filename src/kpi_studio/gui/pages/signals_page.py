@@ -447,7 +447,7 @@ class SignalsPage(QWidget):
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # edited in the table dialog
                         item.setToolTip("\n".join(f"{_num(v)} = {k}" for k, v in
                                                   sorted(d["enum"].items(), key=lambda kv: kv[1]))
-                                        + "\n\nDouble-click to see or edit the values")
+                                        + "\n\nDouble-click to see the values")
                     else:
                         item.setToolTip("Name of an enum table, or double-click with a value table to edit it")
                 if from_lib:
@@ -498,13 +498,7 @@ class SignalsPage(QWidget):
             current = self.state.resolved.signals[name].enum if self.state.resolved is not None else None
         if not isinstance(current, dict):
             return  # a table name: edited in the cell
-        dlg = EnumDialog(name, current, self)
-        if dlg.exec() != EnumDialog.Accepted:
-            return
-        if from_lib and name not in sigs:
-            sigs[name] = self.state.resolved.signals[name].model_dump(exclude_none=True)
-        sigs[name]["enum"] = dlg.values() or None
-        self.state.edited(structure=True)
+        EnumDialog(name, current, self).exec()
 
     def _derived_actions(self, rows):
         actions = []
@@ -671,7 +665,8 @@ class SignalsPage(QWidget):
 
 
 class EnumDialog(QDialog):
-    """The value table of an enum signal, one value per row (raw value | text)."""
+    """The value table of an enum signal, one value per row (raw value | text). View only: the values
+    come from the file, so there is nothing to add, delete or edit."""
 
     def __init__(self, signal: str, enum: dict, parent=None):
         super().__init__(parent)
@@ -680,32 +675,21 @@ class EnumDialog(QDialog):
         lay = QVBoxLayout(self)
         info = QLabel("Use the text in conditions, e.g. " + signal + ' == "' + (next(iter(enum), "") or "TEXT") + '"')
         info.setWordWrap(True)
+        info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(info)
-        erow = QHBoxLayout()
-        erow.addStretch(1)
-        for b in context_menu.plus_minus(add=lambda: self._add("", ""), remove=self.delete_selected,
-                                         add_tip="Add a value", remove_tip="Delete the selected values"):
-            erow.addWidget(b)
-        lay.addLayout(erow)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Value", "Text"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setContextMenuPolicy(Qt.NoContextMenu)
         for text, value in sorted(enum.items(), key=lambda kv: kv[1]):
             self._add(_num(value), text)
         lay.addWidget(self.table, 1)
-        context_menu.install(self.table, add=[("Add value", lambda: self._add("", ""))],
-                             item=lambda rows: [("Delete value" if len(rows) == 1 else f"Delete {len(rows)} values",
-                                                 self.delete_selected)])
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
-
-    def delete_selected(self):
-        for r in sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True):
-            self.table.removeRow(r)
 
     def _add(self, value: str, text: str):
         r = self.table.rowCount()

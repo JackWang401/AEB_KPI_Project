@@ -64,8 +64,7 @@ def test_signals_get_unit_kind_description_from_the_file(qtbot, tmp_path):
     dlg = EnumDialog("Mot", sigs["Mot"]["enum"])
     qtbot.addWidget(dlg)
     assert [dlg.table.item(r, 1).text() for r in range(dlg.table.rowCount())] == ["OFF", "SERVED"]
-    dlg.table.item(1, 1).setText("ON")
-    assert dlg.values() == {"OFF": 0, "ON": 3}
+    assert dlg.table.editTriggers() == dlg.table.EditTrigger.NoEditTriggers  # view only
     # the file's texts work in expressions
     w.state.data["events"]["served"] = {"start": 'rising(Mot == "SERVED")'}
     w.state.edited(structure=True)
