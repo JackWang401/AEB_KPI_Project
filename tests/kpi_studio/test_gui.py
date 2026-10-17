@@ -1133,3 +1133,15 @@ def test_right_click_a_header_to_pick_the_columns_shown(qtbot, window, mf4_dir):
     sig = window.signals_page.sig_table
     enum = [sig.horizontalHeaderItem(c).text() for c in range(sig.columnCount())].index("Enum")
     assert sig.horizontalHeader().isSectionHidden(enum)
+
+
+def test_moment_expression_column_is_the_widest(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Events & KPIs"), sticky=True)
+    window.kpi_page.events.setCurrentRow(0)
+    qtbot.wait(100)
+    h = window.kpi_page.event_form.moments.horizontalHeader()
+    assert h.sectionSize(2) > h.sectionSize(3) and h.sectionSize(2) > h.sectionSize(1)

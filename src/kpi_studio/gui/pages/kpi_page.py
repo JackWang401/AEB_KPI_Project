@@ -162,8 +162,11 @@ class EventForm(QWidget):
         bl.addLayout(mrow)
         self.moments = QTableWidget(0, 4)
         self.moments.setHorizontalHeaderLabels(["Name", "Rule", "Expression / target moment", "Options"])
-        self.moments.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.moments.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        mh = self.moments.horizontalHeader()
+        mh.setSectionResizeMode(2, QHeaderView.Stretch)  # the expression takes the free width
+        for col, width in ((1, 145), (3, 170)):  # Rule and Options: set widths (still draggable)
+            mh.setSectionResizeMode(col, QHeaderView.Fixed)
+            mh.resizeSection(col, width)
         bl.addWidget(self.moments)
         hint = QLabel("Options: after: start, before: end, within: 1.5, between: [start, end], hold: 0.2, "
                       "plus the rule's own options (e.g. threshold: -20). Offset rule: target moment + 'by: -0.5'.")
