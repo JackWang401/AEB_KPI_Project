@@ -503,6 +503,9 @@ class ConditionBuilder(QDialog):
         opening.setToolTip("Open brackets before this row (not: negate it)")
         closing.addItems(self.CLOSES)
         closing.setToolTip("Close brackets after this row")
+        width = max(opening.sizeHint().width(), closing.sizeHint().width())
+        opening.setFixedWidth(width)  # the bracket boxes line up as one width
+        closing.setFixedWidth(width)
         policy = join.sizePolicy()
         policy.setRetainSizeWhenHidden(True)  # the first row has no join, but lines up with the others
         join.setSizePolicy(policy)

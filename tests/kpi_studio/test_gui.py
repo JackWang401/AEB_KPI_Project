@@ -1456,6 +1456,7 @@ def test_condition_builder_groups_rows_with_brackets(qtbot):
         val.setText(v)
     (j0, o0, c0), (j1, o1, c1), (j2, o2, c2) = dlg.links
     assert not j0.isVisible() or not dlg.isVisible()  # the first row joins nothing
+    assert o0.width() == c0.width() == o0.minimumWidth() == c0.maximumWidth()  # bracket boxes: one width
     o0.setCurrentText("(")
     assert dlg.bracket_problem() == "1 bracket not closed"
     assert not dlg.ok_button.isEnabled()
