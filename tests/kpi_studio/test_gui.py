@@ -1665,6 +1665,24 @@ def test_boolean_signals_are_shaded_strips_at_the_bottom(qtbot, window, mf4_dir)
     assert bottom.get_position().height < top.get_position().height  # a low strip
 
 
+def test_right_click_a_plotted_signal_to_set_its_kind(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    assert viewer._names[viewer._axes[0]] == ["egoSpeed"]
+    acts = {a.text(): a for a in viewer.signal_menu(["egoSpeed"]).actions()}
+    assert acts["continuous"].isChecked() and not acts["boolean"].isChecked()
+    acts["boolean"].trigger()
+    assert window.state.data["signals"]["egoSpeed"]["kind"] == "boolean"
+    assert viewer._names[viewer._axes[-1]] == ["egoSpeed"]  # straight to the bottom
+    sub = {a.text(): a for a in viewer.subplot_menu(viewer._axes[-1]).actions()}
+    assert sub["boolean"].isChecked() and sub["Stepped line"].isChecked()
+
+
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
     from src.kpi_studio.gui.pages.signals_page import KINDS
     _load(qtbot, window, mf4_dir)

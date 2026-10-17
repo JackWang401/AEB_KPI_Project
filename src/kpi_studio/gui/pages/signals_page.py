@@ -36,7 +36,7 @@ from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import ExprEdit, HighlightDelegate, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
-from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
+from src.kpi_studio.gui.widgets.signal_viewer import KIND_TIPS, KINDS, SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
 
 LIB_COLOR = QColor("#6b6b66")
@@ -61,13 +61,6 @@ def _dot_icon(on: bool) -> QIcon:
     return _DOTS[on]
 
 
-KINDS = ["continuous", "discrete", "boolean", "enum"]
-KIND_TIPS = {
-    "continuous": "Measured values: linearly interpolated between samples, drawn as a plain line",
-    "discrete": "Counters, states and other step values: held until the next sample, drawn as a stepped line",
-    "boolean": "0/1 flags: held, drawn as a shaded stepped line at the bottom of the plot",
-    "enum": "Values with names (a value table): held, drawn as a stepped line",
-}
 
 
 class KindDelegate(QStyledItemDelegate):

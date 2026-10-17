@@ -124,6 +124,13 @@ class SignalList(QListWidget):
         self.blockSignals(False)
         self.reordered.emit()
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+KINDS = ["continuous", "discrete", "boolean", "enum"]
+KIND_TIPS = {
+    "continuous": "Measured values: linearly interpolated between samples, drawn as a plain line",
+    "discrete": "Counters, states and other step values: held until the next sample, drawn as a stepped line",
+    "boolean": "0/1 flags: held, drawn as a shaded stepped line at the bottom of the plot",
+    "enum": "Values with names (a value table): held, drawn as a stepped line",
+}
 AXIS_MIN_PX = 70     # each subplot gets at least this height: with more, the plots scroll
 BOOL_RATIO = 0.4  # height of a boolean subplot, relative to the others
 
@@ -924,15 +931,42 @@ class SignalViewer(QWidget):
             self.pv_status.setToolTip(getattr(self, "_issues_tip", ""))
 
     # ------------------------------------------------------------------ cursors
-    def signal_menu(self, names: list[str]) -> QMenu:
-        """Right-click menu for `names`: draw them as a stepped or a plain line."""
-        menu = QMenu(self)
+    def signal_menu(self, names: list[str], menu: QMenu | None = None) -> QMenu:
+        """Right-click menu for `names`: draw them as a stepped or a plain line, and their Kind."""
+        menu = menu or QMenu(self)
+        menu.setToolTipsVisible(True)
         act = menu.addAction("Stepped line" + (f" ({len(names)} signals)" if len(names) > 1 else ""))
         act.setCheckable(True)
         act.setChecked(bool(names) and all(self.is_stepped(n) for n in names))
         act.setToolTip("Hold each value until the next sample (for states, flags and other discrete signals)")
         act.triggered.connect(lambda on, ns=list(names): self.set_stepped(ns, on))
+        menu.addSection("Kind")
+        own = [n for n in names if self._kind_editable(n)]
+        for k in KINDS:
+            act = menu.addAction(k)
+            act.setCheckable(True)
+            act.setChecked(bool(names) and all(self.kind(n) == k for n in names))
+            act.setEnabled(bool(own))
+            act.setToolTip(KIND_TIPS[k] if own else "Derived signals have no Kind")
+            act.triggered.connect(lambda _on, ns=own, k=k: self.set_kind(ns, k))
         return menu
+
+    def _kind_editable(self, name: str) -> bool:
+        return name in (self.state.data.get("signals") or {}) or (
+            self.state.resolved is not None and name in self.state.resolved.signals)
+
+    def set_kind(self, names, kind: str):
+        """Set the Kind of `names` (as in Selected signals); their stepped-line choice follows the Kind again."""
+        sigs = self.state.data.setdefault("signals", {})
+        for n in names:
+            if n not in sigs:  # from an imported library: becomes the profile's own
+                sigs[n] = self.state.resolved.signals[n].model_dump(exclude_none=True)
+            sigs[n]["kind"] = kind
+            self.step_choice.pop(n, None)
+        if names:
+            self.state.edited(structure=True)
+            if self._axes:
+                self.draw()  # a boolean moves to the bottom at once
 
     def kind(self, name: str) -> str:
         """The signal's Kind (Selected signals); derived signals count as continuous."""
@@ -962,13 +996,12 @@ class SignalViewer(QWidget):
 
     def subplot_menu(self, ax) -> QMenu:
         """Right-click on a subplot's signal names (right of the plot): one entry per signal."""
-        menu = QMenu(self)
         names = list(dict.fromkeys(self._names.get(ax, [])))
+        if len(names) == 1:
+            return self.signal_menu(names)
+        menu = QMenu(self)
         for n in names:
-            act = menu.addAction(f"Stepped line: {n}" if len(names) > 1 else "Stepped line")
-            act.setCheckable(True)
-            act.setChecked(self.is_stepped(n))
-            act.triggered.connect(lambda on, n=n: self.set_stepped([n], on))
+            self.signal_menu([n], menu.addMenu(n))
         return menu
 
     def _legend_axes(self, event):
