@@ -346,10 +346,14 @@ class ConditionBuilder(QDialog):
     HINTS = {"in": "list, e.g. 1, 2", "changes to": "value, e.g. 3", "changes from": "value, e.g. 3",
              "changes from → to": "from, to   e.g. 0, 3"}
 
-    def __init__(self, names: list[str], parent=None, initial: str = ""):
+    MULTI = ("in", "changes from → to")  # operators that take several values
+
+    def __init__(self, names: list[str], parent=None, initial: str = "", enums: Optional[dict] = None):
         super().__init__(parent)
         self.setWindowTitle("Build condition")
         self.names = names
+        self.enums = enums or {}  # signal -> {TEXT: value}: their texts can be picked as values
+        self.value_picker: Optional[NamePicker] = None
         self.rows: list[tuple] = []
         lay = QVBoxLayout(self)
         info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL.\n"
@@ -392,7 +396,14 @@ class ConditionBuilder(QDialog):
         op.addItems(self.OPS)
         val = QLineEdit()
         val.setPlaceholderText("value")
-        op.currentTextChanged.connect(lambda o, v=val: v.setPlaceholderText(self.HINTS.get(o, "value")))
+        pick = QAction(_arrow_icon(), "Pick a value", val)
+        pick.setToolTip("Pick one of the signal's enum values")
+        val.addAction(pick, QLineEdit.TrailingPosition)
+        pick.triggered.connect(lambda _=False, v=val: self.open_values(v))
+        val.pick_action = pick
+        op.currentTextChanged.connect(lambda _o, s=sig, o=op, v=val: self._update_value_field(s, o, v))
+        sig.currentTextChanged.connect(lambda _t, s=sig, o=op, v=val: self._update_value_field(s, o, v))
+        self._update_value_field(sig, op, val)
         row = QHBoxLayout()
         for w in (sig, op, val):
             row.addWidget(w)
@@ -403,6 +414,35 @@ class ConditionBuilder(QDialog):
         self.rows_box.addLayout(row)
         self.rows.append((sig, op, val))
         self.update_preview()
+
+    def values_of(self, signal: str) -> list[str]:
+        """The enum texts of `signal` as they are written in a condition, in value order."""
+        members = self.enums.get(signal.strip()) or {}
+        return [m if m.isidentifier() else f'"{m}"' for m, _ in sorted(members.items(), key=lambda kv: kv[1])]
+
+    def _update_value_field(self, sig: QComboBox, op: QComboBox, val: QLineEdit):
+        """An enum signal's value field gets a ▾ that lists its values."""
+        has = bool(self.values_of(sig.currentText()))
+        val.pick_action.setVisible(has)
+        hint = self.HINTS.get(op.currentText(), "value")
+        val.setPlaceholderText(f"{hint}  (or pick one ▾)" if has else hint)
+
+    def open_values(self, val: QLineEdit):
+        sig, op = next((s, o) for s, o, v in self.rows if v is val)
+        self.value_picker = NamePicker({f"Values of {sig.currentText().strip()}": self.values_of(sig.currentText())},
+                                       self)
+        self.value_picker.picked.connect(lambda name, v=val, o=op: self.pick_value(v, o.currentText(), name))
+        lst = self.value_picker.list
+        lst.setMinimumWidth(min(max(val.width(), lst.sizeHintForColumn(0) + 40), 900))  # full texts
+        self.value_picker.popup(val.mapToGlobal(val.rect().bottomLeft()))
+
+    def pick_value(self, val: QLineEdit, op: str, value: str):
+        """Put a picked value in the field; operators taking several values get it added to the list."""
+        current = val.text().strip().rstrip(",").strip()
+        if op in self.MULTI and current:
+            val.setText(f"{current}, {value}")
+        else:
+            val.setText(value)
 
     def delete_row(self, i: int):
         sig, op, val = self.rows.pop(i)

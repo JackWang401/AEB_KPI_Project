@@ -1399,3 +1399,28 @@ def test_drag_signals_to_reorder_them(qtbot, window, mf4_dir):
     page.move_signals([2], 0)  # and back to the top
     assert list(window.state.data["signals"]) == names
     assert page.drop_row(t.viewport().height() - 1) <= page.own_count()  # never among library signals
+
+
+def test_condition_builder_lists_an_enum_signals_values(qtbot):
+    from src.kpi_studio.core.expr import compile_expr
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+
+    enums = {"fb_state": {"STATE_READY": 1, "STATE_UNSPECIFIED": 0, "on hold": 3}}
+    dlg = ConditionBuilder(["speed", "fb_state"], enums=enums)
+    qtbot.addWidget(dlg)
+    sig, op, val = dlg.rows[0]
+    sig.setCurrentText("speed")
+    assert not val.pick_action.isVisible()  # not an enum: nothing to pick
+    sig.setCurrentText("fb_state")
+    assert val.pick_action.isVisible()
+    assert dlg.values_of("fb_state") == ["STATE_UNSPECIFIED", "STATE_READY", '"on hold"']  # in value order
+    op.setCurrentText("changes to")
+    dlg.pick_value(val, op.currentText(), "STATE_READY")
+    dlg.pick_value(val, op.currentText(), "STATE_UNSPECIFIED")  # one value: replaced
+    assert val.text() == "STATE_UNSPECIFIED"
+    op.setCurrentText("in")
+    dlg.pick_value(val, op.currentText(), '"on hold"')  # a list: added
+    assert val.text() == 'STATE_UNSPECIFIED, "on hold"'
+    expr = dlg.expression()
+    assert expr == 'fb_state in (STATE_UNSPECIFIED, "on hold")'
+    compile_expr(expr, names={"fb_state", "speed"}, enums=enums)  # the condition compiles

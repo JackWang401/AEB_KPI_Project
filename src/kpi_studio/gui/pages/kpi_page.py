@@ -275,7 +275,7 @@ class EventForm(QWidget):
         self.state.edited()
 
     def build(self, edit: ExprEdit, key: str):
-        dlg = ConditionBuilder(self.state.signal_names(), self, initial=edit.text())
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=edit.text(), enums=self.state.enum_map())
         if dlg.exec() == QDialog.Accepted and dlg.expression():
             edit.setText(dlg.expression())
             self.set(key, dlg.expression())
@@ -430,7 +430,8 @@ class EventForm(QWidget):
         return actions
 
     def build_moment_row(self, row: int):
-        dlg = ConditionBuilder(self.state.signal_names(), self, initial=self.moments.cellWidget(row, 2).text())
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=self.moments.cellWidget(row, 2).text(),
+                               enums=self.state.enum_map())
         if dlg.exec() == QDialog.Accepted and dlg.expression():
             self.apply_moment_condition(row, dlg.expression())
 
