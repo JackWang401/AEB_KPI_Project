@@ -170,7 +170,7 @@ class SignalsPage(QWidget):
         sl.setContentsMargins(0, 0, 0, 0)
         sl.setSpacing(4)
         row = QHBoxLayout()
-        row.addWidget(title("Signals", "Signals this profile reads from the files"))
+        row.addWidget(title("Selected signals", "Signals this profile reads from the files"))
         row.addStretch(1)
         for b in context_menu.plus_minus(remove=self.delete_signal, remove_tip="Delete the selected signals"):
             row.addWidget(b)
@@ -215,7 +215,7 @@ class SignalsPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         # right-click menus: every add / delete is in one
         context_menu.install(self.tree, item=lambda rows: [("Add as signal", self.add_selected_channels)])
-        self.tree.setToolTip("Drag channels onto the Signals table, double-click one or right-click it to add "
+        self.tree.setToolTip("Drag channels onto Selected signals, double-click one or right-click it to add "
                              "it as a signal")
         # drag channels from the tree and drop them on the Signals table
         self.tree.setDragEnabled(True)
