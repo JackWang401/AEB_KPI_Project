@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -224,6 +225,14 @@ class SignalsPage(QWidget):
         self.sig_table.setAcceptDrops(True)
         self.sig_table.viewport().setAcceptDrops(True)
         self.sig_table.viewport().installEventFilter(self)
+        # and drag the table's own rows up or down to reorder the signals
+        self.sig_table.setDragEnabled(True)
+        self.sig_table.setDragDropMode(QAbstractItemView.DragDrop)
+        self.sig_table.setDefaultDropAction(Qt.MoveAction)
+        self.sig_table.setDropIndicatorShown(False)
+        self._drop_line = QFrame(self.sig_table.viewport())
+        self._drop_line.setStyleSheet("background: #007aff;")
+        self._drop_line.hide()
         context_menu.install(self.sig_table,
                              item=lambda rows: [("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows",
                                                  self.delete_signal)])
@@ -323,8 +332,21 @@ class SignalsPage(QWidget):
                 item.setData(0, Qt.UserRole + 1, on)
 
     def eventFilter(self, obj, e):
-        """Channels dragged from the tree are added as signals when dropped on the Signals table."""
+        """Channels dragged from the tree are added as signals when dropped on the Signals table; the
+        table's own rows dragged within it reorder the signals."""
+        if obj is self.sig_table.viewport() and e.type() == QEvent.DragLeave:
+            self._drop_line.hide()
         if obj is self.sig_table.viewport() and e.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            if e.source() is self.sig_table:
+                e.setDropAction(Qt.MoveAction)
+                e.accept()
+                to = self.drop_row(int(e.position().y()))
+                if e.type() == QEvent.Drop:
+                    self._drop_line.hide()
+                    self.move_signals(sorted({i.row() for i in self.sig_table.selectedIndexes()}), to)
+                else:
+                    self._show_drop_line(to)
+                return True
             if e.source() is not self.tree:
                 return False
             e.setDropAction(Qt.CopyAction)
@@ -333,6 +355,50 @@ class SignalsPage(QWidget):
                 self.add_selected_channels()  # the dragged channels are the tree's selected ones
             return True
         return super().eventFilter(obj, e)
+
+    def own_count(self) -> int:
+        """The table lists the profile's own signals first, then those from libraries (not movable)."""
+        return len(self.state.data.get("signals", {}) or {})
+
+    def drop_row(self, y: int) -> int:
+        """Where rows dropped at viewport height `y` go: before the row under it (after it in its lower
+        half), never among the library signals."""
+        t = self.sig_table
+        r = t.rowAt(y)
+        if r < 0:
+            r = t.rowCount()
+        elif y > t.rowViewportPosition(r) + t.rowHeight(r) // 2:
+            r += 1
+        return min(r, self.own_count())
+
+    def _show_drop_line(self, row: int):
+        t = self.sig_table
+        y = t.rowViewportPosition(row) if row < t.rowCount() else (
+            t.rowViewportPosition(row - 1) + t.rowHeight(row - 1) if row else 0)
+        self._drop_line.setGeometry(0, max(0, y - 1), t.viewport().width(), 2)
+        self._drop_line.show()
+        self._drop_line.raise_()
+
+    def move_signals(self, rows: list[int], to: int):
+        """Move the signals in table `rows` so they sit before row `to`, keeping their order."""
+        sigs = self.state.data.get("signals", {}) or {}
+        names = list(sigs)
+        moving = [names[r] for r in rows if r < len(names)]
+        if not moving:
+            return
+        before = [n for n in names[:to] if n not in moving]
+        after = [n for n in names[to:] if n not in moving]
+        order = before + moving + after
+        if order == names:
+            return
+        reordered = {n: sigs[n] for n in order}
+        sigs.clear()
+        sigs.update(reordered)
+        self.state.edited(structure=True)
+        sel = self.sig_table.selectionModel()
+        sel.clearSelection()
+        for r in range(len(before), len(before) + len(moving)):  # the moved rows stay selected
+            sel.select(self.sig_table.model().index(r, 0), sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
 
     def add_selected_channels(self):
         sigs = self.state.data.setdefault("signals", {})

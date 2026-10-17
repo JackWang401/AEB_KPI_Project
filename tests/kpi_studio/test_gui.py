@@ -1367,3 +1367,35 @@ def test_enum_values_window_fits_its_content(qtbot):
     assert t.horizontalScrollBar().maximum() == 0 and t.verticalScrollBar().maximum() == 0
     blank = t.viewport().height() - t.rowCount() * t.verticalHeader().defaultSectionSize()
     assert blank < 3 * t.verticalHeader().defaultSectionSize()  # no big empty space below the values
+
+
+def test_drag_signals_to_reorder_them(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QEvent, QMimeData, QPointF
+    from PySide6.QtGui import QDropEvent
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    t = page.sig_table
+    names = list(window.state.data["signals"])
+    assert len(names) >= 3
+
+    def shown():
+        return [t.item(r, 0).text() for r in range(t.rowCount())][:len(names)]
+
+    assert shown() == names
+    t.selectRow(0)  # drag the first signal below the third one
+    y = t.rowViewportPosition(2) + t.rowHeight(2) - 2
+
+    class Drop(QDropEvent):
+        def source(self):
+            return t
+
+    drop = Drop(QPointF(10, y), Qt.MoveAction, QMimeData(), Qt.LeftButton, Qt.NoModifier, QEvent.Type.Drop)
+    assert page.eventFilter(t.viewport(), drop)
+    want = names[1:3] + names[:1] + names[3:]
+    assert list(window.state.data["signals"]) == want
+    assert shown() == want
+    assert {i.row() for i in t.selectedIndexes()} == {2}  # the moved signal stays selected
+    page.move_signals([2], 0)  # and back to the top
+    assert list(window.state.data["signals"]) == names
+    assert page.drop_row(t.viewport().height() - 1) <= page.own_count()  # never among library signals
