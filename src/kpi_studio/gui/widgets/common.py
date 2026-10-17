@@ -281,7 +281,7 @@ class ToolPalette(QWidget):
                 item.setToolTip(0, self.doc_html(item))
                 top.addChild(item)
             if not self._names:
-                top.addChild(QTreeWidgetItem(["(add signals in the Channels panel)"]))
+                top.addChild(QTreeWidgetItem(["(add signals in the Signals panel)"]))
             top.setExpanded(True)
         labels = {"signal": "Signal tools", "condition": "Conditions", "moment": "Moments (rules)",
                   "reducer": "Reducers", "event": "Event presets"}
@@ -312,7 +312,7 @@ class ToolPalette(QWidget):
         spec = item.data(0, Qt.UserRole) if item else None
         name = item.data(0, Qt.UserRole + 1) if item else None
         if name:
-            return f"<b>{name}</b><br>Signal defined in the Channels panel. Double-click to insert it."
+            return f"<b>{name}</b><br>Signal defined in the Signals panel. Double-click to insert it."
         if spec is None:
             return ""
         params = "".join(

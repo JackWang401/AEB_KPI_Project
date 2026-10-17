@@ -716,7 +716,7 @@ def test_go_to_a_signal_issue_opens_the_channels_panel(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     window.show()
     window.go_to("signals.egoSpeed")
-    assert window.side_bar.current == window.side_bar.titles.index("Channels")
+    assert window.side_bar.current == window.side_bar.titles.index("Signals")
     assert window.signals_page.sig_table.currentRow() == 0
 
 
@@ -870,7 +870,7 @@ def test_side_panels_open_on_hover_and_hide(qtbot, window, mf4_dir, monkeypatch)
     window.resize(1400, 900)
     window.show()
     bar = window.side_bar
-    assert [t.text for t in bar.tabs] == ["Files", "Time offset", "Channels", "Events & KPIs", "Plots & Run"]
+    assert [t.text for t in bar.tabs] == ["Files", "Time offset", "Signals", "Events & KPIs", "Plots & Run"]
     assert all(not p.isVisible() for p in bar.panels)  # hidden until hovered
     bar.tabs[2].hovered.emit()
     assert bar.panels[2].isVisible() and window.signals_page.tree.isVisible()
@@ -947,7 +947,7 @@ def test_every_column_can_be_dragged_and_cut_text_shows_on_hover(qtbot, window, 
     window.resize(1400, 900)
     window.show()
     bar = window.side_bar
-    bar.open(bar.titles.index("Channels"))
+    bar.open(bar.titles.index("Signals"))
     table = window.signals_page.sig_table
     h = table.horizontalHeader()
     qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
@@ -1085,7 +1085,7 @@ def test_cut_off_text_tip_sits_under_the_cell(qtbot, window, mf4_dir):
     window.resize(1400, 900)
     window.show()
     bar = window.side_bar
-    bar.open(bar.titles.index("Channels"), sticky=True)
+    bar.open(bar.titles.index("Signals"), sticky=True)
     table = window.signals_page.sig_table
     h = table.horizontalHeader()
     qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
@@ -1196,3 +1196,36 @@ def test_long_text_in_a_box_shows_its_start(qtbot, window, mf4_dir):
     form.desc.end(False)  # while typing, the cursor stays where the user puts it
     form.desc.insert("x")
     assert form.desc.cursorPosition() == len(form.desc.text())
+
+
+def test_drag_channels_onto_the_signals_table(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QEvent, QMimeData, QPointF
+    from PySide6.QtGui import QDropEvent
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    assert window.side_bar.titles[2] == "Signals"  # the panel was called Channels
+    tree = page.tree
+    channel = next(it for it in tree.findItems("*", Qt.MatchWildcard | Qt.MatchRecursive) if it.childCount() == 0
+                   and it.text(0) == "throttle_value")
+    sigs = window.state.data["signals"]
+    before = len(sigs)
+    for name in [n for n, s in sigs.items() if "throttle_value" in str(s)]:
+        del sigs[name]
+    window.state.edited(structure=True)
+    tree.clearSelection()
+    channel.setSelected(True)
+
+    class Drop(QDropEvent):
+        def __init__(self, kind, source):
+            super().__init__(QPointF(10, 10), Qt.CopyAction, QMimeData(), Qt.LeftButton, Qt.NoModifier, kind)
+            self._source = source
+
+        def source(self):
+            return self._source
+
+    viewport = page.sig_table.viewport()
+    assert not page.eventFilter(viewport, Drop(QEvent.Type.Drop, None))  # a drop from elsewhere is ignored
+    assert len(sigs) < before
+    assert page.eventFilter(viewport, Drop(QEvent.Type.Drop, tree))
+    assert any("throttle_value" in str(s) for s in sigs.values())  # dropped channel added as a signal

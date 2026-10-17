@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
         self.side_bar = SideBar(content, settings=self.settings)
         self.side_bar.add_panel("Files", self.files_page, 640, buttons=self.files_page.header_buttons)
         self.side_bar.add_panel("Time offset", self.offset_panel, 380)
-        self.side_bar.add_panel("Channels", self.signals_page, 1100)  # channels, signals, derived signals
+        self.side_bar.add_panel("Signals", self.signals_page, 1100)  # channels, signals, derived signals
         self.side_bar.add_panel("Events & KPIs", self.kpi_page, 1300)
         self.side_bar.add_panel("Plots & Run", self.run_page, 1200)
         root = QWidget()
@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
             self.open_panel("Events & KPIs")
             self.kpi_page.select_event(name)
         elif section in ("signals", "derived"):
-            self.open_panel("Channels")
+            self.open_panel("Signals")
             table = self.signals_page.sig_table if section == "signals" else self.signals_page.der_table
             for r in range(table.rowCount()):
                 if table.item(r, 0) is not None and table.item(r, 0).text() == name:

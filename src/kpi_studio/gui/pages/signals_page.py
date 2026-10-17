@@ -1,11 +1,11 @@
-"""Channels side panel: pick signals from the channels found in the files, and define derived signals."""
+"""Signals side panel: pick signals from the channels found in the files, and define derived signals."""
 
 from __future__ import annotations
 
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -94,7 +94,7 @@ class SignalsPage(QWidget):
 
         split = QSplitter(Qt.Horizontal)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)  # shown in the "Channels" side panel, which has its own margins
+        outer.setContentsMargins(0, 0, 0, 0)  # shown in the "Signals" side panel, which has its own margins
         outer.setSpacing(6)
         outer.addWidget(split, 1)
 
@@ -195,7 +195,14 @@ class SignalsPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.add_selected_channels())
         # right-click menus: every add / delete is in one
         context_menu.install(self.tree, item=lambda rows: [("Add as signal", self.add_selected_channels)])
-        self.tree.setToolTip("Right-click a channel (or double-click it) to add it as a signal")
+        self.tree.setToolTip("Drag channels onto the Signals table, double-click one or right-click it to add "
+                             "it as a signal")
+        # drag channels from the tree and drop them on the Signals table
+        self.tree.setDragEnabled(True)
+        self.tree.setDragDropMode(QAbstractItemView.DragOnly)
+        self.sig_table.setAcceptDrops(True)
+        self.sig_table.viewport().setAcceptDrops(True)
+        self.sig_table.viewport().installEventFilter(self)
         context_menu.install(self.sig_table,
                              item=lambda rows: [("Delete" if len(rows) == 1 else f"Delete {len(rows)} rows",
                                                  self.delete_signal)])
@@ -254,6 +261,18 @@ class SignalsPage(QWidget):
                 break
         if needle or len(groups) < 8:
             self.tree.expandAll()
+
+    def eventFilter(self, obj, e):
+        """Channels dragged from the tree are added as signals when dropped on the Signals table."""
+        if obj is self.sig_table.viewport() and e.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            if e.source() is not self.tree:
+                return False
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+            if e.type() == QEvent.Drop:
+                self.add_selected_channels()  # the dragged channels are the tree's selected ones
+            return True
+        return super().eventFilter(obj, e)
 
     def add_selected_channels(self):
         sigs = self.state.data.setdefault("signals", {})
