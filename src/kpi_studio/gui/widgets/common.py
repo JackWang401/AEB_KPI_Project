@@ -7,10 +7,13 @@ import re
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QComboBox,
     QListWidget,
     QListWidgetItem,
@@ -44,6 +47,71 @@ def matches(needle: str, text: str) -> bool:
     if any(c in needle for c in "*?["):
         return fnmatch.fnmatchcase(text, f"*{needle}*")
     return needle in text
+
+
+def match_spans(needle: str, text: str) -> list[tuple[int, int]]:
+    """Where `needle` matches in `text`, as (start, end) pairs, the way `matches` searches: every
+    occurrence of plain text; for a wildcard pattern its first (shortest) match."""
+    needle = (needle or "").strip()
+    if not needle or not text:
+        return []
+    if any(c in needle for c in "*?["):
+        core = needle.strip("*")  # (a leading or trailing * adds nothing to highlight)
+        if not core:
+            return []
+        rx = "".join(".*?" if c == "*" else "." if c == "?" else re.escape(c) for c in core)
+        m = re.search(rx, text, re.IGNORECASE)
+        return [m.span()] if m and m.end() > m.start() else []
+    return [m.span() for m in re.finditer(re.escape(needle), text, re.IGNORECASE)]
+
+
+class HighlightDelegate(QStyledItemDelegate):
+    """Draws an item's text with the parts matching the search (`needle_fn()`) highlighted."""
+
+    COLOR = QColor("#ffe08a")
+
+    def __init__(self, needle_fn: Callable[[], str], parent=None):
+        super().__init__(parent)
+        self.needle_fn = needle_fn
+
+    def paint(self, painter, option, index):
+        spans = match_spans(self.needle_fn(), str(index.data(Qt.DisplayRole) or ""))
+        if not spans:
+            return super().paint(painter, option, index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text
+        opt.text = ""
+        widget = opt.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, widget)
+        rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, widget).adjusted(3, 0, -3, 0)
+        fm = opt.fontMetrics
+        shown = fm.elidedText(text, Qt.ElideRight, rect.width())
+        cut = len(shown) - 1 if shown != text else len(shown)  # (before the …)
+        painter.save()
+        painter.setFont(opt.font)
+        y = rect.top() + (rect.height() - fm.height()) // 2
+        marked = []
+        for start, end in spans:
+            start, end = min(start, cut), min(end, cut)
+            if end <= start:
+                continue
+            x0 = rect.left() + fm.horizontalAdvance(shown[:start])
+            w = fm.horizontalAdvance(shown[start:end])
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self.COLOR)
+            painter.drawRoundedRect(QRectF(x0, y, w, fm.height()), 2, 2)  # (exact: neighbours stay readable)
+            marked.append((x0, start, end))
+        selected = bool(opt.state & QStyle.State_Selected)
+        painter.setPen(opt.palette.color(QPalette.HighlightedText if selected else QPalette.Text))
+        painter.drawText(rect, int(Qt.AlignLeft | Qt.AlignVCenter), shown)
+        if selected:  # dark text on the highlight, also in a selected (blue) row
+            painter.setPen(QColor("#1d1d1f"))
+            for x0, start, end in marked:
+                painter.drawText(rect.adjusted(x0 - rect.left(), 0, 0, 0), int(Qt.AlignLeft | Qt.AlignVCenter),
+                                 shown[start:end])
+        painter.restore()
 
 
 OK_STYLE = ""

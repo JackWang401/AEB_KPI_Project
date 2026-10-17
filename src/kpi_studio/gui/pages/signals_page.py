@@ -31,7 +31,7 @@ from src.kpi_studio.core.model import derived_to_yaml, signal_units
 from src.kpi_studio.core.rename import rename_signal_references
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets import context_menu
-from src.kpi_studio.gui.widgets.common import ExprEdit, matches
+from src.kpi_studio.gui.widgets.common import ExprEdit, HighlightDelegate, matches
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
@@ -147,6 +147,7 @@ class SignalsPage(QWidget):
             head.addWidget(b)
         ll.addLayout(head)
         self.tree = QTreeWidget()
+        self.tree.setItemDelegateForColumn(0, HighlightDelegate(lambda: self.search.text(), self.tree))  # matches
         self.tree.setIconSize(QSize(10, 10))  # the dot in front of channels already added as signals
         self.tree.setHeaderLabels(["Signal", "Unit", "Files"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)

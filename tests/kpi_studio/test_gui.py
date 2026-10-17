@@ -1486,3 +1486,26 @@ def test_condition_builder_grows_to_fit_its_text(qtbot):
     qtbot.wait(50)
     lay = dlg.layout()
     assert dlg.height() >= lay.totalHeightForWidth(dlg.width())  # nothing squeezed
+
+
+def test_search_matches_are_highlighted_in_the_signal_tree(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.common import HighlightDelegate, match_spans
+
+    assert match_spans("speed", "ref[0]/Speed_x/speed") == [(7, 12), (15, 20)]  # every match, any case
+    assert match_spans("lmc*it", "LmcAxTrgtLimit") == [(0, 14)]
+    assert match_spans("*", "abc") == [] and match_spans("", "abc") == []
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 850)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Signals"), sticky=True)
+    page = window.signals_page
+    assert isinstance(page.tree.itemDelegateForColumn(0), HighlightDelegate)
+    page.search.setText("speed")
+    qtbot.wait(100)
+    item = next(it for it in page.tree.findItems("*", Qt.MatchWildcard | Qt.MatchRecursive) if it.childCount() == 0)
+    page.tree.setCurrentItem(item)
+    img = page.tree.viewport().grab().toImage()  # paints without errors, selected row included
+    rect = page.tree.visualItemRect(item)
+    colors = {img.pixelColor(x, rect.center().y()).name() for x in range(rect.left(), rect.right(), 2)}
+    assert HighlightDelegate.COLOR.name() in colors
