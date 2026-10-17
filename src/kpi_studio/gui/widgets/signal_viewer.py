@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -269,6 +271,9 @@ class SignalViewer(QWidget):
                              "or up and down this list to change the order of the subplots.")
         self.order: list[str] = []  # the list's order once the user dragged it (else alphabetical)
         self.list.reordered.connect(self._reordered)
+        self.stepped: set[str] = set()  # signals drawn as a stepped line (right-click a signal)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
         ll.addWidget(self.list, 1)
         check_row = QHBoxLayout()
         check_all = QPushButton("Check all")
@@ -665,7 +670,8 @@ class SignalViewer(QWidget):
                     t = np.asarray(d["time"], dtype=float)
                     c = COLORS[k % len(COLORS)] if multi else COLORS[(j if overlay else i) % len(COLORS)]
                     ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
-                    ax.plot(t, y, color=c, lw=1.2, ls=ls)
+                    ax.plot(t, y, color=c, lw=1.2, ls=ls,
+                            drawstyle="steps-post" if n in self.stepped else "default")  # (right-click)
                     label = f"{n} · {Path(r.name).name}" if overlay else n
                     enum = d.get("labels", {}).get(n)
                     self._series.setdefault(ax, []).append((label, t, y, enum))
@@ -895,7 +901,50 @@ class SignalViewer(QWidget):
             self.pv_status.setToolTip(getattr(self, "_issues_tip", ""))
 
     # ------------------------------------------------------------------ cursors
+    def signal_menu(self, names: list[str]) -> QMenu:
+        """Right-click menu for `names`: draw them as a stepped or a plain line."""
+        menu = QMenu(self)
+        act = menu.addAction("Stepped line" + (f" ({len(names)} signals)" if len(names) > 1 else ""))
+        act.setCheckable(True)
+        act.setChecked(bool(names) and all(n in self.stepped for n in names))
+        act.setToolTip("Hold each value until the next sample (for states, flags and other discrete signals)")
+        act.triggered.connect(lambda on, ns=list(names): self.set_stepped(ns, on))
+        return menu
+
+    def set_stepped(self, names, on: bool):
+        for n in names:
+            (self.stepped.add if on else self.stepped.discard)(n)
+        if self._axes:
+            self.draw()
+
+    def _list_menu(self, pos):
+        it = self.list.itemAt(pos)
+        if it is None:
+            return
+        names = [i.text() for i in self.list.selectedItems()] if it.isSelected() else [it.text()]
+        self.signal_menu(names).exec(self.list.viewport().mapToGlobal(pos))
+
+    def subplot_menu(self, ax) -> QMenu:
+        """Right-click on a subplot's signal names (right of the plot): one entry per signal."""
+        menu = QMenu(self)
+        names = list(dict.fromkeys(self._names.get(ax, [])))
+        for n in names:
+            act = menu.addAction(f"Stepped line: {n}" if len(names) > 1 else "Stepped line")
+            act.setCheckable(True)
+            act.setChecked(n in self.stepped)
+            act.triggered.connect(lambda on, n=n: self.set_stepped([n], on))
+        return menu
+
+    def _legend_axes(self, event):
+        """The subplot whose signal list (right of it) is under a mouse event, or None."""
+        return next((ax for ax in self._axes if ax.bbox.y0 <= event.y <= ax.bbox.y1 and event.x > ax.bbox.x1), None)
+
     def _on_press(self, event):
+        if event.button == 3 and not self.toolbar.mode and event.inaxes not in self._axes:
+            ax = self._legend_axes(event)
+            if ax is not None:
+                self.subplot_menu(ax).exec(QCursor.pos())
+            return
         if self.toolbar.mode or event.inaxes not in self._axes or event.xdata is None:
             return
         if event.button == 3:

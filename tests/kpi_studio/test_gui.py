@@ -1591,3 +1591,30 @@ def test_drag_signals_in_the_plot_list_to_reorder_the_subplots(qtbot, window, mf
     viewer.refresh_names()
     assert lst.item(0).text() == "longActAccel"
     assert lst.supportedDropActions() == Qt.CopyAction  # a drag never removes signals from the list
+
+
+def test_right_click_a_signal_to_draw_it_as_a_stepped_line(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+
+    def style(name):
+        ax = next(a for a in viewer._axes if name in viewer._names.get(a, []))
+        return ax.get_lines()[viewer._names[ax].index(name)].get_drawstyle()
+
+    assert style("egoSpeed") == "default"
+    menu = viewer.signal_menu(["egoSpeed"])
+    act = menu.actions()[0]
+    assert act.text() == "Stepped line" and act.isCheckable() and not act.isChecked()
+    act.trigger()
+    assert style("egoSpeed") == "steps-post" and style("longActAccel") == "default"
+    assert viewer.signal_menu(["egoSpeed"]).actions()[0].isChecked()
+    ax = next(a for a in viewer._axes if "egoSpeed" in viewer._names[a])
+    sub = viewer.subplot_menu(ax).actions()[0]  # the same from the signal's name right of its subplot
+    assert sub.isChecked()
+    sub.trigger()  # unchecked: a plain line again
+    assert style("egoSpeed") == "default"
