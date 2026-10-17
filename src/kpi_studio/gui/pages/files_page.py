@@ -25,7 +25,7 @@ from src.kpi_studio.gui.workers import IndexWorker
 
 
 class FilesPage(QWidget):
-    COLS = ["File", "Recording", "Duration [s]", "Channels", "Status", "Folder"]
+    COLS = ["File", "Recording", "Duration [s]", "Signals", "Status", "Folder"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
