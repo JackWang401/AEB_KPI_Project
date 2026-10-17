@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 from typing import Callable, Optional
 
 import yaml
@@ -58,6 +59,11 @@ def _arrow_icon() -> QIcon:
     p.drawPolygon(QPolygonF([QPointF(3, 6), QPointF(13, 6), QPointF(8, 11)]))
     p.end()
     return QIcon(pm)
+
+
+def enum_tokens(members: dict) -> list[str]:
+    """An enum's texts as they are written in a condition (quoted unless a plain name), in value order."""
+    return [m if m.isidentifier() else f'"{m}"' for m, _ in sorted(members.items(), key=lambda kv: kv[1])]
 
 
 class NamePicker(QMenu):
@@ -163,9 +169,23 @@ class ExprEdit(QLineEdit):
         self.picker: Optional[NamePicker] = None
 
     def picker_sections(self) -> dict[str, list[str]]:
-        sections = {"Signals": list(self.names_fn())}
+        sections = {}
+        for name in self.enum_signals_used():  # e.g. `state == ` typed: its values come first
+            sections[f"Values of {name}"] = enum_tokens(self.enums_fn()[name])
+        sections["Signals"] = list(self.names_fn())
         sections.update(self.extras_fn() or {})
         return sections
+
+    def enum_signals_used(self) -> list[str]:
+        """The enum signals written in the text, the one nearest before the cursor first."""
+        enums = self.enums_fn() or {}
+        if not enums:
+            return []
+        text, pos = self.text(), self.cursorPosition()
+        found = [(m.start(), m.group()) for m in re.finditer(r"[A-Za-z_]\w*", text) if m.group() in enums]
+        before = [n for at, n in sorted(found, reverse=True) if at < pos]
+        after = [n for at, n in found if at >= pos]
+        return list(dict.fromkeys(before + after))
 
     def open_picker(self):
         actions = {}
@@ -417,8 +437,7 @@ class ConditionBuilder(QDialog):
 
     def values_of(self, signal: str) -> list[str]:
         """The enum texts of `signal` as they are written in a condition, in value order."""
-        members = self.enums.get(signal.strip()) or {}
-        return [m if m.isidentifier() else f'"{m}"' for m, _ in sorted(members.items(), key=lambda kv: kv[1])]
+        return enum_tokens(self.enums.get(signal.strip()) or {})
 
     def _update_value_field(self, sig: QComboBox, op: QComboBox, val: QLineEdit):
         """An enum signal's value field gets a ▾ that lists its values."""

@@ -1424,3 +1424,19 @@ def test_condition_builder_lists_an_enum_signals_values(qtbot):
     expr = dlg.expression()
     assert expr == 'fb_state in (STATE_UNSPECIFIED, "on hold")'
     compile_expr(expr, names={"fb_state", "speed"}, enums=enums)  # the condition compiles
+
+
+def test_expression_picker_offers_the_values_of_enum_signals_in_the_text(qtbot):
+    from src.kpi_studio.gui.widgets.common import ExprEdit
+
+    enums = {"fb_state": {"READY": 1, "OFF": 0}, "gear": {"P": 0, "D": 2}}
+    e = ExprEdit(lambda: ["fb_state", "gear", "speed"], enums_fn=lambda: enums)
+    qtbot.addWidget(e)
+    assert list(e.picker_sections()) == ["Signals"]  # no enum signal written yet
+    e.setText("gear == D and fb_state == ")
+    e.setCursorPosition(len(e.text()))
+    sections = e.picker_sections()
+    assert list(sections) == ["Values of fb_state", "Values of gear", "Signals"]  # nearest first
+    assert sections["Values of fb_state"] == ["OFF", "READY"]
+    e.insert_name("READY")
+    assert e.text() == "gear == D and fb_state == READY"
