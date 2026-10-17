@@ -1612,6 +1612,12 @@ def test_right_click_a_signal_to_draw_it_as_a_stepped_line(qtbot, window, mf4_di
     assert act.text() == "Stepped line" and act.isCheckable() and not act.isChecked()
     act.trigger()
     assert style("egoSpeed") == "steps-post" and style("longActAccel") == "default"
+    # a stepped line shows the samples held, never values interpolated between two samples
+    import numpy as np
+    ax = next(a for a in viewer._axes if "egoSpeed" in viewer._names[a])
+    held = viewer.data["held"]["egoSpeed"]
+    drawn = ax.get_lines()[viewer._names[ax].index("egoSpeed")].get_ydata()
+    assert np.array_equal(np.asarray(drawn, dtype=float), np.asarray(held, dtype=float), equal_nan=True)
     assert viewer.signal_menu(["egoSpeed"]).actions()[0].isChecked()
     ax = next(a for a in viewer._axes if "egoSpeed" in viewer._names[a])
     sub = viewer.subplot_menu(ax).actions()[0]  # the same from the signal's name right of its subplot

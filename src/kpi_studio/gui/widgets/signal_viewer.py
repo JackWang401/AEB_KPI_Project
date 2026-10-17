@@ -183,9 +183,14 @@ class SignalLoadWorker(QThread):
             ev = FileEvaluator(self.cp, frame, outcome.file)
             ev.compute_derived(outcome)
             values = {k: v for k, v in ev.env.values.items() if k != "time"}
+            # every read signal also held between its samples (no interpolation), for stepped lines
+            held_defs = {n: d.model_copy(update={"kind": "discrete"}) for n, d in defs.items()}
+            held_frame, _, _ = build_frame(raw, held_defs, self.cp.profile.timebase.rate_hz,
+                                           profile_store.load_enum_tables())
+            held = dict(held_frame.values) if len(held_frame.time) == len(ev.time) else {}
             units = signal_units(self.cp.profile)
             labels = {n: r.labels for n, r in raw.items() if r.labels}
-            self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "units": units,
+            self.done.emit({"file": outcome.file, "time": ev.time, "values": values, "held": held, "units": units,
                             "labels": labels, "offsets": dict(getattr(self.path, "offsets", {}) or {}),
                             "missing": dict(ev.env.missing),
                             "issues": [i.message for i in issues + align_issues + outcome.issues
@@ -666,12 +671,13 @@ class SignalViewer(QWidget):
                 for j, (r, d) in enumerate(loaded):
                     if n not in d["values"]:
                         continue
-                    y = np.asarray(d["values"][n], dtype=float)
+                    step = n in self.stepped
+                    y = np.asarray(d.get("held", {}).get(n, d["values"][n]) if step else d["values"][n], dtype=float)
                     t = np.asarray(d["time"], dtype=float)
                     c = COLORS[k % len(COLORS)] if multi else COLORS[(j if overlay else i) % len(COLORS)]
                     ls = LINESTYLES[j % len(LINESTYLES)] if (multi and overlay) else "-"
                     ax.plot(t, y, color=c, lw=1.2, ls=ls,
-                            drawstyle="steps-post" if n in self.stepped else "default")  # (right-click)
+                            drawstyle="steps-post" if step else "default")  # (right-click)
                     label = f"{n} · {Path(r.name).name}" if overlay else n
                     enum = d.get("labels", {}).get(n)
                     self._series.setdefault(ax, []).append((label, t, y, enum))
@@ -801,6 +807,7 @@ class SignalViewer(QWidget):
         self.cache[rec.name] = {
             "file": rec.name, "time": data["time"],
             "values": {k: v for k, v in data["values"].items() if k != "time"},
+            "held": old.get("held", {}) if len(old.get("time", [])) == len(data["time"]) else {},
             "units": signal_units(self.state.compiled.profile), "labels": old.get("labels", {}),
             "missing": old.get("missing", {}),
             "issues": [i.message for i in out.issues if i.severity != "info"]}
