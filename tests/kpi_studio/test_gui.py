@@ -1440,3 +1440,49 @@ def test_expression_picker_offers_the_values_of_enum_signals_in_the_text(qtbot):
     assert sections["Values of fb_state"] == ["OFF", "READY"]
     e.insert_name("READY")
     assert e.text() == "gear == D and fb_state == READY"
+
+
+def test_condition_builder_groups_rows_with_brackets(qtbot):
+    from src.kpi_studio.core.expr import compile_expr
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+
+    dlg = ConditionBuilder(["a", "b", "c"])
+    qtbot.addWidget(dlg)
+    for _ in range(2):
+        dlg.add_row()
+    for (sig, op, val), (s, o, v) in zip(dlg.rows, [("a", ">", "1"), ("b", "==", "2"), ("c", "<", "3")]):
+        sig.setCurrentText(s)
+        op.setCurrentText(o)
+        val.setText(v)
+    (j0, o0, c0), (j1, o1, c1), (j2, o2, c2) = dlg.links
+    assert not j0.isVisible() or not dlg.isVisible()  # the first row joins nothing
+    o0.setCurrentText("(")
+    assert dlg.bracket_problem() == "1 bracket not closed"
+    assert not dlg.ok_button.isEnabled()
+    c1.setCurrentText(")")
+    j2.setCurrentText("or")
+    o2.setCurrentText("not (")
+    c2.setCurrentText(")")
+    assert dlg.bracket_problem() is None and dlg.ok_button.isEnabled()
+    expr = dlg.expression()
+    assert expr == "(a > 1 and b == 2) or not (c < 3)"
+    compile_expr(expr, names={"a", "b", "c"})
+    o2.setCurrentText("")
+    assert dlg.bracket_problem() == "a bracket is closed before it is opened"
+
+
+def test_condition_builder_grows_to_fit_its_text(qtbot):
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+
+    long = {"fb_state": {f"AUTO_EMERGENCY_BRAKING_PLANNER_STATE_{s}": i for i, s in enumerate(["A", "ACTIVE"])}}
+    dlg = ConditionBuilder(["fb_state", "pb_state"], enums=long)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.wait(50)
+    dlg.add_row()
+    for sig, op, val in dlg.rows:
+        sig.setCurrentText("fb_state")
+        val.setText("AUTO_EMERGENCY_BRAKING_PLANNER_STATE_ACTIVE")
+    qtbot.wait(50)
+    lay = dlg.layout()
+    assert dlg.height() >= lay.totalHeightForWidth(dlg.width())  # nothing squeezed

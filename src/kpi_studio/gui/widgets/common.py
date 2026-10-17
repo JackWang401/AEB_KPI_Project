@@ -7,9 +7,10 @@ import re
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QListWidget,
     QListWidgetItem,
@@ -360,13 +361,17 @@ class ToolPalette(QWidget):
 
 
 class ConditionBuilder(QDialog):
-    """Build `a > 1 and b == FULL` from rows, without typing syntax."""
+    """Build `a > 1 and b == FULL` from rows, without typing syntax. Each row can open and close
+    brackets and says how it joins the row above (and / or), so `(a > 1 and b == 2) or not (c < 3)`
+    can be built too."""
 
     OPS = ["==", "!=", ">", ">=", "<", "<=", "in", "changes to", "changes from", "changes from → to"]
     HINTS = {"in": "list, e.g. 1, 2", "changes to": "value, e.g. 3", "changes from": "value, e.g. 3",
              "changes from → to": "from, to   e.g. 0, 3"}
 
     MULTI = ("in", "changes from → to")  # operators that take several values
+    OPENS = ["", "(", "((", "not", "not (", "not (("]
+    CLOSES = ["", ")", "))"]
 
     def __init__(self, names: list[str], parent=None, initial: str = "", enums: Optional[dict] = None):
         super().__init__(parent)
@@ -376,10 +381,14 @@ class ConditionBuilder(QDialog):
         self.value_picker: Optional[NamePicker] = None
         self.rows: list[tuple] = []
         lay = QVBoxLayout(self)
-        info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL.\n"
+        info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL. "
                       "'changes to / from' are true only at the sample where the signal switches to or away "
-                      "from the value;\n'changes from → to' takes two values, e.g. 0, 3.\n"
+                      "from the value; 'changes from → to' takes two values, e.g. 0, 3.\n"
+                      "Join each row to the one above with and / or, and group rows with the brackets before "
+                      "and after them (or negate them with not), e.g. (a and b) or not (c). Without brackets, "
+                      "and is applied before or.\n"
                       "Right-click a row's operator, or the space around the rows, to add or delete rows.")
+        info.setWordWrap(True)
         lay.addWidget(info)
         top = QHBoxLayout()  # + / − in the top right corner
         top.addStretch(1)
@@ -389,21 +398,16 @@ class ConditionBuilder(QDialog):
         lay.addLayout(top)
         self.rows_box = QVBoxLayout()
         lay.addLayout(self.rows_box)
-        bar = QHBoxLayout()
-        self.join = QComboBox()
-        self.join.addItems(["and", "or"])
-        bar.addWidget(QLabel("Join rows with"))
-        bar.addWidget(self.join)
-        bar.addStretch(1)
-        lay.addLayout(bar)
         self.preview = QLabel()
         self.preview.setWordWrap(True)
         lay.addWidget(self.preview)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self.ok_button = buttons.button(QDialogButtonBox.Ok)
         lay.addWidget(buttons)
-        self.join.currentIndexChanged.connect(self.update_preview)
+        self.links: list[tuple] = []  # per row: (join with the row above, opening, closing brackets)
+        self.resize(760, 10)
         self.add_row()
         if initial:
             self.preview.setText(f"Current: {initial}")
@@ -424,15 +428,27 @@ class ConditionBuilder(QDialog):
         op.currentTextChanged.connect(lambda _o, s=sig, o=op, v=val: self._update_value_field(s, o, v))
         sig.currentTextChanged.connect(lambda _t, s=sig, o=op, v=val: self._update_value_field(s, o, v))
         self._update_value_field(sig, op, val)
+        join, opening, closing = QComboBox(), QComboBox(), QComboBox()
+        join.addItems(["and", "or"])
+        join.setToolTip("How this row joins the row above")
+        opening.addItems(self.OPENS)
+        opening.setToolTip("Open brackets before this row (not: negate it)")
+        closing.addItems(self.CLOSES)
+        closing.setToolTip("Close brackets after this row")
+        policy = join.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # the first row has no join, but lines up with the others
+        join.setSizePolicy(policy)
+        join.setVisible(bool(self.rows))
         row = QHBoxLayout()
-        for w in (sig, op, val):
-            row.addWidget(w)
+        for w in (join, opening, sig, op, val, closing):
+            row.addWidget(w, 1 if w is val else 0)
             if hasattr(w, "currentTextChanged"):
                 w.currentTextChanged.connect(self.update_preview)
             else:
                 w.textChanged.connect(self.update_preview)
         self.rows_box.addLayout(row)
         self.rows.append((sig, op, val))
+        self.links.append((join, opening, closing))
         self.update_preview()
 
     def values_of(self, signal: str) -> list[str]:
@@ -465,8 +481,9 @@ class ConditionBuilder(QDialog):
 
     def delete_row(self, i: int):
         sig, op, val = self.rows.pop(i)
+        join, opening, closing = self.links.pop(i)
         row = self.rows_box.takeAt(i)
-        for w in (sig, op, val):
+        for w in (sig, op, val, join, opening, closing):
             w.setParent(None)
             w.deleteLater()
         row.layout().deleteLater()
@@ -517,18 +534,51 @@ class ConditionBuilder(QDialog):
         return f"{s} {o} {v}"
 
     def expression(self) -> str:
+        """The condition the rows make; brackets of rows without a signal or value are left out."""
         parts = []
-        for sig, op, val in self.rows:
+        for (sig, op, val), (join, opening, closing) in zip(self.rows, self.links):
             s, o, v = sig.currentText().strip(), op.currentText(), val.text().strip()
-            if not s or not v:
+            e = self.row_expression(s, o, v) if s and v else ""
+            if not e:
                 continue
-            e = self.row_expression(s, o, v)
-            if e:
-                parts.append(e)
-        return f" {self.join.currentText()} ".join(parts)
+            lead = opening.currentText()
+            piece = (lead + (" " if lead.endswith("not") else "") + e + closing.currentText())
+            parts.append(piece if not parts else f"{join.currentText()} {piece}")
+        return " ".join(parts)
+
+    def bracket_problem(self) -> Optional[str]:
+        """Why the brackets don't add up, or None."""
+        depth = 0
+        for part in re.findall(r"[()]", "".join(o.currentText() + c.currentText()
+                                                for (s, op, v), (_j, o, c) in zip(self.rows, self.links)
+                                                if s.currentText().strip() and v.text().strip())):
+            depth += 1 if part == "(" else -1
+            if depth < 0:
+                return "a bracket is closed before it is opened"
+        if depth:
+            return f"{depth} bracket{'s' if depth > 1 else ''} not closed"
+        return None
 
     def update_preview(self, *_):
-        self.preview.setText(f"Condition: <b>{self.expression() or '—'}</b>")
+        problem = self.bracket_problem()
+        if problem:
+            self.preview.setText(f"Condition: <span style='color:#e34948'>{problem}</span>")
+        else:
+            self.preview.setText(f"Condition: <b>{self.expression() or '—'}</b>")
+        self.ok_button.setEnabled(problem is None)
+        QTimer.singleShot(0, self.fit_height)
+
+    def fit_height(self):
+        """Wide enough for the values typed or picked, and tall enough for the text, rows and condition
+        at that width: nothing gets squeezed."""
+        for _sig, _op, val in self.rows:  # a value shows in full (up to a point)
+            val.setMinimumWidth(min(val.fontMetrics().horizontalAdvance(val.text()) + 40, 560))
+        lay = self.layout()
+        screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        width = min(max(self.width(), lay.totalMinimumSize().width()), int(screen.width() * 0.9))
+        need = lay.totalHeightForWidth(width) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+        if width > self.width() or need > self.height():
+            self.resize(width, max(need, self.height()))
 
 
 def make_canvas():
