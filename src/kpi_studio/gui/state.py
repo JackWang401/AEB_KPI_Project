@@ -197,7 +197,8 @@ class AppState(QObject):
 
     # names usable in expressions (after resolving imports when possible)
     def signal_names(self) -> list[str]:
-        """Signal and derived names as they are now (the last validation can lag behind a rename)."""
+        """Signal and derived names as they are now (the last validation can lag behind a rename), in
+        alphabetical order: every list to pick a signal from shows them that way."""
         live = self.taken_names()
         names = []
         if self.resolved is not None:
@@ -207,7 +208,7 @@ class AppState(QObject):
                 + list(self.data.get("derived", {}) or {}):
             if n not in names:
                 names.append(n)
-        return names
+        return sorted(names, key=str.lower)
 
     def enum_map(self) -> dict:
         """signal name -> {MEMBER: value} for signals that declare an enum."""

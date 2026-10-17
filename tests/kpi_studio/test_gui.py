@@ -565,18 +565,20 @@ def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
     viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
     qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
     assert len(viewer._axes) == 3
-    # find the widget position of the first subplot and drop a signal there
-    ax = viewer._axes[0]
+    # find the widget position of egoSpeed's subplot and drop a signal there
+    ax = next(a for a in viewer._axes if viewer._ax_groups[a] == ["egoSpeed"])
     ratio = viewer.canvas.devicePixelRatioF()
     x0, y0, x1, y1 = ax.bbox.extents
     pos = QPointF((x0 + x1) / 2 / ratio, viewer.canvas.height() - (y0 + y1) / 2 / ratio)
     assert viewer.axes_at(pos) is ax
     viewer.drop_signals(["aebTargetDecel"], viewer.axes_at(pos))
     assert len(viewer._axes) == 2
-    assert viewer._ax_groups[viewer._axes[0]] == ["egoSpeed", "aebTargetDecel"]
+    assert ["egoSpeed", "aebTargetDecel"] in [viewer._ax_groups[a] for a in viewer._axes]
     assert viewer.separate_btn.isVisible()
-    viewer.drop_signals(["longGap"], viewer._axes[1])  # unticked signal: ticked and added
-    assert "longGap" in viewer.checked() and viewer._ax_groups[viewer._axes[1]] == ["longActAccel", "longGap"]
+    other = next(a for a in viewer._axes if viewer._ax_groups[a] == ["longActAccel"])
+    viewer.drop_signals(["longGap"], other)  # unticked signal: ticked and added
+    assert "longGap" in viewer.checked()
+    assert ["longActAccel", "longGap"] in [viewer._ax_groups[a] for a in viewer._axes]
     viewer.separate_all()
     assert len(viewer._axes) == 4
 
@@ -1537,3 +1539,13 @@ def test_search_matches_are_highlighted_in_every_filtered_list(qtbot):
     palette.search.setText("speed")
     assert palette.tree.itemDelegate().needle_fn() == "speed"
     palette.tree.viewport().grab()
+
+
+def test_signal_lists_are_alphabetical_everywhere(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    names = window.state.signal_names()
+    assert names == sorted(names, key=str.lower)
+    viewer_list = [window.viewer.list.item(i).text() for i in range(window.viewer.list.count())]
+    assert viewer_list == sorted(viewer_list, key=str.lower)
+    picker = window.kpi_page.kpi_form.expr.picker_sections()["Signals"]  # the ▾ list of expression fields
+    assert picker == sorted(picker, key=str.lower)
