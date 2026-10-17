@@ -1519,3 +1519,21 @@ def test_condition_builder_lists_signals_alphabetically(qtbot):
     qtbot.addWidget(dlg)
     sig = dlg.rows[0][0]
     assert [sig.itemText(i) for i in range(sig.count())] == ["accel_act", "Brake", "throttle", "ttc"]
+
+
+def test_search_matches_are_highlighted_in_every_filtered_list(qtbot):
+    from src.kpi_studio.gui.widgets.common import HighlightDelegate, NamePicker, ToolPalette
+
+    picker = NamePicker({"Signals": ["ego_speed_kph", "brake"]})
+    qtbot.addWidget(picker)
+    assert isinstance(picker.list.itemDelegate(), HighlightDelegate)
+    picker.filter.setText("eg")
+    assert picker.list.itemDelegate().needle_fn() == "eg"
+    picker.list.resize(300, 200)
+    picker.list.viewport().grab()  # paints with the highlight
+    palette = ToolPalette(names_fn=lambda: ["ego_speed_kph"])
+    qtbot.addWidget(palette)
+    assert isinstance(palette.tree.itemDelegate(), HighlightDelegate)
+    palette.search.setText("speed")
+    assert palette.tree.itemDelegate().needle_fn() == "speed"
+    palette.tree.viewport().grab()

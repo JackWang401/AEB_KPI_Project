@@ -150,6 +150,7 @@ class NamePicker(QMenu):
         self.filter.setPlaceholderText("Filter… (wildcards: * ?)")
         self.list = QListWidget()
         self.list.setMinimumSize(280, 260)
+        self.list.setItemDelegate(HighlightDelegate(lambda: self.filter.text(), self.list))  # matches
         for label in self.actions_map:
             it = QListWidgetItem("➜ " + label)
             it.setData(Qt.UserRole + 1, label)
@@ -342,6 +343,7 @@ class ToolPalette(QWidget):
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setToolTip("Hover a tool to read what it does; double-click to insert it")
+        self.tree.setItemDelegate(HighlightDelegate(lambda: self.search.text(), self.tree))  # matches
         lay.addWidget(title)
         lay.addWidget(self.search)
         lay.addWidget(self.tree, 1)
