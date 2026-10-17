@@ -1262,6 +1262,32 @@ def test_dragging_a_column_edge_trades_width_with_its_right_neighbour(qtbot, win
     assert h.sectionSize(2) == sizer.header_width(2)
 
 
+def test_a_column_border_squeezes_the_next_columns_once_its_neighbour_is_at_its_minimum(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Signals"), sticky=True)
+    h = window.signals_page.sig_table.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    sizer = h._column_sizer
+    shown = [c for c in range(h.count()) if not h.isSectionHidden(c)]
+    first, neighbour, rest = shown[0], shown[1], shown[2:]
+    sizer._pressed = True
+    h.resizeSection(first, max(sizer.header_width(first), h.sectionSize(first) - 150))  # widths moved on
+    h.resizeSection(neighbour, sizer.header_width(neighbour))  # to the rest; the neighbour at its minimum
+    before = {c: h.sectionSize(c) for c in shown}
+    room = sum(before[c] - sizer.header_width(c) for c in rest)
+    assert room > 30
+    h.resizeSection(first, before[first] + 30)  # dragged on: the columns further right give
+    assert h.sectionSize(first) == before[first] + 30
+    assert sum(h.sectionSize(c) for c in rest) == sum(before[c] for c in rest) - 30
+    h.resizeSection(first, before[first] + room + 500)  # all at their minimum: the border stops
+    sizer._pressed = False
+    assert all(h.sectionSize(c) == sizer.header_width(c) for c in shown[1:])
+    assert sum(h.sectionSize(c) for c in shown) == h.viewport().width()
+
+
 def test_channels_already_added_as_signals_get_a_dot(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
