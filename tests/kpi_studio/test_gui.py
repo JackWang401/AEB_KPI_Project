@@ -1683,6 +1683,29 @@ def test_right_click_a_plotted_signal_to_set_its_kind(qtbot, window, mf4_dir):
     assert sub["boolean"].isChecked() and sub["Stepped line"].isChecked()
 
 
+def test_kind_changed_in_the_table_shows_in_the_plot_at_once(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.pages.signals_page import KINDS
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    table = window.signals_page.sig_table
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "egoSpeed")
+    ix = table.model().index(row, 3)
+    delegate = table.itemDelegateForColumn(3)
+    box = delegate.createEditor(table.viewport(), None, ix)
+    box.hidePopup()
+    box.setCurrentIndex(KINDS.index("boolean"))
+    delegate.setModelData(box, table.model(), ix)
+    assert viewer._names[viewer._axes[-1]] == ["egoSpeed"]  # at once, before the profile is checked again
+    qtbot.wait(800)  # the profile check re-reads the plotted recording with the new Kind
+    qtbot.waitUntil(lambda: viewer.worker is None and bool(viewer.cache), timeout=20000)
+    assert viewer._names[viewer._axes[-1]] == ["egoSpeed"] and len(viewer._axes) == 2
+
+
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
     from src.kpi_studio.gui.pages.signals_page import KINDS
     _load(qtbot, window, mf4_dir)

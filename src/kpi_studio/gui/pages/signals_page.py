@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSplitter,
     QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
@@ -66,9 +67,20 @@ def _dot_icon(on: bool) -> QIcon:
 class KindDelegate(QStyledItemDelegate):
     """The Kind column: a drop-down list, opened with one click."""
 
+    ARROW = 18  # room kept right of the text for the arrow
+
+    def sizeHint(self, option, index):
+        hint = super().sizeHint(option, index)
+        width = max(option.fontMetrics.horizontalAdvance(k) for k in KINDS) + 12 + self.ARROW
+        return QSize(max(hint.width(), width), hint.height())
+
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
         r = option.rect
+        text_opt = QStyleOptionViewItem(option)
+        text_opt.rect = r.adjusted(0, 0, -self.ARROW, 0)
+        super().paint(painter, text_opt, index)
+        if option.state & QStyle.State_Selected:  # the arrow's strip keeps the selection colour
+            painter.fillRect(r.adjusted(r.width() - self.ARROW, 0, 0, 0), option.palette.highlight())
         cx, cy = r.right() - 9, r.center().y() + 1
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
@@ -592,6 +604,7 @@ class SignalsPage(QWidget):
             d["unit"] = text or None
         elif col == 3:
             d["kind"] = text.lower() if text.lower() in KINDS else "continuous"
+            self.viewer.draw()  # stepped lines and boolean strips follow at once
         elif col == 4:
             d["enum"] = parse_enum(text)
         elif col == 5:
