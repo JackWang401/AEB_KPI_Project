@@ -19,7 +19,9 @@ import numpy as np
 from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QSizePolicy,
     QSpinBox,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -63,9 +66,7 @@ class SignalList(QListWidget):
         md.setData(SIGNAL_MIME, "\n".join(i.text() for i in items).encode())
         return md
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-MAX_AXES = 8
-AXIS_MIN_PX = 55     # each subplot gets at least this height (the panel grows instead of squashing)
-PLOTS_MAX_MIN_PX = 190  # ...up to this total, so many subplots still fit on screen
+AXIS_MIN_PX = 70     # each subplot gets at least this height: with more, the plots scroll
 
 
 class ElideLabel(QLabel):
@@ -226,7 +227,13 @@ class SignalViewer(QWidget):
         self.toolbar = Toolbar(self.canvas, right, coordinates=False)  # no (x, y) readout
         self.toolbar.setIconSize(QSize(18, 18))  # compact: leave the height to the plots
         rl.addWidget(self.toolbar)
-        rl.addWidget(self.canvas, 1)  # subplots share the panel height (no scrolling)
+        # subplots share the panel height; when there are too many for it, they scroll
+        self.plot_scroll = QScrollArea()
+        self.plot_scroll.setWidgetResizable(True)
+        self.plot_scroll.setFrameShape(QFrame.NoFrame)
+        self.plot_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.plot_scroll.setWidget(self.canvas)
+        rl.addWidget(self.plot_scroll, 1)
         self.canvas.setAcceptDrops(True)
         self.canvas.installEventFilter(self)
         split.addWidget(right)
@@ -481,6 +488,9 @@ class SignalViewer(QWidget):
 
     # ------------------------------------------------------------------ drag and drop
     def eventFilter(self, obj, event):
+        if obj is self.canvas and event.type() == QEvent.Wheel:  # the wheel scrolls the subplots
+            QApplication.sendEvent(self.plot_scroll.verticalScrollBar(), event)
+            return True
         if obj is self.canvas and event.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
             md = event.mimeData()
             if not md.hasFormat(SIGNAL_MIME):
@@ -570,7 +580,7 @@ class SignalViewer(QWidget):
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
         groups = self._groups(available)
-        shown = groups[:MAX_AXES]
+        shown = groups
         if not shown:
             self._message("Not available in the ticked recordings: " + ", ".join(names) if names
                           else "Tick one or more signals on the left")
@@ -578,8 +588,7 @@ class SignalViewer(QWidget):
         overlay = len(loaded) > 1
         axes = self.fig.subplots(len(shown), 1, sharex=True, squeeze=False)[:, 0]
         m = MARGIN_PX
-        self.canvas.setMinimumHeight(m["top"] + m["bottom"] + 16
-                                     + min(len(shown) * (AXIS_MIN_PX + m["gap"]), PLOTS_MAX_MIN_PX))
+        self.canvas.setMinimumHeight(m["top"] + m["bottom"] + 16 + len(shown) * (AXIS_MIN_PX + m["gap"]))
         for i, (ax, group) in enumerate(zip(axes, shown)):
             multi = len(group) > 1
             for k, n in enumerate(group):
@@ -607,8 +616,6 @@ class SignalViewer(QWidget):
             ax.margins(y=0.08)
             self._ax_groups[ax] = group
         axes[-1].set_xlabel("time [s]", fontsize=8)
-        if len(groups) > MAX_AXES:
-            axes[0].set_title(f"Showing the first {MAX_AXES} subplots", fontsize=8, color="#6b6b66")
         self._decorate_preview(list(axes), loaded)
         self._axes = list(axes)
         self._apply_layout()

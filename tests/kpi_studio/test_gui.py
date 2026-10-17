@@ -1549,3 +1549,19 @@ def test_signal_lists_are_alphabetical_everywhere(qtbot, window, mf4_dir):
     assert viewer_list == sorted(viewer_list, key=str.lower)
     picker = window.kpi_page.kpi_form.expr.picker_sections()["Signals"]  # the ▾ list of expression fields
     assert picker == sorted(picker, key=str.lower)
+
+
+def test_every_ticked_signal_is_plotted_and_the_plots_scroll(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 700)
+    window.show()
+    names = window.state.signal_names()
+    viewer.host.clear()
+    viewer.plot_signals(names)
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    plotted = [n for ax in viewer._axes for n in viewer._ax_groups[ax]]
+    assert len(viewer._axes) == len(plotted) >= 8 and not any(ax.get_title() for ax in viewer._axes)  # no cap
+    import src.kpi_studio.gui.widgets.signal_viewer as sv
+    assert viewer.canvas.minimumHeight() >= len(viewer._axes) * sv.AXIS_MIN_PX  # each keeps a readable height
+    assert viewer.plot_scroll.widget() is viewer.canvas
