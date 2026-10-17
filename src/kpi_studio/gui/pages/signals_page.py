@@ -111,7 +111,7 @@ class SignalsPage(QWidget):
 
         # ---- left: channels in the files
         left = QWidget()
-        left.setToolTip("Channels in the loaded files. Pick the ones you need and give each a short name. When "
+        left.setToolTip("Signals in the loaded files. Pick the ones you need and give each a short name. When "
                         "files name the same signal differently, list all channel names; the first one found "
                         "in a file is used.")
         ll = QVBoxLayout(left)

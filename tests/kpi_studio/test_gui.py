@@ -1243,13 +1243,20 @@ def test_dragging_a_column_edge_trades_width_with_its_right_neighbour(qtbot, win
     qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
     sizer = h._column_sizer
     sizer._pressed = True
-    h.resizeSection(1, 200)
+    unit = h.sectionSize(1)
+    h.resizeSection(0, h.sectionSize(0) - 150)  # the Signal | Unit edge dragged left: Unit gets wider
+    assert h.sectionSize(1) == unit + 150
     signal, unit, files = (h.sectionSize(c) for c in range(3))
-    h.resizeSection(1, unit - 80)  # the Unit | Files edge dragged left: Files gets wider
-    assert (h.sectionSize(0), h.sectionSize(2)) == (signal, files + 80)
+    d = min(80, unit - sizer.header_width(1))
+    assert d > 20
+    h.resizeSection(1, unit - d)  # the Unit | Files edge dragged left: Files gets wider
+    assert (h.sectionSize(0), h.sectionSize(2)) == (signal, files + d)
     signal, unit, files = (h.sectionSize(c) for c in range(3))
     grow = 60
     h.resizeSection(1, unit + grow)  # the Unit | Files edge dragged right: Files gets narrower
-    sizer._pressed = False
     assert h.sectionSize(0) == signal  # the Signal column keeps its width
     assert h.sectionSize(2) == files - grow
+    h.resizeSection(1, unit + 2000)  # dragged on past Files' minimum: the border stops there
+    sizer._pressed = False
+    assert h.sectionSize(0) == signal
+    assert h.sectionSize(2) == sizer.header_width(2)
