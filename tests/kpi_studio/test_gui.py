@@ -1311,3 +1311,44 @@ def test_channels_already_added_as_signals_get_a_dot(qtbot, window, mf4_dir):
     qtbot.wait(50)
     assert channel().data(0, Qt.UserRole + 1)  # added: now it has the dot
     assert not channel().icon(0).isNull()
+
+
+def test_a_border_dragged_with_the_mouse_pushes_columns_both_ways(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 900)
+    window.show()
+    bar = window.side_bar
+    bar.open(bar.titles.index("Signals"), sticky=True)
+    h = window.signals_page.sig_table.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
+    sizer = h._column_sizer
+    shown = sizer._visible()
+    assert len(shown) >= 4
+    vp = h.viewport()
+
+    def sizes():
+        return [h.sectionSize(c) for c in shown]
+
+    def drag(c, dx):
+        x = h.sectionViewportPosition(c) + h.sectionSize(c)
+        QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, QPoint(x, 5))
+        for step in range(1, 11):
+            QTest.mouseMove(vp, QPoint(x + dx * step // 10, 5))
+        QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, QPoint(x + dx, 5))
+
+    width = sum(sizes())
+    mins = [sizer.header_width(c) for c in shown]
+    b = shown[2]  # the border right of the third column
+    before = sizes()
+    drag(b, -3000)  # far left: the third, second and first columns all go to their minimum
+    after = sizes()
+    assert after[:3] == mins[:3]
+    assert after[4:] == before[4:]  # columns right of the neighbour untouched
+    assert sum(after) == width
+    drag(b, 3000)  # far right: every column right of the border goes to its minimum, none left of it moves
+    again = sizes()
+    assert again[:2] == mins[:2] and again[3:] == mins[3:]
+    assert sum(again) == width

@@ -14,6 +14,7 @@ TIP_FONT_PX = 13  # the size of the text in the tables
 MIN_STRETCH = 120
 MAX_FIT = 260
 PADDING = 12
+GRIP = 4  # how close to a column border a press grabs it
 
 
 class ColumnSizer(QObject):
@@ -26,9 +27,15 @@ class ColumnSizer(QObject):
         self.view = header.parentWidget()
         n = header.count()
         self.modes = [header.sectionResizeMode(c) for c in range(n)]
+        if header.stretchLastSection() and n:
+            # Qt's stretching last column can't be pushed by a border drag: it stretches like any other
+            if QHeaderView.Stretch not in self.modes:
+                self.modes[n - 1] = QHeaderView.Stretch
+            header.setStretchLastSection(False)
         self.user_sized = False
         self._pressed = False
         self._fitting = False
+        self._drag = None  # (column left of the dragged border, start x, widths at the start)
         for c in range(n):
             header.setSectionResizeMode(c, QHeaderView.Interactive)
         header.setMinimumSectionSize(36)
@@ -117,11 +124,68 @@ class ColumnSizer(QObject):
         t = e.type()
         if t == QEvent.MouseButtonPress:
             self._pressed = True
+            if obj is self.header.viewport() and e.button() == Qt.LeftButton and self._start_drag(e):
+                return True  # the border drag is ours (see drag_to)
+        elif t == QEvent.MouseMove and self._drag is not None:
+            self.drag_to(int(e.position().x()))
+            return True
         elif t == QEvent.MouseButtonRelease:
             self._pressed = False
+            if self._drag is not None:
+                self._drag = None
+                return True
         elif t == QEvent.Resize and obj is self.header:
             self.schedule()  # (once the user sized columns: refill the width)
         return False
+
+    def _visible(self) -> list[int]:
+        h = self.header
+        return [h.logicalIndex(v) for v in range(h.count()) if not h.isSectionHidden(h.logicalIndex(v))]
+
+    def border_at(self, x: int):
+        """The column whose right border is under `x` (not the last one: that border is the table's edge)."""
+        h = self.header
+        if h.stretchLastSection() or self.view is None:
+            return None
+        shown = self._visible()
+        for c in shown[:-1]:
+            if abs(h.sectionViewportPosition(c) + h.sectionSize(c) - x) <= GRIP:
+                return c
+        return None
+
+    def _start_drag(self, e) -> bool:
+        x = int(e.position().x())
+        c = self.border_at(x)
+        if c is None:
+            return False
+        self._drag = (c, x, {k: self.header.sectionSize(k) for k in self._visible()})
+        self.user_sized = True  # from now on the user's widths stay
+        return True
+
+    def drag_to(self, x: int):
+        """Move the dragged border to `x`, like a splitter that pushes: dragged right, the columns to
+        its right shrink (nearest first, each down to its minimum) and the column left of it grows;
+        dragged left, the columns to its left shrink the same way and the one right of it grows. The
+        border stops where every column it pushes is at its minimum."""
+        c, x0, sizes = self._drag
+        shown = [k for k in self._visible() if k in sizes]
+        i = shown.index(c)
+        delta = x - x0
+        pushed, grows = (shown[i + 1:], c) if delta > 0 else (shown[i::-1], shown[i + 1])
+        new = dict(sizes)
+        need = abs(delta)
+        for k in pushed:
+            give = max(0, min(need, sizes[k] - self.header_width(k)))
+            new[k] = sizes[k] - give
+            need -= give
+        new[grows] = sizes[grows] + abs(delta) - need
+        self._fitting = True
+        try:
+            for k in shown:
+                if self.header.sectionSize(k) != new[k]:
+                    self.header.resizeSection(k, new[k])
+        finally:
+            self._fitting = False
 
     def fit(self):
         """Columns that fitted their contents fit them again; stretching ones share what is left."""
