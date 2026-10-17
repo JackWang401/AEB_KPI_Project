@@ -276,7 +276,7 @@ class SignalViewer(QWidget):
                              "or up and down this list to change the order of the subplots.")
         self.order: list[str] = []  # the list's order once the user dragged it (else alphabetical)
         self.list.reordered.connect(self._reordered)
-        self.stepped: set[str] = set()  # signals drawn as a stepped line (right-click a signal)
+        self.step_choice: dict[str, bool] = {}  # right-click choices; otherwise discrete signals are stepped
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._list_menu)
         ll.addWidget(self.list, 1)
@@ -671,7 +671,7 @@ class SignalViewer(QWidget):
                 for j, (r, d) in enumerate(loaded):
                     if n not in d["values"]:
                         continue
-                    step = n in self.stepped
+                    step = self.is_stepped(n)
                     y = np.asarray(d.get("held", {}).get(n, d["values"][n]) if step else d["values"][n], dtype=float)
                     t = np.asarray(d["time"], dtype=float)
                     c = COLORS[k % len(COLORS)] if multi else COLORS[(j if overlay else i) % len(COLORS)]
@@ -913,14 +913,21 @@ class SignalViewer(QWidget):
         menu = QMenu(self)
         act = menu.addAction("Stepped line" + (f" ({len(names)} signals)" if len(names) > 1 else ""))
         act.setCheckable(True)
-        act.setChecked(bool(names) and all(n in self.stepped for n in names))
+        act.setChecked(bool(names) and all(self.is_stepped(n) for n in names))
         act.setToolTip("Hold each value until the next sample (for states, flags and other discrete signals)")
         act.triggered.connect(lambda on, ns=list(names): self.set_stepped(ns, on))
         return menu
 
+    def is_stepped(self, name: str) -> bool:
+        """Drawn as a stepped line: the right-click choice, else whether the signal's Kind is discrete."""
+        if name in self.step_choice:
+            return self.step_choice[name]
+        d = (self.state.data.get("signals") or {}).get(name) or {}
+        return d.get("kind") == "discrete"
+
     def set_stepped(self, names, on: bool):
         for n in names:
-            (self.stepped.add if on else self.stepped.discard)(n)
+            self.step_choice[n] = on
         if self._axes:
             self.draw()
 
@@ -938,7 +945,7 @@ class SignalViewer(QWidget):
         for n in names:
             act = menu.addAction(f"Stepped line: {n}" if len(names) > 1 else "Stepped line")
             act.setCheckable(True)
-            act.setChecked(n in self.stepped)
+            act.setChecked(self.is_stepped(n))
             act.triggered.connect(lambda on, n=n: self.set_stepped([n], on))
         return menu
 

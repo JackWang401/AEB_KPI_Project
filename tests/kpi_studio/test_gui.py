@@ -1624,3 +1624,24 @@ def test_right_click_a_signal_to_draw_it_as_a_stepped_line(qtbot, window, mf4_di
     assert sub.isChecked()
     sub.trigger()  # unchecked: a plain line again
     assert style("egoSpeed") == "default"
+
+
+def test_discrete_signals_are_stepped_unless_switched_off_in_the_plot(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    window.state.data["signals"]["egoSpeed"]["kind"] = "discrete"
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+
+    def style(name):
+        ax = next(a for a in viewer._axes if name in viewer._names.get(a, []))
+        return ax.get_lines()[viewer._names[ax].index(name)].get_drawstyle()
+
+    assert style("egoSpeed") == "steps-post" and style("longActAccel") == "default"  # from Kind
+    act = viewer.signal_menu(["egoSpeed"]).actions()[0]
+    assert act.isChecked()
+    act.trigger()  # the plot's choice wins over Kind
+    assert style("egoSpeed") == "default"
