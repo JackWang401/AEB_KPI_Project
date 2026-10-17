@@ -1565,3 +1565,29 @@ def test_every_ticked_signal_is_plotted_and_the_plots_scroll(qtbot, window, mf4_
     import src.kpi_studio.gui.widgets.signal_viewer as sv
     assert viewer.canvas.minimumHeight() >= len(viewer._axes) * sv.AXIS_MIN_PX  # each keeps a readable height
     assert viewer.plot_scroll.widget() is viewer.canvas
+
+
+def test_drag_signals_in_the_plot_list_to_reorder_the_subplots(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.host.clear()
+    viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    lst = viewer.list
+
+    def subplots():
+        return [viewer._ax_groups[ax][0] for ax in viewer._axes]
+
+    assert subplots() == ["aebTargetDecel", "egoSpeed", "longActAccel"]  # alphabetical at first
+    rows = [i for i in range(lst.count()) if lst.item(i).text() == "longActAccel"]
+    lst.move_rows(rows, 0)  # dragged to the top
+    assert lst.item(0).text() == "longActAccel"
+    assert subplots() == ["longActAccel", "aebTargetDecel", "egoSpeed"]
+    assert lst.item(0).checkState() == Qt.Checked
+    window.state.edited(structure=True)  # the list is rebuilt: the user's order stays
+    qtbot.wait(50)
+    viewer.refresh_names()
+    assert lst.item(0).text() == "longActAccel"
+    assert lst.supportedDropActions() == Qt.CopyAction  # a drag never removes signals from the list

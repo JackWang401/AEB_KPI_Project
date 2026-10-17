@@ -16,7 +16,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -50,21 +50,77 @@ MARGIN_PX = dict(left=64, right=250, top=10, bottom=40, gap=12)   # right: the s
 
 
 class SignalList(QListWidget):
-    """Signal list whose items can be dragged onto a subplot."""
+    """Signal list whose items can be dragged onto a subplot, or up and down the list to reorder the
+    subplots (they follow the list's order)."""
+
+    reordered = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
-        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDropIndicatorShown(True)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
     def mimeTypes(self):
         return [SIGNAL_MIME]
 
+    def supportedDropActions(self):
+        return Qt.CopyAction  # dragging never removes a signal from the list
+
     def mimeData(self, items):
         md = QMimeData()
         md.setData(SIGNAL_MIME, "\n".join(i.text() for i in items).encode())
         return md
+
+    def dragEnterEvent(self, e):
+        if e.source() is self:
+            super().dragEnterEvent(e)
+            e.setDropAction(Qt.CopyAction)  # (a move would let Qt delete the dragged rows)
+            e.accept()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        if e.source() is self:
+            super().dragMoveEvent(e)  # (draws the drop indicator)
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            e.ignore()
+
+    def drop_row(self, y: int) -> int:
+        """Where rows dropped at viewport height `y` go: before the row under it, after it in its lower half."""
+        idx = self.indexAt(QPoint(5, y))
+        if not idx.isValid():
+            return self.count()
+        rect = self.visualRect(idx)
+        return idx.row() + (1 if y > rect.center().y() else 0)
+
+    def dropEvent(self, e):
+        if e.source() is not self:
+            e.ignore()
+            return
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
+        self.move_rows(sorted(self.row(i) for i in self.selectedItems()), self.drop_row(int(e.position().y())))
+        self.setState(QAbstractItemView.NoState)
+        self.viewport().update()
+
+    def move_rows(self, rows: list[int], to: int):
+        """Move `rows` (kept in their order) to sit before row `to`."""
+        if not rows:
+            return
+        self.blockSignals(True)
+        items = [self.takeItem(r - k) for k, r in enumerate(rows)]
+        to -= sum(1 for r in rows if r < to)
+        for k, it in enumerate(items):
+            self.insertItem(to + k, it)
+        self.clearSelection()
+        for it in items:
+            it.setSelected(True)
+        self.blockSignals(False)
+        self.reordered.emit()
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 AXIS_MIN_PX = 70     # each subplot gets at least this height: with more, the plots scroll
 
@@ -209,7 +265,10 @@ class SignalViewer(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         self.list = SignalList()
-        self.list.setToolTip("Tick signals to plot them. Drag a signal onto a plot to draw it in that subplot.")
+        self.list.setToolTip("Tick signals to plot them. Drag a signal onto a plot to draw it in that subplot, "
+                             "or up and down this list to change the order of the subplots.")
+        self.order: list[str] = []  # the list's order once the user dragged it (else alphabetical)
+        self.list.reordered.connect(self._reordered)
         ll.addWidget(self.list, 1)
         check_row = QHBoxLayout()
         check_all = QPushButton("Check all")
@@ -339,8 +398,15 @@ class SignalViewer(QWidget):
                 it.setCheckState(Qt.Unchecked)
         self.files.blockSignals(False)
 
+    def _reordered(self):
+        self.order = [self.list.item(i).text() for i in range(self.list.count())]
+        if self.checked():
+            self.draw()
+
     def refresh_names(self):
         names = self.state.signal_names()
+        if self.order:  # the user's order; new signals after it, alphabetically
+            names = [n for n in self.order if n in names] + [n for n in names if n not in self.order]
         existing = [self.list.item(i).text() for i in range(self.list.count())]
         if existing == names:
             self._set_name_tips()
