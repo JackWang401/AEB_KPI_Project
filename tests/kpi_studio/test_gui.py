@@ -1349,3 +1349,21 @@ def test_a_border_dragged_with_the_mouse_pushes_columns_both_ways(qtbot, window,
     again = sizes()
     assert again[:2] == mins[:2] and again[3:] == mins[3:]
     assert sum(again) == width
+
+
+def test_enum_values_window_fits_its_content(qtbot):
+    from src.kpi_studio.gui.pages.signals_page import EnumDialog
+
+    long = {f"AUTO_EMERGENCY_BRAKING_PLANNER_STATE_{s}": i for i, s in
+            enumerate(["UNSPECIFIED", "READY", "ACTIVE", "HOLD", "UNAVAILABLE", "DEGRADED"])}
+    dlg = EnumDialog("state_fb", long)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.wait(50)
+    t = dlg.table
+    fm = t.fontMetrics()
+    widest = max(fm.horizontalAdvance(k) for k in long)
+    assert t.columnWidth(1) >= widest + 12  # no text is cut off
+    assert t.horizontalScrollBar().maximum() == 0 and t.verticalScrollBar().maximum() == 0
+    blank = t.viewport().height() - t.rowCount() * t.verticalHeader().defaultSectionSize()
+    assert blank < 3 * t.verticalHeader().defaultSectionSize()  # no big empty space below the values

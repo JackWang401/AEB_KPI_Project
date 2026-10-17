@@ -9,6 +9,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -671,7 +672,6 @@ class EnumDialog(QDialog):
     def __init__(self, signal: str, enum: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Enum values of {signal}")
-        self.resize(460, 420)
         lay = QVBoxLayout(self)
         info = QLabel("Use the text in conditions, e.g. " + signal + ' == "' + (next(iter(enum), "") or "TEXT") + '"')
         info.setWordWrap(True)
@@ -690,6 +690,35 @@ class EnumDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+        self._info = info
+        self._fitted = False
+
+    def showEvent(self, e):
+        if not self._fitted:  # once styled (fonts and paddings are final then)
+            self._fitted = True
+            self._fit()
+        super().showEvent(e)
+
+    def _fit(self):
+        """As large as the values and their full texts need (within the screen)."""
+        t = self.table
+        t.ensurePolished()
+        h_head = t.horizontalHeader()
+        widths = [max(t.sizeHintForColumn(c), h_head.sectionSizeHint(c)) + 8 for c in range(2)]
+        t.setColumnWidth(0, widths[0])
+        frame = 2 * t.frameWidth()
+        rows_h = sum(t.rowHeight(r) for r in range(t.rowCount())) or t.verticalHeader().defaultSectionSize()
+        table_w = sum(widths) + frame
+        table_h = h_head.sizeHint().height() + rows_h + frame + 2
+        lay = self.layout()
+        m = lay.contentsMargins()
+        screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        w = min(max(table_w + m.left() + m.right(), 320), int(screen.width() * 0.9))
+        info_h = self._info.heightForWidth(w - m.left() - m.right())
+        buttons = self.findChild(QDialogButtonBox).sizeHint().height()
+        h = m.top() + info_h + lay.spacing() + table_h + lay.spacing() + buttons + m.bottom()
+        t.setMinimumSize(table_w if w >= table_w + m.left() + m.right() else 0, 0)
+        self.resize(w, min(h, int(screen.height() * 0.85)))
 
     def _add(self, value: str, text: str):
         r = self.table.rowCount()
