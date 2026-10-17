@@ -724,7 +724,6 @@ class EnumDialog(QDialog):
         r = self.table.rowCount()
         self.table.insertRow(r)
         v = QTableWidgetItem(value)
-        v.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.table.setItem(r, 0, v)
         self.table.setItem(r, 1, QTableWidgetItem(text))
 
