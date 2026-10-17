@@ -1509,3 +1509,12 @@ def test_search_matches_are_highlighted_in_the_signal_tree(qtbot, window, mf4_di
     rect = page.tree.visualItemRect(item)
     colors = {img.pixelColor(x, rect.center().y()).name() for x in range(rect.left(), rect.right(), 2)}
     assert HighlightDelegate.COLOR.name() in colors
+
+
+def test_condition_builder_lists_signals_alphabetically(qtbot):
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+
+    dlg = ConditionBuilder(["ttc", "accel_act", "Brake", "throttle"])
+    qtbot.addWidget(dlg)
+    sig = dlg.rows[0][0]
+    assert [sig.itemText(i) for i in range(sig.count())] == ["accel_act", "Brake", "throttle", "ttc"]

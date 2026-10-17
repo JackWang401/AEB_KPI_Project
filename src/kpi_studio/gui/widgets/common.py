@@ -483,7 +483,7 @@ class ConditionBuilder(QDialog):
     def add_row(self):
         sig = QComboBox()
         sig.setEditable(True)
-        sig.addItems(self.names)
+        sig.addItems(sorted(self.names, key=str.lower))  # alphabetical, whatever the profile order
         op = QComboBox()
         op.addItems(self.OPS)
         val = QLineEdit()
