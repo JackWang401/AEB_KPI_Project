@@ -207,14 +207,15 @@ class MainWindow(QMainWindow):
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.resizeDocks([dock], [80], Qt.Vertical)
+        self.issues_dock = dock
+        dock.hide()  # appears only while the profile has errors
 
     def _show_issues(self):
+        """Profile check pops up while the profile has errors, listing them; warnings stay out of the way."""
         self.issues.clear()
-        if not self.state.issues:
-            self.issues.addItem(QListWidgetItem("✓ Profile is valid"))
-            return
         errors = [i for i in self.state.issues if i.severity == "error"]
-        for i in errors + [i for i in self.state.issues if i.severity != "error"]:
+        self.issues_dock.setVisible(bool(errors))
+        for i in errors:
             item = QListWidgetItem(("✖ " if i.severity == "error" else "⚠ ") + f"{i.where}: {i.message}")
             item.setForeground(Qt.red if i.severity == "error" else Qt.darkYellow)
             item.setData(Qt.UserRole, i.where)

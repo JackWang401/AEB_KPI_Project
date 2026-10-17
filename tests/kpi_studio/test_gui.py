@@ -620,6 +620,8 @@ def test_ticking_a_signal_loads_and_plots_it(qtbot, window, mf4_dir):
 def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     state = window.state
+    state.validate_now()
+    assert window.issues_dock.isHidden()  # no errors: Profile check stays out of the way
     state.data["events"]["served"] = {"start": "egoSpeed > 1", "moments": {"braking": {"first": "egoSpeed > 2"}}}
     state.data["kpis"].append({"name": "spd", "event": "served", "value": "egoSpeed", "at": "moment1"})
     state.edited(structure=True)
@@ -628,6 +630,8 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
                 if "moment1" in window.issues.item(i).text())
     window.issues.itemClicked.emit(item)
     assert window.side_bar.current == window.side_bar.titles.index("Events & KPIs")
+    assert not window.issues_dock.isHidden()  # pops up with the error
+    assert all(window.issues.item(i).text().startswith("✖") for i in range(window.issues.count()))
     assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
     at = window.kpi_page.kpi_form.at
     assert at.currentText() == "moment1" and "e34948" in at.styleSheet()  # missing moment shown in red
@@ -635,6 +639,7 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert state.data["kpis"][-1]["at"] == "braking" and at.styleSheet() == ""
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
+    assert window.issues_dock.isHidden()  # fixed: Profile check goes away
 
 
 def test_library_profile_opens_self_contained(qtbot, window, mf4_dir):
@@ -1701,8 +1706,9 @@ def test_kind_changed_in_the_table_shows_in_the_plot_at_once(qtbot, window, mf4_
     box.setCurrentIndex(KINDS.index("boolean"))
     delegate.setModelData(box, table.model(), ix)
     assert viewer._names[viewer._axes[-1]] == ["egoSpeed"]  # at once, before the profile is checked again
-    qtbot.wait(800)  # the profile check re-reads the plotted recording with the new Kind
-    qtbot.waitUntil(lambda: viewer.worker is None and bool(viewer.cache), timeout=20000)
+    window.state.validate_now()  # the profile check re-reads the plotted recording with the new Kind
+    qtbot.waitUntil(lambda: viewer.worker is None and bool(viewer.cache) and not viewer.queue, timeout=20000)
+    qtbot.wait(50)
     assert viewer._names[viewer._axes[-1]] == ["egoSpeed"] and len(viewer._axes) == 2
 
 
