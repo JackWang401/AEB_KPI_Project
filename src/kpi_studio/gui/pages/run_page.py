@@ -106,7 +106,7 @@ class AxesDialog(QDialog):
 
 class RunPage(QWidget):
     PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
-                 "Signals (timeseries)", "Axis ranges"]
+                 "Signals (timeseries)", "Axis ranges", "Merge into"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -137,7 +137,7 @@ class RunPage(QWidget):
         self.plots.setHorizontalHeaderLabels(self.PLOT_COLS)
         self.plots.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.plots.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
-        for col, width in ((0, 110), (2, 190), (3, 190), (4, 130), (5, 170), (7, 100)):
+        for col, width in ((0, 110), (2, 190), (3, 190), (4, 150), (5, 170), (7, 100), (8, 130)):
             self.plots.setColumnWidth(col, width)
         pl.addWidget(self.plots)
         context_menu.install(self.plots, add=[("Add plot", self.new_plot)],
@@ -231,7 +231,9 @@ class RunPage(QWidget):
                 self.plots.setItem(r, c, QTableWidgetItem(str(v or "")))
             for c, key, choices in ((2, "x", kpis), (3, "y", kpis), (5, "event", events)):
                 self.plots.setCellWidget(r, c, self._choice(r, key, choices, p.get(key, ""), editable=True))
-            if ptype in ("scatter", "histogram"):
+            if ptype == "scatter":  # or by a KPI's value: a colour scale, or one colour per text result
+                gkey, gchoices = "color_by", COLOR_BY + [k for k in kpis if k not in COLOR_BY]
+            elif ptype == "histogram":
                 gkey, gchoices = "color_by", COLOR_BY
             elif ptype in ("box", "bar"):
                 gkey, gchoices = "group_by", GROUP_BY
@@ -248,6 +250,16 @@ class RunPage(QWidget):
             axes.setEnabled(ptype != "timeseries")
             axes.clicked.connect(lambda *_, row=r: self.edit_axes(row))
             self.plots.setCellWidget(r, 7, axes)
+            if ptype == "scatter":  # plots with the same name here are drawn in one chart
+                merges = sorted({q.get("merge") for q in plots if q.get("merge")})
+                merge = self._choice(r, "merge", merges, p.get("merge", ""), editable=True)
+                merge.lineEdit().setPlaceholderText("own chart")
+                merge.setToolTip("Scatter plots with the same name here are drawn in one chart (they share X). "
+                                 "Type a new name, or pick one to join it; empty: a chart of its own.")
+                self.plots.setCellWidget(r, 8, merge)
+            else:
+                self.plots.removeCellWidget(r, 8)
+                self.plots.setItem(r, 8, QTableWidgetItem(""))
         self._loading = False
 
     def _choice(self, row: int, key: str, choices: list[str], current: str, editable=False) -> QComboBox:

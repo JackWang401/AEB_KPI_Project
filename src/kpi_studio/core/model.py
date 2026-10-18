@@ -297,7 +297,7 @@ class PlotDef(_Strict):
     title: str = ""
     x: Optional[str] = None
     y: Optional[str] = None
-    color_by: Literal["file", "event", "none"] = "file"
+    color_by: str = "file"  # "file", "event", "none", or a KPI name: points coloured by that KPI's value
     group_by: Literal["file", "event"] = "file"
     event: Optional[str] = None
     signals: list[str] = Field(default_factory=list)
@@ -307,6 +307,7 @@ class PlotDef(_Strict):
     reference_lines: list[RefLine] = Field(default_factory=list)
     x_range: Optional[list[Optional[float]]] = None  # [min, max]; an empty end adapts to the data
     y_range: Optional[list[Optional[float]]] = None
+    merge: str = ""  # scatter plots with the same merge name are drawn in one chart
 
     @model_validator(mode="after")
     def _fields_for_type(self):

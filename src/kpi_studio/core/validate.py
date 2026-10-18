@@ -352,6 +352,21 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             v = getattr(p, key)
             if v and p.type != "timeseries" and v not in kpi_names:
                 err(where, f"{key}: unknown KPI '{v}'")
+        if p.color_by not in ("file", "event", "none"):
+            if p.type != "scatter":
+                err(where, f"colour by a KPI ('{p.color_by}') works for scatter plots; use file, event or none")
+            elif p.color_by not in kpi_names:
+                err(where, f"colour by: unknown KPI '{p.color_by}' (or use file, event or none)")
+        if p.merge and p.type != "scatter":
+            err(where, f"merge '{p.merge}': only scatter plots can be merged into one chart")
+    merged: dict = {}
+    for p in profile.plots:
+        if p.merge and p.type == "scatter":
+            merged.setdefault(p.merge, []).append(p)
+    for name, group in merged.items():
+        xs = sorted({p.x for p in group if p.x})
+        if len(xs) > 1:
+            err(f"plots merge '{name}'", f"merged plots share one X axis; they use {', '.join(xs)}")
         if p.type == "timeseries":
             if p.event not in events:
                 err(where, f"unknown event '{p.event}'")

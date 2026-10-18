@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -98,3 +100,21 @@ def test_foreign_folder_named_kpi_results_is_not_deleted(mf4_dir):
     with pytest.raises(RuntimeError, match="not written by KPI Studio"):
         RunService(PROFILE, files, None).run()
     assert (mine / "notes.txt").exists()
+
+
+def test_merged_and_kpi_coloured_plots_are_written(mf4_dir, tmp_path):
+    folder, _ = mf4_dir
+    text = PROFILE.read_text().replace(
+        "x: vehSpd, y: aebStopDistance, color_by: file }",
+        "x: vehSpd, y: aebStopDistance, color_by: aebAverageAccel, merge: braking }").replace(
+        "x: vehSpd, y: aebDeadTime, color_by: file }", "x: vehSpd, y: aebDeadTime, color_by: none, merge: braking }")
+    prof = PROFILE.parent / f".test_merge_{tmp_path.name}.kpi.yaml"  # beside the original: its imports resolve
+    prof.write_text(text)
+    try:
+        res = RunService(prof, [str(folder / "a.mf4"), str(folder / "b.mf4")], tmp_path / "out").run()
+    finally:
+        prof.unlink()
+    assert res.n_ok == 2
+    names = [Path(p).name for p in res.plots]
+    assert sum("braking" in n for n in names) == 1  # two scatter plots, one chart
+    assert not any("Stop distance" in n or "Dead time" in n for n in names)

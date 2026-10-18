@@ -13,7 +13,7 @@ import tokenize
 # fields whose values are not signal expressions
 _SKIP_KEYS = {"name", "use", "as", "event", "description", "unit", "title", "at", "duration", "between",
               "after", "before", "offset", "reduce", "x", "y", "type", "color_by", "group_by", "enum",
-              "channels", "imports", "label"}
+              "channels", "imports", "label", "merge"}
 
 
 def rename_in_expression(text: str, old: str, new: str) -> str:
@@ -122,7 +122,7 @@ def rename_kpi(data: dict, event: str, old: str, new: str) -> int:
                 k["formula"] = out
                 counter[0] += 1
     for p in data.get("plots") or []:
-        for key in ("x", "y"):
+        for key in ("x", "y", "color_by"):
             if p.get(key) == old:
                 p[key] = new
                 counter[0] += 1

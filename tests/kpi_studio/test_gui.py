@@ -1923,3 +1923,69 @@ def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
     for c in (1, 2, 3):  # every field fills its whole column, whatever the width
         assert table.cellWidget(0, c).width() >= table.columnWidth(c) - 1, c  # less the grid line
     assert form.which.items() == {"PB": "egoSpeed > 5"}
+
+
+def _wide_for_plots():
+    import pandas as pd
+
+    from src.kpi_studio.report.plots import TEXT
+
+    return pd.DataFrame({"file": ["f"] * 4, "event": ["e"] * 4, "occurrence": [1, 2, 3, 4],
+                         "v": [10.0, 20.0, 30.0, 40.0], "gap": [1.0, 2.0, 3.0, 4.0], "dist": [5.0, 6.0, 7.0, 8.0],
+                         "decel": [-3.0, -5.0, None, -7.0], "type": [1.0, 2.0, 3.0, 0.0],
+                         TEXT + "type": ["PB", "FB", "PB + FB", "none"]})
+
+
+def test_scatter_colour_by_a_kpi():
+    from src.kpi_studio.core.model import PlotDef
+    from src.kpi_studio.report.plots import kpi_figure
+
+    wide = _wide_for_plots()
+    fig = kpi_figure(PlotDef(type="scatter", x="v", y="gap", color_by="decel"), wide, {"decel": "m/s^2"}, ["f"])
+    scaled, missing = fig.data
+    assert list(scaled.marker.color) == [-3.0, -5.0, -7.0] and scaled.marker.coloraxis == "coloraxis"
+    assert fig.layout.coloraxis.colorbar.title.text == "decel [m/s^2]"
+    assert missing.name == "no decel" and list(missing.x) == [30.0]
+    fig = kpi_figure(PlotDef(type="scatter", x="v", y="gap", color_by="type"), wide, {}, ["f"])
+    assert [t.name for t in fig.data] == ["FB", "PB", "PB + FB", "none"]  # a text KPI: one colour per text
+    assert len({t.marker.color for t in fig.data}) == 4
+
+
+def test_merged_scatter_plots_share_one_chart():
+    from src.kpi_studio.core.model import PlotDef
+    from src.kpi_studio.report.plots import scatter_figure
+
+    wide = _wide_for_plots()
+    a = PlotDef(type="scatter", x="v", y="gap", color_by="none", merge="braking")
+    b = PlotDef(type="scatter", x="v", y="dist", color_by="none", merge="braking")
+    fig = scatter_figure([a, b], wide, {"gap": "m", "dist": "m"}, ["f"], "braking")
+    assert [t.name for t in fig.data] == ["gap", "dist"]
+    assert [t.marker.symbol for t in fig.data] == ["circle", "diamond"]
+    assert fig.layout.yaxis.title.text == "gap, dist [m]"
+    assert "yaxis2" not in fig.layout.to_plotly_json()  # same unit: one axis
+    fig = scatter_figure([a, b], wide, {"gap": "m", "dist": "s"}, ["f"], "braking")
+    assert fig.layout.yaxis.title.text == "gap [m]" and fig.layout.yaxis2.title.text == "dist [s]"  # a row each
+
+
+def test_merge_and_colour_options_in_the_plot_table(qtbot, window, mf4_dir, tmp_path):
+    _load(qtbot, window, mf4_dir)
+    page = window.run_page
+    kpis = window.state.kpi_names()
+    window.state.data["plots"] = [{"type": "scatter", "x": kpis[0], "y": kpis[1]},
+                                  {"type": "scatter", "x": kpis[0], "y": kpis[2]},
+                                  {"type": "box", "y": kpis[1]}]
+    window.state.edited(structure=True)
+    page.refresh_plots()
+    colour = page.plots.cellWidget(0, 4)
+    assert [colour.itemText(i) for i in range(3)] == ["file", "event", "none"] and colour.findText(kpis[2]) >= 0
+    colour.setCurrentText(kpis[2])
+    for r in (0, 1):
+        page.plots.cellWidget(r, 8).setCurrentText("together")
+    assert page.plots.cellWidget(2, 8) is None  # box plots are not merged
+    plots = window.state.data["plots"]
+    assert plots[0]["color_by"] == kpis[2] and plots[0]["merge"] == plots[1]["merge"] == "together"
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    plots[2]["merge"] = "together"
+    window.state.validate_now()
+    assert any("only scatter plots can be merged" in str(i) for i in window.state.issues)
