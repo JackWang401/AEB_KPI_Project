@@ -12,6 +12,7 @@ shows the signal values at the cursors and their difference. Right-click clears 
 
 from __future__ import annotations
 
+import sys
 import traceback
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QStyledItemDelegate,
+    QStyleOptionViewItem,
     QSizePolicy,
     QSpinBox,
     QLabel,
@@ -58,13 +60,44 @@ class SignalList(QListWidget):
     subplots (they follow the list's order)."""
 
     reordered = Signal()
+    header_activated = Signal(str)  # double-click on a common axis' name: its name
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.ctrl_clicked = False  # the last press was a macOS Ctrl+click (selects, opens no menu)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDropIndicatorShown(True)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+    def header_at(self, pos) -> str | None:
+        """Name of the common axis whose name row is under viewport position `pos`."""
+        it = self.itemAt(pos)
+        tag = it.data(AXIS_ROLE) if it is not None else None
+        if tag and tag.get("first") and pos.y() < self.visualItemRect(it).top() + HEADER_PX:
+            return tag["name"]
+        return None
+
+    def mousePressEvent(self, e):
+        # macOS turns Ctrl+click into a right click; here it adds or removes the row from the
+        # selection instead (as Ctrl+click does on Windows), the menu stays on the real right click
+        self.ctrl_clicked = (CTRL_CLICK_SELECTS and e.button() == Qt.RightButton
+                             and bool(e.modifiers() & Qt.MetaModifier))
+        if self.ctrl_clicked:
+            it = self.itemAt(e.position().toPoint())
+            if it is not None:
+                it.setSelected(not it.isSelected())
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        label = self.header_at(e.position().toPoint())
+        if label:
+            self.header_activated.emit(label)
+            e.accept()
+            return
+        super().mouseDoubleClickEvent(e)
 
     def mimeTypes(self):
         return [SIGNAL_MIME]
@@ -133,29 +166,75 @@ KIND_TIPS = {
     "boolean": "0/1 flags: held, drawn as a shaded stepped line at the bottom of the plot",
     "enum": "Values with names (a value table): held, drawn as a stepped line",
 }
-AXIS_ROLE = Qt.UserRole + 7  # list item data: (common axis name, colour) the signal belongs to
+AXIS_ROLE = Qt.UserRole + 7  # list item data: the signal's common axis, see SignalViewer._tag_axes
+HEADER_PX = 22   # height of a common axis' name row, drawn above its first signal
+INDENT_PX = 20   # signals of a common axis are indented under its name
+CTRL_CLICK_SELECTS = sys.platform == "darwin"  # macOS: Ctrl+click adds to the selection (no menu)
+
+
+def _group_rects(option, tag):
+    """(header rect or None, content rect) of a list row on a common axis."""
+    r = option.rect
+    if tag.get("first"):
+        return r.adjusted(0, 0, 0, -(r.height() - HEADER_PX)), r.adjusted(INDENT_PX, HEADER_PX, 0, 0)
+    return None, r.adjusted(INDENT_PX, 0, 0, 0)
 
 
 class AxisTagDelegate(QStyledItemDelegate):
-    """Draws a signal's common axis as a coloured tag at the right end of its row."""
+    """Signals on a common axis are listed under the axis' name, indented and joined by a line
+    in the axis' colour:   axis 1 / ├ signal1 / └ signal2."""
 
-    def paint(self, painter, option, index):
-        super().paint(painter, option, index)
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        tag = index.data(AXIS_ROLE)
+        if tag and tag.get("first"):
+            size.setHeight(size.height() + HEADER_PX)
+        return size
+
+    def _shifted(self, option, index):
         tag = index.data(AXIS_ROLE)
         if not tag:
+            return option, None, None
+        opt = QStyleOptionViewItem(option)
+        header, opt.rect = _group_rects(option, tag)
+        return opt, header, tag
+
+    def editorEvent(self, event, model, option, index):
+        opt, _, _ = self._shifted(option, index)  # the check box moved with the row's content
+        return super().editorEvent(event, model, opt, index)
+
+    def paint(self, painter, option, index):
+        opt, header, tag = self._shifted(option, index)
+        super().paint(painter, opt, index)
+        if not tag:
             return
-        name, colour = tag
+        colour = QColor(tag["colour"])
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
-        fm = option.fontMetrics
-        w = min(fm.horizontalAdvance(name) + 14, option.rect.width() // 2)
-        r = option.rect.adjusted(option.rect.width() - w - 6, 3, -6, -3)
-        fill = QColor(colour)
-        fill.setAlpha(40)
-        painter.setPen(QColor(colour))
-        painter.setBrush(fill)
-        painter.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        painter.drawText(r, Qt.AlignCenter, fm.elidedText(name, Qt.ElideRight, r.width() - 8))
+        if header is not None:
+            band = QColor(colour)
+            band.setAlpha(28)
+            painter.fillRect(header.adjusted(2, 2, -2, -1), band)
+            font = painter.font()
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(colour)
+            text_rect = header.adjusted(8, 0, -8, 0)
+            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, tag["name"])
+            if tag.get("range"):
+                font.setBold(False)
+                painter.setFont(font)
+                painter.setPen(QColor("#6b6b66"))
+                painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignRight, tag["range"])
+        pen = painter.pen()
+        pen.setColor(colour)
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        x = option.rect.left() + 10
+        mid = opt.rect.center().y()
+        top = opt.rect.top() - (2 if header is not None else 0)
+        painter.drawLine(x, top, x, mid if tag.get("last") else option.rect.bottom() + 1)
+        painter.drawLine(x, mid, x + INDENT_PX - 13, mid)
         painter.restore()
 
 
@@ -321,6 +400,7 @@ class SignalViewer(QWidget):
         self.step_choice: dict[str, bool] = {}  # right-click choices; otherwise discrete signals are stepped
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._list_menu)
+        self.list.header_activated.connect(self.ask_rename_axis)
         ll.addWidget(self.list, 1)
         check_row = QHBoxLayout()
         check_all = QPushButton("Check all")
@@ -455,6 +535,7 @@ class SignalViewer(QWidget):
 
     def _reordered(self):
         self.order = [self.list.item(i).text() for i in range(self.list.count())]
+        self._tag_axes()  # a common axis' signals stay together under its name
         if self.checked():
             self.draw()
 
@@ -482,12 +563,47 @@ class SignalViewer(QWidget):
         order = list(dict.fromkeys(self.common.values()))
         return COLORS[order.index(name) % len(COLORS)] if name in order else COLORS[0]
 
+    def _cluster_axes(self):
+        """Move the signals of each common axis together, under the first of them in the list."""
+        names = [self.list.item(i).text() for i in range(self.list.count())]
+        new, done = [], set()
+        for n in names:
+            axis = self.common.get(n)
+            if axis is None:
+                new.append(n)
+            elif axis not in done:
+                done.add(axis)
+                new += [m for m in names if self.common.get(m) == axis]
+        if new == names:
+            return
+        self.list.blockSignals(True)
+        items = {self.list.item(i).text(): self.list.item(i) for i in range(self.list.count())}
+        selected = {it.text() for it in self.list.selectedItems()}
+        for _ in range(self.list.count()):
+            self.list.takeItem(0)
+        for n in new:
+            self.list.addItem(items[n])
+            items[n].setSelected(n in selected)
+        self.list.blockSignals(False)
+        self.order = new
+
     def _tag_axes(self):
-        """Show each signal's common axis as a tag in the list."""
-        for i in range(self.list.count()):
+        """List the signals of each common axis under its name (see AxisTagDelegate)."""
+        self._cluster_axes()
+        count = self.list.count()
+        for i in range(count):
             it = self.list.item(i)
             axis = self.common.get(it.text())
-            it.setData(AXIS_ROLE, (axis, self.axis_colour(axis)) if axis else None)
+            if not axis:
+                it.setData(AXIS_ROLE, None)
+                continue
+            prev = self.common.get(self.list.item(i - 1).text()) if i > 0 else None
+            nxt = self.common.get(self.list.item(i + 1).text()) if i + 1 < count else None
+            rng = self.axis_range.get(axis)
+            it.setData(AXIS_ROLE, {"name": axis, "colour": self.axis_colour(axis), "first": prev != axis,
+                                   "last": nxt != axis, "range": f"{rng[0]:g} … {rng[1]:g}" if rng else ""})
+        self.list.doItemsLayout()
+        self.list.viewport().update()
 
     def ask_axis_name(self, names: list[str]) -> str | None:
         current = next((self.common[n] for n in names if n in self.common), "")
@@ -541,6 +657,7 @@ class SignalViewer(QWidget):
             if not lo < hi:
                 raise ValueError("the minimum must be below the maximum")
             self.axis_range[label] = (lo, hi)
+        self._tag_axes()
         self.draw()
 
     def _axis_of(self, label: str):
@@ -1179,7 +1296,8 @@ class SignalViewer(QWidget):
             act = menu.addAction("Common axis")
             act.setEnabled(len(names) >= 2)
             act.setToolTip("Draw the selected signals together in one subplot, on one value axis"
-                           if len(names) >= 2 else "Select 2 or more signals (Ctrl/Shift-click) to share an axis")
+                           if len(names) >= 2 else "Select 2 or more signals (Ctrl+click or Shift+click) "
+                           "to share an axis")
             act.triggered.connect(lambda _on, ns=names: self.new_common_axis(ns))
         else:
             sub = QMenu("Common axis", menu)  # owned by the menu, so it outlives this function
@@ -1208,6 +1326,28 @@ class SignalViewer(QWidget):
         if on:
             act = menu.addAction("Remove from common axis")
             act.triggered.connect(lambda _on, ns=on: self.uncommon(ns))
+
+    def axis_menu(self, label: str) -> QMenu:
+        """Right-click on a common axis' name in the list: its range, name, and ungrouping."""
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        members = [n for n, a in self.common.items() if a == label]
+        act = menu.addAction("Range…")
+        rng = self.axis_range.get(label)
+        act.setToolTip(f"Now {rng[0]:g} to {rng[1]:g}" if rng else "Now fitted to the signals")
+        act.triggered.connect(lambda _on: self.range_axis(label))
+        menu.addAction("Rename…").triggered.connect(lambda _on: self.ask_rename_axis(label))
+        menu.addAction("Select its signals").triggered.connect(lambda _on: self._select(members))
+        menu.addSeparator()
+        act = menu.addAction("Remove common axis")
+        act.setToolTip("Each of its signals back to a subplot of its own")
+        act.triggered.connect(lambda _on: self.uncommon(members))
+        return menu
+
+    def _select(self, names):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            it.setSelected(it.text() in names)
 
     def _fixed_range(self, ax) -> bool:
         return any(self.common.get(n) in self.axis_range for n in self._ax_groups.get(ax, []))
@@ -1249,6 +1389,12 @@ class SignalViewer(QWidget):
             self.draw()
 
     def _list_menu(self, pos):
+        if self.list.ctrl_clicked:  # macOS Ctrl+click: it selected the row, no menu
+            return
+        label = self.list.header_at(pos)
+        if label:
+            self.axis_menu(label).exec(self.list.viewport().mapToGlobal(pos))
+            return
         it = self.list.itemAt(pos)
         if it is None:
             return

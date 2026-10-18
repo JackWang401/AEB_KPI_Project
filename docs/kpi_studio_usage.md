@@ -20,7 +20,9 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    drawn in one subplot on one value axis (*axis 1*, *axis 2*, …). Once an axis exists, *Common axis*
    offers *Join axis N* or *New common axis*. *Range of common axis…* fixes its minimum and maximum
    (or back to automatic), *Rename common axis…* names it, *Remove from common axis* undoes it.
-   The list tags each signal with its axis name.
+   The list shows each common axis as a name row with its signals indented under it; right-click the
+   name row for *Range…*, *Rename…*, *Select its signals* and *Remove common axis* (double-click renames).
+   On macOS, Ctrl+click (as well as ⌘+click) adds a signal to the selection.
 2. **Signals** – import libraries (`vehicle`, `aeb_core`, …) or pick channels
    from the tree. A signal may list several channel names; the first one found
    in a file is used. *Add derived…* builds a derived signal step by step:

@@ -9,7 +9,7 @@ pytest.importorskip("pytestqt")
 
 import numpy as np  # noqa: E402
 from src.kpi_studio.gui.pages import kpi_page  # noqa: E402
-from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QSettings, Qt  # noqa: E402
 
 from src.kpi_studio.gui.main_window import MainWindow  # noqa: E402
 from src.kpi_studio.io import profile_store  # noqa: E402
@@ -2026,8 +2026,21 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     ax = next(a for a in viewer._axes if len(viewer._ax_groups[a]) == 2)
     assert "axis 1" in [t.get_text() for t in ax.texts]  # the axis is named in its subplot
     items = {viewer.list.item(i).text(): viewer.list.item(i) for i in range(viewer.list.count())}
-    assert items["longActAccel"].data(sv.AXIS_ROLE)[0] == "axis 1" == items["aebTargetDecel"].data(sv.AXIS_ROLE)[0]
+    assert items["longActAccel"].data(sv.AXIS_ROLE)["name"] == "axis 1" == items["aebTargetDecel"].data(sv.AXIS_ROLE)["name"]
     assert items["egoSpeed"].data(sv.AXIS_ROLE) is None
+    # listed together under the axis' name: the first carries the name row, the last ends the line
+    order = [viewer.list.item(i).text() for i in range(viewer.list.count())]
+    i = order.index("aebTargetDecel")
+    assert order[i + 1] == "longActAccel"
+    first, last = items["aebTargetDecel"].data(sv.AXIS_ROLE), items["longActAccel"].data(sv.AXIS_ROLE)
+    assert first["first"] and not first["last"] and last["last"] and not last["first"]
+    rect = viewer.list.visualItemRect(items["aebTargetDecel"])
+    assert rect.height() >= viewer.list.visualItemRect(items["egoSpeed"]).height() + sv.HEADER_PX
+    assert viewer.list.header_at(rect.topLeft() + QPoint(30, 5)) == "axis 1"
+    assert viewer.list.header_at(rect.bottomLeft() + QPoint(30, -3)) is None
+    menu = viewer.axis_menu("axis 1")
+    assert [a.text() for a in menu.actions() if a.text()] == ["Range…", "Rename…", "Select its signals",
+                                                               "Remove common axis"]
 
     # an axis exists: a signal joins it, or starts a new one
     menu = viewer.signal_menu(["egoSpeed"])
@@ -2057,11 +2070,41 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     action(menu, "Rename common axis…").trigger()
     assert set(viewer.common.values()) == {"accel"}
 
+    rng_tag = next(viewer.list.item(i).data(sv.AXIS_ROLE) for i in range(viewer.list.count())
+                   if viewer.list.item(i).data(sv.AXIS_ROLE))
+    assert rng_tag["name"] == "accel"
     menu = viewer.signal_menu(["egoSpeed"])
     action(menu, "Remove from common axis").trigger()
     assert len(viewer._axes) == 2 and "egoSpeed" not in viewer.common
     viewer.uncommon(["longActAccel"])  # one left: the axis is gone
     assert viewer.common == {} and len(viewer._axes) == 3
+    assert all(viewer.list.item(i).data(sv.AXIS_ROLE) is None for i in range(viewer.list.count()))
+
+
+def test_ctrl_click_selects_on_macos(qtbot, window, monkeypatch):
+    from PySide6.QtTest import QTest
+
+    from src.kpi_studio.gui.widgets import signal_viewer as sv
+
+    monkeypatch.setattr(sv, "CTRL_CLICK_SELECTS", True)
+    lst = window.viewer.list
+    window.show()
+    for n in ("a", "b", "c", "d"):
+        lst.addItem(n)
+    shown = []
+    class _Menu:
+        def exec(self, *_):
+            pass
+
+    monkeypatch.setattr(window.viewer, "signal_menu", lambda names: shown.append(names) or _Menu())
+    rect = lambda r: lst.visualItemRect(lst.item(r)).center()  # noqa: E731
+    QTest.mouseClick(lst.viewport(), Qt.LeftButton, Qt.NoModifier, rect(0))
+    QTest.mouseClick(lst.viewport(), Qt.RightButton, Qt.MetaModifier, rect(2))  # macOS Ctrl+click
+    window.viewer._list_menu(rect(2))
+    assert [i.text() for i in lst.selectedItems()] == ["a", "c"] and shown == []
+    QTest.mouseClick(lst.viewport(), Qt.RightButton, Qt.NoModifier, rect(2))  # a real right click
+    window.viewer._list_menu(rect(2))
+    assert shown == [["a", "c"]]
 
 
 def test_common_axis_range_dialog(qtbot, window):
