@@ -130,3 +130,24 @@ def test_custom_output_folder_keeps_one_excel(mf4_dir, tmp_path):
     second = RunService(PROFILE, files, root).run()
     assert first.excel == second.excel == root / "kpi_results" / "kpi_results.xlsx" and second.excel.exists()
     assert sorted(p.name for p in root.iterdir()) == ["kpi_results", "notes.txt"]  # replaced, not added
+
+
+def test_runs_collect_in_one_excel_replacing_the_same_file(mf4_dir, tmp_path):
+    folder, _ = mf4_dir
+    a, b = str(folder / "a.mf4"), str(folder / "b.mf4")
+    root = tmp_path / "out"
+    RunService(PROFILE, [a, b], root, versions={a: "v1", b: "v1"}).run()
+    res = RunService(PROFILE, [a], root, versions={a: "v2"}).run()
+    summary = pd.read_excel(res.excel, sheet_name="Summary")
+    assert list(summary.columns[:2]) == ["File", "SW version"]
+    assert sorted(summary["File"].unique()) == sorted([a, b])  # b kept from the first run
+    assert len(summary) == 3 and (summary["File"] == a).sum() == 2  # a replaced, not added again
+    assert set(summary[summary["File"] == a]["SW version"]) == {"v2"}
+    assert set(summary[summary["File"] == b]["SW version"]) == {"v1"}
+    files = pd.read_excel(res.excel, sheet_name="Files")
+    assert sorted(files["file"]) == sorted([a, b])
+    details = pd.read_excel(res.excel, sheet_name="Details")
+    assert set(details["file"]) == {a, b} and "SW version" in details.columns
+    res = RunService(PROFILE, [a], root).run()  # no version typed this time: the earlier one stays
+    summary = pd.read_excel(res.excel, sheet_name="Summary")
+    assert set(summary[summary["File"] == a]["SW version"]) == {"v2"}

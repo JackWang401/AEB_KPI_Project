@@ -52,6 +52,10 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    it is always the same Excel file), *Default* goes back.
    The output folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved
    profile used for the run.
+   `kpi_results.xlsx` collects every run into that folder: rows of files not in this run are kept,
+   rows of a file with exactly the same path are replaced. Type a file's software version in the
+   *SW version* column of the Files panel (double-click); it is written next to its results and kept
+   for later runs.
 
 ## Command line
 

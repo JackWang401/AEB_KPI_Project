@@ -2024,3 +2024,18 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     assert len(viewer._axes) == 2 and "egoSpeed" not in viewer.common
     viewer.uncommon(["longActAccel"])  # one left: the axis is gone
     assert viewer.common == {} and len(viewer._axes) == 3
+
+
+def test_software_version_column_in_files(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.files_page
+    col = page.COLS.index("SW version")
+    f = window.state.files[0]
+    page.table.item(0, col).setText("SW 1.2.3")
+    assert window.state.versions[f] == "SW 1.2.3"
+    assert "SW 1.2.3" in str(page.settings.value("files/sw_versions"))  # remembered for next time
+    assert not page.table.item(0, 3).flags() & Qt.ItemIsEditable  # only the version is typed in
+    page.refresh()
+    assert page.table.item(0, col).text() == "SW 1.2.3"
+    page.table.item(0, col).setText("")
+    assert f not in window.state.versions

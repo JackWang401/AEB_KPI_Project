@@ -28,7 +28,7 @@ from src.kpi_studio.core.results import FileIssue, FileOutcome, Status
 from src.kpi_studio.core.validate import CompiledProfile
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import Recording, as_recording, group_recordings, index_file, read_signals, resolve_recording
-from src.kpi_studio.report.excel_writer import write_workbook
+from src.kpi_studio.report.excel_writer import read_previous, write_workbook
 from src.kpi_studio.report.dashboard import build_dashboard
 from src.kpi_studio.report.plots import render_plots
 
@@ -189,7 +189,7 @@ class RunService:
     def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path, None],
                  *, workers: int = 1, progress: Optional[ProgressFn] = None,
                  cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None,
-                 combine: bool = True, offsets: Optional[dict] = None):
+                 combine: bool = True, offsets: Optional[dict] = None, versions: Optional[dict] = None):
         self.profile_src = profile
         if isinstance(profile, (str, Path)):
             base_dir = base_dir or Path(profile).parent
@@ -202,6 +202,7 @@ class RunService:
         self.indexes: dict = {}
         self.combine = combine
         self.offsets = {str(Path(f)): float(v) for f, v in (offsets or {}).items() if v}  # file -> time shift [s]
+        self.versions = {str(Path(f)): str(v).strip() for f, v in (versions or {}).items() if str(v).strip()}
         self.recordings: list[Recording] = []
 
     def preflight(self) -> PreflightReport:
@@ -333,13 +334,22 @@ class RunService:
             ("cancelled", "yes" if cancelled else "no"),
         ]
         self.progress("excel", 0, 1, "Writing Excel")
+        # one workbook for every run into this folder: earlier files' rows are kept, this run's files replaced
+        previous = read_previous(self.target_dir() / "kpi_results.xlsx")
+        rec_versions = {}  # recording -> software version of its files
+        for r in self.recordings:
+            v = ", ".join(dict.fromkeys(self.versions[f] for f in r.files if f in self.versions))
+            if v:
+                rec_versions[r.name] = v
         excel = write_workbook(out_dir / "kpi_results.xlsx", outcomes, kpi_order=kpi_order, units=units,
-                               events=list(self.cp.events), run_info=run_info, profile_text=profile_text)
+                               events=list(self.cp.events), run_info=run_info, profile_text=profile_text,
+                               previous=previous, versions=rec_versions)
+        details = read_previous(excel).get("Details")  # every file's KPIs, for the KPI plots
         self.progress("plots", 0, 1, "Rendering plots")
         figures: list = []
         plot_units = {**signal_units(self.resolved), **units}  # time series panels show signal units
         plots = render_plots(self.resolved, outcomes, out_dir / "plots", plot_units, [r.name for r in self.recordings],
-                             collect=figures)
+                             collect=figures, details=details)
         dashboard = build_dashboard(figures, out_dir, outcomes=outcomes, kpi_order=kpi_order, units=units,
                                     profile_name=self.resolved.name, run_time=dict(run_info)["run time"],
                                     plotly_js=out_dir / "plots" / "plotly.min.js")

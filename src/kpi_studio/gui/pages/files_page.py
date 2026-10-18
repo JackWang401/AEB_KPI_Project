@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
@@ -25,7 +26,8 @@ from src.kpi_studio.gui.workers import IndexWorker
 
 
 class FilesPage(QWidget):
-    COLS = ["File", "Recording", "Duration [s]", "Signals", "Status", "Folder"]
+    COLS = ["File", "Recording", "SW version", "Duration [s]", "Signals", "Status", "Folder"]
+    VERSION_COL = 2
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -46,7 +48,13 @@ class FilesPage(QWidget):
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        # software versions typed here are remembered per file path and written next to its results
+        try:
+            saved = json.loads(str(settings.value("files/sw_versions", "") or "{}"))
+        except ValueError:
+            saved = {}
+        state.versions.update({str(k): str(v) for k, v in saved.items() if v} if isinstance(saved, dict) else {})
         self.table.verticalHeader().setDefaultSectionSize(22)
         for c in range(len(self.COLS) - 1):
             self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
@@ -117,8 +125,18 @@ class FilesPage(QWidget):
         self.state.set_checked(self.state.files, checked)
 
     def _item_changed(self, item):
-        if item.column() == 0 and 0 <= item.row() < len(self.state.files):
+        if item.column() == self.VERSION_COL and 0 <= item.row() < len(self.state.files):
+            self.set_version(self.state.files[item.row()], item.text())
+        elif item.column() == 0 and 0 <= item.row() < len(self.state.files):
             self.state.set_checked([self.state.files[item.row()]], item.checkState() == Qt.Checked)
+
+    def set_version(self, file: str, text: str):
+        text = text.strip()
+        if text:
+            self.state.versions[file] = text
+        else:
+            self.state.versions.pop(file, None)
+        self.settings.setValue("files/sw_versions", json.dumps(self.state.versions))
 
     def remove_selected(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
@@ -161,15 +179,21 @@ class FilesPage(QWidget):
                 status, dur, chans = idx.error, "", ""
             rec = rec_of.get(f)
             rec_text = Path(rec.name).name if rec is not None and len(rec.files) > 1 else "(own)"
-            for c, text in enumerate([p.name, rec_text, dur, chans, status, str(p.parent)]):
+            for c, text in enumerate([p.name, rec_text, self.state.versions.get(f, ""), dur, chans, status,
+                                      str(p.parent)]):
                 item = QTableWidgetItem(text)
                 item.setToolTip(f)
+                if c == self.VERSION_COL:
+                    item.setToolTip("Double-click to type the software version of this file; it is written next "
+                                    "to its results in the Excel file")
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 if c == 0:
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Unchecked if f in self.state.unchecked else Qt.Checked)
                 elif f in self.state.unchecked:
                     item.setForeground(QColor("#aeaeb2"))  # not analysed
-                if c == 4 and idx is not None and not idx.ok:
+                if c == 5 and idx is not None and not idx.ok:
                     item.setForeground(Qt.red)
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)

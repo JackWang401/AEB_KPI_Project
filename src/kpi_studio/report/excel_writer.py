@@ -91,36 +91,115 @@ def _sheet_name(name: str, used: set) -> str:
     return out
 
 
+VERSION = "SW version"
+
+
+def _with_version(df: pd.DataFrame, key: str, versions: dict) -> pd.DataFrame:
+    """`df` with a software-version column right after its file column."""
+    df = df.copy()
+    if VERSION in df.columns:
+        df = df.drop(columns=[VERSION])
+    df.insert(df.columns.get_loc(key) + 1 if key in df.columns else 0, VERSION,
+              [versions.get(f, "") for f in df[key]] if key in df.columns else [])
+    return df
+
+
+def _merge(old: Optional[pd.DataFrame], new: pd.DataFrame, key: str, replaced: set, sort: list[str]) -> pd.DataFrame:
+    """Rows of `old` whose file is not in this run (`replaced`), plus `new`, sorted by file then occurrence.
+    A file kept from `old` keeps its software version unless this run gives one."""
+    if old is None or old.empty or key not in old.columns:
+        return new
+    keep = old[~old[key].astype(str).isin(replaced)]
+    if keep.empty:
+        return new
+    cols = list(new.columns) + [c for c in keep.columns if c not in new.columns]
+    both = pd.concat([keep.reindex(columns=cols), new.reindex(columns=cols)], ignore_index=True)
+    by = [c for c in sort if c in both.columns]
+    return both.sort_values(by, kind="stable", key=lambda c: c.astype(str) if c.name == key else c,
+                            ignore_index=True) if by else both
+
+
+def _failed_cells(summary: pd.DataFrame, details: pd.DataFrame) -> list[tuple[int, int]]:
+    """Summary cells of KPIs whose status is not ok (from the details, so kept rows stay marked)."""
+    if details.empty or summary.empty or "status" not in details.columns:
+        return []
+    col_of = {}
+    for j, c in enumerate(summary.columns):
+        col_of.setdefault(str(c).split(" [")[0], j)
+    row_of = {(str(r["File"]), str(r["Event"]), int(r["Occurrence"])): i for i, r in summary.iterrows()
+              if pd.notna(r["Occurrence"])}
+    out = []
+    for r in details[details["status"].astype(str) != Status.OK].itertuples(index=False):
+        i = row_of.get((str(r.file), str(r.event), int(r.occurrence))) if pd.notna(r.occurrence) else None
+        j = col_of.get(str(r.kpi))
+        if i is not None and j is not None:
+            out.append((i, j))
+    return out
+
+
+def read_previous(path: Optional[Path]) -> dict:
+    """The sheets of an earlier result workbook ({} when there is none or it cannot be read)."""
+    if path is None or not Path(path).exists():
+        return {}
+    try:
+        return pd.read_excel(path, sheet_name=None)
+    except Exception:  # noqa: BLE001 - a damaged old workbook is simply not merged
+        return {}
+
+
 def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], units: dict[str, str],
-                   events: list[str], run_info: list[tuple[str, str]], profile_text: str) -> Path:
+                   events: list[str], run_info: list[tuple[str, str]], profile_text: str,
+                   previous: Optional[dict] = None, versions: Optional[dict] = None) -> Path:
+    """`previous`: sheets of the earlier workbook (read_previous). Its rows of files this run did not
+    process are kept; rows of the same file (exact path) are replaced by this run's."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    previous = previous or {}
+    old_files = previous.get("Files")
+    kept = {}  # versions entered for earlier runs stay unless a new one is given
+    if old_files is not None and VERSION in old_files.columns and "file" in old_files.columns:
+        kept = {str(f): str(v) for f, v in zip(old_files["file"], old_files[VERSION]) if pd.notna(v) and str(v)}
+    versions = {**kept, **{k: v for k, v in (versions or {}).items() if v}}
+    replaced = {str(o.file) for o in outcomes}
     fd, tmp = tempfile.mkstemp(prefix=".kpi_results.", suffix=".xlsx", dir=str(path.parent))
     os.close(fd)
     used: set = set()
     try:
         with pd.ExcelWriter(tmp, engine="openpyxl") as xw:
-            summary, failed = summary_table(outcomes, kpi_order, units)
-            name = _sheet_name("Summary", used)
-            summary.to_excel(xw, sheet_name=name, index=False)
-            _style(xw.sheets[name], failed)
-
-            if len(events) > 1:
-                for ev in events:
-                    df, f = summary_table(outcomes, kpi_order, units, event=ev)
-                    name = _sheet_name(ev, used)
-                    df.to_excel(xw, sheet_name=name, index=False)
-                    _style(xw.sheets[name], f)
-
             details = to_frame([r for o in outcomes for r in o.results])
             if details.empty:
                 details = pd.DataFrame(columns=["file", "event", "occurrence", "kpi", "value", "unit",
                                                 "moment_time", "status", "message"])
+            details = _merge(previous.get("Details"), _with_version(details, "file", versions), "file", replaced,
+                             ["file", "event", "occurrence"])
+
+            summary, _ = summary_table(outcomes, kpi_order, units)
+            summary = _merge(previous.get("Summary"), _with_version(summary, "File", versions), "File", replaced,
+                             ["File", "Event", "Occurrence"])
+            name = _sheet_name("Summary", used)
+            summary.to_excel(xw, sheet_name=name, index=False)
+            _style(xw.sheets[name], _failed_cells(summary, details))
+
+            all_events = list(dict.fromkeys(list(events) + [str(e) for e in summary.get("Event", [])]))
+            if len(all_events) > 1:
+                fixed = [c for c in summary.columns if c in ("File", VERSION, "Event", "Occurrence", "Start [s]",
+                                                             "End [s]")]
+                for ev in all_events:
+                    df = summary[summary["Event"].astype(str) == ev].reset_index(drop=True)
+                    kcols = [c for c in summary.columns if c not in fixed and df[c].notna().any()]
+                    df = df[fixed + kcols]
+                    name = _sheet_name(ev, used)
+                    df.to_excel(xw, sheet_name=name, index=False)
+                    _style(xw.sheets[name], _failed_cells(df, details))
+
             name = _sheet_name("Details", used)
             details.to_excel(xw, sheet_name=name, index=False)
             _style(xw.sheets[name])
 
             moments = to_frame([m for o in outcomes for m in o.moments])
+            if not moments.empty:
+                moments = _with_version(moments, "file", versions)
+            moments = _merge(previous.get("Moments"), moments, "file", replaced, ["file", "event", "occurrence"])
             if not moments.empty:
                 name = _sheet_name("Moments", used)
                 moments.to_excel(xw, sheet_name=name, index=False)
@@ -140,9 +219,13 @@ def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], un
                         for c in o.channels),
                     "issues": "\n".join(f"[{i.severity}] {i.message}" for i in o.issues),
                 })
+            files = pd.DataFrame(file_rows, columns=["file", "status", "duration [s]", "occurrences", "kpis ok",
+                                                     "kpis failed", "channels", "issues"])
+            files = _merge(previous.get("Files"), _with_version(files, "file", versions), "file", replaced, ["file"])
             name = _sheet_name("Files", used)
-            pd.DataFrame(file_rows).to_excel(xw, sheet_name=name, index=False)
-            _style(xw.sheets[name], [(i, 1) for i, r in enumerate(file_rows) if r["status"] != Status.OK])
+            files.to_excel(xw, sheet_name=name, index=False)
+            status_col = list(files.columns).index("status")
+            _style(xw.sheets[name], [(i, status_col) for i, v in enumerate(files["status"]) if v != Status.OK])
 
             info = pd.DataFrame(run_info, columns=["key", "value"])
             prof = pd.DataFrame({"key": ["profile"] + [""] * (len(profile_text.splitlines()) - 1),

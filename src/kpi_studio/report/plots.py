@@ -52,9 +52,10 @@ def _label(kpi: str, units: dict) -> str:
     return f"{kpi} [{u}]" if u else kpi
 
 
-def kpi_wide(outcomes: list) -> pd.DataFrame:
-    """One row per occurrence with KPI values as columns (OK values only)."""
-    res = to_frame([r for o in outcomes for r in o.results])
+def kpi_wide(outcomes: list, details: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """One row per occurrence with KPI values as columns (OK values only); from `details` (the
+    workbook's Details sheet, every run's files) when given, else from this run's outcomes."""
+    res = details.copy() if details is not None else to_frame([r for o in outcomes for r in o.results])
     if res.empty:
         return pd.DataFrame(columns=["file", "event", "occurrence"])
     res = res[res["status"] == Status.OK]
@@ -287,7 +288,7 @@ def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, 
 
 
 def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, files: list[str],
-                 collect: Optional[list] = None) -> dict[str, str]:
+                 collect: Optional[list] = None, details: Optional[pd.DataFrame] = None) -> dict[str, str]:
     """Write every plot; returns {title: html path}. Uses one shared plotly.min.js for offline use.
 
     `collect`, if given, receives a FigureEntry per figure (for the dashboard)."""
@@ -296,7 +297,8 @@ def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, file
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, str] = {}
-    wide = kpi_wide(outcomes)
+    wide = kpi_wide(outcomes, details)
+    files = files + [f for f in wide["file"].astype(str).unique() if f not in files] if "file" in wide else files
     n = 0
     merged_done: set = set()
 

@@ -450,7 +450,8 @@ class RunPage(QWidget):
         self.worker = RunWorker(self.state.resolved, list(self.state.checked_files), self.output_root(),
                                 self.workers.value(), base_dir=self.state.base_dir,
                                 indexes=dict(self.state.indexes),
-                                offsets=dict(self.state.offsets), parent=self)
+                                offsets=dict(self.state.offsets), versions=dict(self.state.versions),
+                                parent=self)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.finished_ok.connect(self.on_done)

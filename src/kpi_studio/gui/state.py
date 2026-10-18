@@ -48,6 +48,7 @@ class AppState(QObject):
         self.indexes: dict[str, RecordingIndex] = {}
         self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
         self.offsets: dict[str, float] = {}  # file -> manual time shift [s] (viewer and KPI run; not saved)
+        self.versions: dict[str, str] = {}  # file -> software version, written next to its results
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
         self.resolved: Optional[Profile] = None
