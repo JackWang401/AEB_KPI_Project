@@ -277,6 +277,8 @@ class FileEvaluator:
             lo_name, hi_name = d.between or ("window_start", "window_end")
             lo, hi = self._ref_kpi(times, lo_name), self._ref_kpi(times, hi_name)
             arr = self.full(k.of)
+            if k.scale != 1.0:
+                arr = arr * k.scale  # into the unit the reducer takes
             sl = _slice(self.time, lo, hi)
             if sl.stop - sl.start == 0:
                 return None, None, Status.NO_SAMPLES, f"no samples in {lo:.3f}s..{hi:.3f}s"

@@ -117,6 +117,7 @@ class ToolSpec:
     unit: str = ""  # free text: "same", "s", "m", ...
     origin: str = "builtin"
     input_names: tuple = field(default=())
+    input_unit: str = ""  # the unit the input is converted to before the call, e.g. "m/s" (reducers)
 
     @property
     def summary(self) -> str:
@@ -183,6 +184,7 @@ def tool(
     unit: str = "",
     input_names: tuple = (),
     origin: str = "builtin",
+    input_unit: str = "",
 ):
     """Register a toolbox function."""
     if kind not in KINDS:
@@ -201,6 +203,7 @@ def tool(
             unit=unit,
             origin=origin,
             input_names=tuple(input_names),
+            input_unit=input_unit,
         )
         register(spec)
         return func

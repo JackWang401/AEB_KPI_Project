@@ -10,6 +10,7 @@ from src.kpi_studio.core.expr import Compiled, ExprError, compile_expr
 from src.kpi_studio.core.model import (BUILTIN_MOMENTS, TIME, EventDef, KpiDef, MomentRule, Profile, parse_moment,
                                        signal_units)
 from src.kpi_studio.toolbox.registry import ToolError, ToolSpec
+from src.kpi_studio.toolbox.units import conversion_factor
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class CompiledKpi:
     args: dict = field(default_factory=dict)
     which: list = field(default_factory=list)  # which form: [(label, Compiled condition)]
     unit: str = ""   # taken from the signal the KPI reads; the profile's 'unit' only when it cannot be inferred
+    scale: float = 1.0  # reduce: converts `of` to the unit the reducer takes (e.g. km/h -> m/s for distance)
 
     @property
     def name(self) -> str:
@@ -324,6 +326,19 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             except ToolError as exc:
                 err(f"{where}.reduce", str(exc))
             ck.of = cexpr(f"{where}.of", kdef.of)
+            if ck.reducer is not None and ck.reducer.input_unit and kdef.of:
+                want = ck.reducer.input_unit
+                have = expr_unit(kdef.of, sig_units)
+                if have:
+                    factor = conversion_factor(have, want)
+                    if factor is None:
+                        err(f"{where}.of", f"{kdef.reduce} needs a value in {want} or a unit convertible to it; "
+                                           f"'{kdef.of}' is in {have}")
+                    else:
+                        ck.scale = factor
+                else:
+                    warn(f"{where}.of", f"the unit of '{kdef.of}' is not known, so {kdef.reduce} takes it as {want}; "
+                                        f"give the signal a unit on the Signals page to have it converted")
             for m in kdef.between or ():
                 check_moment(m, "between")
         kpis.append(ck)

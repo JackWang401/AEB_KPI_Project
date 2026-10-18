@@ -235,3 +235,34 @@ def test_which_kpi_names_the_conditions_met():
     assert [r.value for r in out.results] == [2.0, 1.0, 3.0]  # a code for formulas: PB = 1, FB = 2
     table, _ = summary_table([out], ["braking_type"], {})
     assert list(table["braking_type"]) == ["FB", "PB", "PB + FB"]
+
+
+@pytest.mark.parametrize("unit, speed, metres", [("km/h", 36.0, 40.0), ("m/s", 10.0, 40.0), ("mph", 10.0, 17.8816),
+                                                ("", 10.0, 40.0)])
+def test_distance_converts_speed_from_its_unit(unit, speed, metres):
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p",
+        "signals": {"v": {"channels": ["v"], "unit": unit or None}, "on": {"channels": ["on"]}},
+        "events": {"e": {"start": "on > 0", "end": "on < 1"}},
+        "kpis": [{"name": "dist", "event": "e", "reduce": "distance", "of": "v", "between": ["start", "end"]}]}, "t")
+    cp = compile_profile(prof)
+    assert cp.kpis[0].unit == "m"
+    assert bool(cp.warnings) == (unit == "")  # an unknown unit is taken as m/s, with a warning
+    t = np.arange(0, 10, 1.0)
+    on = np.array([0, 1, 1, 1, 1, 0, 0, 0, 0, 0], float)  # 1 s .. 5 s
+    out = evaluate_frame(cp, SignalFrame(time=t, values={"v": np.full_like(t, speed), "on": on}), "f")
+    assert out.results[0].value == pytest.approx(metres)
+
+
+def test_distance_rejects_a_value_that_is_not_a_speed():
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p", "signals": {"a": {"channels": ["a"], "unit": "m/s^2"}},
+        "events": {"e": {"start": "a > 0"}},
+        "kpis": [{"name": "dist", "event": "e", "reduce": "distance", "of": "a"}]}, "t")
+    with pytest.raises(ProfileError, match="distance needs a value in m/s"):
+        compile_profile(prof)

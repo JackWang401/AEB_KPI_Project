@@ -110,10 +110,11 @@ def integral(ctx, x):
     return _trapz(x[m], ctx.time[m])
 
 
-@tool("reducer", "Integrals", unit="m", input_names=("speed_mps",))
-def distance(ctx, speed_mps):
-    """Distance travelled over the range from speed in m/s (current tool's stop distance, in m)."""
-    return integral(ctx, speed_mps)
+@tool("reducer", "Integrals", unit="m", input_names=("speed",), input_unit="m/s")
+def distance(ctx, speed):
+    """Distance travelled over the range, in m, from a speed in any unit (m/s, km/h, mph: converted
+    from the signal's unit)."""
+    return integral(ctx, speed)
 
 
 @tool("reducer", "Conditions", unit="s", input_names=("cond",))

@@ -25,7 +25,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    such as `lowpass(longActAccel, 10)`, which can also be typed directly.
 3. **Events & KPIs** – define an event (a start/end condition or a preset such
    as `target_decel_window`), its moments (e.g. `decel_onset`, `argmin`,
-   `crossing`), then KPIs (value at a moment, duration, a reducer over a range,
+   `crossing`), then KPIs (value at a moment, duration, a reducer over a range (e.g. `distance`: speed
+   integrated between two moments, in m, converted from the speed signal's own unit),
    a formula, or *which conditions are met*: a text result such as `PB + FB` naming the
    conditions met between two moments, e.g. which braking functions were active in the window; each condition is a signal, operator and
    value, with an enum signal's values to pick, or *expression* to type a longer one). Every window in a file is found, each one a separate occurrence. The rule
