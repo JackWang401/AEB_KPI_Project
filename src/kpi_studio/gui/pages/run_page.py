@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtCore import QSettings, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -149,15 +150,18 @@ class RunPage(QWidget):
         rl = QVBoxLayout(rbox)
         orow = QHBoxLayout()
         orow.addWidget(QLabel("Output"))
-        self.out_mode = QComboBox()
-        self.out_mode.addItem("Next to the input data (replaced each run)", "input")
-        self.out_mode.addItem("Custom folder (new timestamped folder each run)", "custom")
-        self.out_mode.setCurrentIndex(0 if settings.value("run/output_mode", "input") == "input" else 1)
-        orow.addWidget(self.out_mode)
-        self.out_dir = QLineEdit(str(settings.value("run/output_dir", str(Path.home() / "kpi_studio_output"))))
-        self.browse = browse = QPushButton("Browse…")
+        # default: a kpi_results folder next to the input data; Browse picks another folder instead
+        saved = str(settings.value("run/output_dir", "") or "")
+        self.custom_dir: Optional[str] = saved if saved and settings.value("run/output_mode") == "custom" else None
+        self.out_dir = QLineEdit()
+        self.out_dir.setToolTip("Where the Excel file, plots and dashboard are written. Type a folder or Browse; "
+                                "Default goes back to the input data's folder.")
+        self.browse = browse = QPushButton("Browse")
+        self.default_btn = QPushButton("Default")
+        self.default_btn.setToolTip("Write the results next to the input data again")
         orow.addWidget(self.out_dir, 1)
         orow.addWidget(browse)
+        orow.addWidget(self.default_btn)
         orow.addWidget(QLabel("Parallel files"))
         self.workers = QSpinBox()
         self.workers.setRange(1, max(os.cpu_count() or 1, 1))
@@ -194,7 +198,8 @@ class RunPage(QWidget):
         lay.addWidget(rbox, 2)
 
         browse.clicked.connect(self.pick_out)
-        self.out_mode.currentIndexChanged.connect(lambda *_: self.update_output_hint())
+        self.default_btn.clicked.connect(lambda: self.set_output(None))
+        self.out_dir.editingFinished.connect(self._typed_output)
         state.files_changed.connect(self.update_output_hint)
         self.check_btn.clicked.connect(self.check)
         self.run_btn.clicked.connect(self.start_run)
@@ -327,29 +332,40 @@ class RunPage(QWidget):
 
     # ------------------------------------------------------------------ run
     def output_root(self):
-        """None = next to the input data; else the custom folder."""
-        return None if self.out_mode.currentData() == "input" else self.out_dir.text()
+        """None = next to the input data; else the folder the user picked."""
+        return self.custom_dir
+
+    def set_output(self, folder: Optional[str]):
+        """A folder of the user's choice, or None for the default (next to the input data)."""
+        self.custom_dir = folder or None
+        self.update_output_hint()
+
+    def _typed_output(self):
+        text = self.out_dir.text().strip()
+        if text != self._shown_default:
+            self.set_output(text or None)
 
     def update_output_hint(self):
-        custom = self.out_mode.currentData() == "custom"
-        self.out_dir.setEnabled(custom)
-        self.browse.setEnabled(custom)
-        if custom:
-            self.out_hint.setText("Each run writes a new folder named after the profile and the time.")
-            return
         from src.kpi_studio.app.run_service import input_results_dir
 
-        if not self.state.checked_files:
-            self.out_hint.setText("Results go to a 'kpi_results' folder next to the input files.")
+        self.default_btn.setVisible(self.custom_dir is not None)
+        if self.custom_dir is not None:
+            self._shown_default = None
+            self.out_dir.setText(self.custom_dir)
+            self.out_hint.setText("Each run writes a new folder in it, named after the profile and the time.")
             return
-        target = input_results_dir(self.state.checked_files)
-        self.out_hint.setText(f"Results go to {target}"
-                              + (" (replaces the existing result)" if target.exists() else ""))
+        target = input_results_dir(self.state.checked_files) if self.state.checked_files else None
+        self._shown_default = str(target) if target is not None else ""
+        self.out_dir.setText(self._shown_default)
+        self.out_dir.setPlaceholderText("a 'kpi_results' folder next to the input data")
+        self.out_hint.setText("Results go next to the input data"
+                              + (" (replacing the previous result)" if target is not None and target.exists()
+                                 else "") + ". Browse to pick another folder.")
 
     def pick_out(self):
-        d = QFileDialog.getExistingDirectory(self, "Output folder", self.out_dir.text())
+        d = QFileDialog.getExistingDirectory(self, "Output folder", self.custom_dir or self.out_dir.text())
         if d:
-            self.out_dir.setText(d)
+            self.set_output(d)
 
     def check(self) -> bool:
         self.state.validate_now()
@@ -380,8 +396,9 @@ class RunPage(QWidget):
                 return
             if self.state.compiled is None:
                 return
-        self.settings.setValue("run/output_dir", self.out_dir.text())
-        self.settings.setValue("run/output_mode", self.out_mode.currentData())
+        self._typed_output()
+        self.settings.setValue("run/output_dir", self.custom_dir or "")
+        self.settings.setValue("run/output_mode", "custom" if self.custom_dir else "input")
         self.settings.setValue("run/workers", self.workers.value())
         self.log.appendPlainText("— run started —")
         self.worker = RunWorker(self.state.resolved, list(self.state.checked_files), self.output_root(),

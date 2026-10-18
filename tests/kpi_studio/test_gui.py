@@ -89,6 +89,24 @@ def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     assert run.result.n_ok == 2 and run.result.excel.exists()
 
 
+def test_output_defaults_to_the_input_data_folder(qtbot, window, mf4_dir, tmp_path):
+    from src.kpi_studio.app.run_service import input_results_dir
+    _load(qtbot, window, mf4_dir)
+    run = window.run_page
+    run.set_output(None)
+    target = input_results_dir(window.state.checked_files)
+    assert run.output_root() is None and run.out_dir.text() == str(target)
+    assert run.default_btn.isHidden() and run.browse.isEnabled()
+    run.set_output(str(tmp_path / "mine"))  # what Browse does
+    assert run.output_root() == str(tmp_path / "mine") and run.out_dir.text() == str(tmp_path / "mine")
+    assert not run.default_btn.isHidden()
+    run.default_btn.click()
+    assert run.output_root() is None and run.out_dir.text() == str(target)
+    run.out_dir.setText(str(tmp_path / "typed"))  # a typed folder counts as picked
+    run.out_dir.editingFinished.emit()
+    assert run.output_root() == str(tmp_path / "typed")
+
+
 def test_save_and_reopen(qtbot, window, mf4_dir, tmp_path):
     _load(qtbot, window, mf4_dir)
     target = tmp_path / "mine.kpi.yaml"

@@ -38,7 +38,7 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    window and moments. *Save KPI to library* shares a KPI between profiles.
 4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. By default the
    result goes to `kpi_results/` next to the input MF4 files and replaces the previous
-   result there (one result per data folder); pick *Custom folder* for timestamped runs.
+   result there (one result per data folder); *Browse* picks another folder (each run then gets its own timestamped folder in it), *Default* goes back.
    The output folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved
    profile used for the run.
 
