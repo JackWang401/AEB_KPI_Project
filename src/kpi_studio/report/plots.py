@@ -144,20 +144,16 @@ def _colour_groups(d: pd.DataFrame, p: PlotDef, files: list[str]) -> Optional[li
 
 def scatter_figure(plots: list, wide: pd.DataFrame, units: dict, files: list[str], title: str
                    ) -> Optional[go.Figure]:
-    """One scatter chart of one or more plots sharing X. Merged plots are told apart by marker shape
-    (and colour when they are not coloured otherwise); Y values of different units get a row each
-    rather than a second Y axis."""
+    """One scatter chart of one or more plots sharing X and one Y axis. Merged plots are told apart by
+    marker shape (and colour when they are not coloured otherwise)."""
     plots = [p for p in plots if {p.x, p.y} <= set(wide.columns)]
     if not plots:
         return None
     merged = len(plots) > 1
-    stacked = merged and len({units.get(p.y, "") for p in plots}) > 1
-    fig = make_subplots(rows=len(plots), cols=1, shared_xaxes=True, vertical_spacing=0.06) if stacked \
-        else go.Figure()
+    fig = go.Figure()
     colour_axes: dict[str, str] = {}  # numeric KPI -> plotly colour axis
     for j, p in enumerate(plots):
         d = wide.dropna(subset=[p.x, p.y])
-        where = dict(row=j + 1, col=1) if stacked else {}
         symbol = SYMBOLS[j % len(SYMBOLS)] if merged else "circle"
         prefix = f"{p.y} · " if merged else ""
         hover = (f"{p.x}: %{{x:.3f}}<br>{p.y}: %{{y:.3f}}<br>%{{customdata[0]}} · "
@@ -173,7 +169,7 @@ def scatter_figure(plots: list, wide: pd.DataFrame, units: dict, files: list[str
                 fig.add_trace(go.Scatter(
                     x=g[p.x], y=g[p.y], mode="markers", name=label,
                     marker=dict(size=9, color=colour, symbol=symbol, line=dict(color=SURFACE, width=2)),
-                    customdata=info(g), hovertemplate=hover + "<extra></extra>"), **where)
+                    customdata=info(g), hovertemplate=hover + "<extra></extra>"))
             continue
         c = p.color_by  # a numeric KPI: a light-to-dark scale
         axis = colour_axes.setdefault(c, "coloraxis" + (str(len(colour_axes) + 1) if colour_axes else ""))
@@ -182,34 +178,31 @@ def scatter_figure(plots: list, wide: pd.DataFrame, units: dict, files: list[str
         fig.add_trace(go.Scatter(
             x=g[p.x], y=g[p.y], mode="markers", name=p.y if merged else c, showlegend=merged,
             marker=dict(size=10, color=g[c], coloraxis=axis, symbol=symbol, line=dict(color=SURFACE, width=1)),
-            customdata=info(g), hovertemplate=hover + f"<br>{c}: %{{marker.color:.3f}}<extra></extra>"), **where)
+            customdata=info(g), hovertemplate=hover + f"<br>{c}: %{{marker.color:.3f}}<extra></extra>"))
         rest = d[~has]
         if not rest.empty:
             fig.add_trace(go.Scatter(
                 x=rest[p.x], y=rest[p.y], mode="markers", name=prefix + f"no {c}",
                 marker=dict(size=9, color=OVERFLOW, symbol=symbol, line=dict(color=SURFACE, width=2)),
-                customdata=info(rest), hovertemplate=hover + "<extra></extra>"), **where)
+                customdata=info(rest), hovertemplate=hover + "<extra></extra>"))
     for k, (c, axis) in enumerate(colour_axes.items()):
         fig.update_layout({axis: dict(colorscale=SEQUENTIAL, colorbar=dict(
             title=dict(text=_label(c, units), side="right"), x=1.02 + 0.14 * k, thickness=14))})
     first = plots[0]
-    if stacked:
-        for j, p in enumerate(plots, start=1):
-            fig.update_yaxes(title_text=_label(p.y, units), row=j, col=1)
-            if p.y_range and None not in p.y_range:
-                fig.update_yaxes(range=p.y_range, row=j, col=1)
-        fig.update_xaxes(title_text=_label(first.x, units), row=len(plots), col=1)
-        _axes(fig, first.model_copy(update={"y_range": None}), y=False)
-    else:
+    ys = list(dict.fromkeys(p.y for p in plots))
+    if not merged:
+        ytitle = _label(first.y, units)
+    elif len({units.get(y, "") for y in ys}) == 1:
         unit = units.get(first.y, "")
-        ytitle = _label(first.y, units) if not merged else (", ".join(p.y for p in plots) + (f" [{unit}]" if unit else ""))
-        fig.update_xaxes(title_text=_label(first.x, units))
-        fig.update_yaxes(title_text=ytitle)
-        _axes(fig, first)
+        ytitle = ", ".join(ys) + (f" [{unit}]" if unit else "")
+    else:
+        ytitle = ", ".join(_label(y, units) for y in ys)
+    fig.update_xaxes(title_text=_label(first.x, units))
+    fig.update_yaxes(title_text=ytitle)
+    _axes(fig, first)
     for p in plots:
         _ref_lines(fig, p)
-    height = 300 * len(plots) + 120 if stacked else 520
-    return _layout(fig, title, height=height)
+    return _layout(fig, title)
 
 
 def _axis_values(fig: go.Figure, axis: str) -> np.ndarray:
@@ -237,9 +230,9 @@ def _widen_flat(fig: go.Figure, axis: str) -> None:
         (fig.update_xaxes if axis == "x" else fig.update_yaxes)(range=[mid - half, mid + half])
 
 
-def _axes(fig: go.Figure, p: PlotDef, y: bool = True) -> None:
+def _axes(fig: go.Figure, p: PlotDef) -> None:
     """Apply user ranges; an end left empty is taken from the plotted data (with 5 % margin)."""
-    for axis, rng in (("x", p.x_range), ("y", p.y_range))[: 2 if y else 1]:
+    for axis, rng in (("x", p.x_range), ("y", p.y_range)):
         if not rng or rng == [None, None]:
             _widen_flat(fig, axis)
             continue

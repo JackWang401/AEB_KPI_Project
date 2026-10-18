@@ -1964,7 +1964,8 @@ def test_merged_scatter_plots_share_one_chart():
     assert fig.layout.yaxis.title.text == "gap, dist [m]"
     assert "yaxis2" not in fig.layout.to_plotly_json()  # same unit: one axis
     fig = scatter_figure([a, b], wide, {"gap": "m", "dist": "s"}, ["f"], "braking")
-    assert fig.layout.yaxis.title.text == "gap [m]" and fig.layout.yaxis2.title.text == "dist [s]"  # a row each
+    assert fig.layout.yaxis.title.text == "gap [m], dist [s]"  # still one x-y plot
+    assert "yaxis2" not in fig.layout.to_plotly_json()
 
 
 def test_merge_and_colour_options_in_the_plot_table(qtbot, window, mf4_dir, tmp_path):
