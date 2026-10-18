@@ -2081,6 +2081,50 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     assert all(viewer.list.item(i).data(sv.AXIS_ROLE) is None for i in range(viewer.list.count()))
 
 
+def test_common_axes_kept_in_the_profile(qtbot, window, mf4_dir, tmp_path):
+    import yaml
+
+    _load(qtbot, window, mf4_dir)
+    viewer, state = window.viewer, window.state
+    viewer.new_common_axis(["longActAccel", "aebTargetDecel"])
+    viewer.set_axis_range("axis 1", (-12, 4))
+    viewer.new_common_axis(["egoSpeed", "yawRate"])
+    viewer.rename_axis("axis 2", "motion")
+    assert state.dirty
+    path = tmp_path / "axes.kpi.yaml"
+    state.save(path)
+    saved = yaml.safe_load(path.read_text())["common_axes"]
+    assert {(d["name"], frozenset(d["signals"]), tuple(d.get("range") or ())) for d in saved} == {
+        ("axis 1", frozenset({"longActAccel", "aebTargetDecel"}), (-12.0, 4.0)),
+        ("motion", frozenset({"egoSpeed", "yawRate"}), ())}
+
+    state.new()  # a new profile has none
+    assert viewer.common == {} and viewer.axis_range == {}
+    state.load(path)
+    qtbot.waitUntil(lambda: viewer.list.count() > 0)
+    assert viewer.common == {"longActAccel": "axis 1", "aebTargetDecel": "axis 1",
+                             "egoSpeed": "motion", "yawRate": "motion"}
+    assert viewer.axis_range == {"axis 1": (-12.0, 4.0)}
+    state.validate_now()
+    assert not state.dirty  # opening it does not count as a change
+    assert not [i for i in state.issues if "common_axes" in str(i)]
+
+    viewer.uncommon(["egoSpeed", "yawRate"])
+    assert [d["name"] for d in state.data["common_axes"]] == ["axis 1"] and state.dirty
+    viewer.separate_all()
+    assert "common_axes" not in state.data
+
+
+def test_common_axes_unknown_signal_is_a_warning():
+    from src.kpi_studio.core.model import Profile
+    from src.kpi_studio.core.validate import compile_profile
+
+    p = Profile.model_validate({"name": "x", "signals": {"a": {"channels": ["a"]}},
+                                "common_axes": [{"name": "g", "signals": ["a", "nope"], "range": [0, 1]}]})
+    cp = compile_profile(p)
+    assert any("unknown signal 'nope'" in i.message for i in cp.warnings)
+
+
 def test_ctrl_click_selects_on_macos(qtbot, window, monkeypatch):
     from PySide6.QtTest import QTest
 

@@ -23,6 +23,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    The list shows each common axis as a name row with its signals indented under it; right-click the
    name row for *Range…*, *Rename…*, *Select its signals* and *Remove common axis* (double-click renames).
    On macOS, Ctrl+click (as well as ⌘+click) adds a signal to the selection.
+   Common axes are saved in the profile (`common_axes:` with each axis' `name`, `signals` and optional
+   `range: [min, max]`), so they come back when the profile is opened again.
 2. **Signals** – import libraries (`vehicle`, `aeb_core`, …) or pick channels
    from the tree. A signal may list several channel names; the first one found
    in a file is used. *Add derived…* builds a derived signal step by step:

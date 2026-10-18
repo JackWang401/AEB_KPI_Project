@@ -344,6 +344,17 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         kpis.append(ck)
         seen_by_event.setdefault(kdef.event, set()).add(kdef.name)
 
+    # ---------------- signal viewer common axes
+    seen_axes: set = set()
+    for ax in profile.common_axes:
+        where = f"common_axes '{ax.name}'"
+        if ax.name in seen_axes:
+            warn(where, "two common axes have this name; the second one is ignored")
+        seen_axes.add(ax.name)
+        for n in ax.signals:
+            if n not in names:
+                warn(where, f"unknown signal '{n}'")
+
     # ---------------- plots
     kpi_names = {k.defn.name for k in kpis}
     for i, p in enumerate(profile.plots):

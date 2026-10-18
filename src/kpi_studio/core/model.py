@@ -292,6 +292,20 @@ class RefLine(_Strict):
         return self
 
 
+class CommonAxis(_Strict):
+    """Signals the signal viewer draws in one subplot, on one value axis (right-click > Common axis)."""
+    name: str = Field(min_length=1)
+    signals: list[str] = Field(default_factory=list)
+    range: Optional[list[float]] = None  # [min, max] of the value axis; none: fitted to the signals
+
+    @field_validator("range")
+    @classmethod
+    def _range(cls, v):
+        if v is not None and (len(v) != 2 or not v[0] < v[1]):
+            raise ValueError("range must be [min, max] with min < max")
+        return v
+
+
 class PlotDef(_Strict):
     type: Literal["scatter", "box", "bar", "histogram", "timeseries"]
     title: str = ""
@@ -372,3 +386,4 @@ class Profile(_Body):
     name: str = Field(min_length=1)
     timebase: Timebase = Field(default_factory=Timebase)
     plots: list[PlotDef] = Field(default_factory=list)
+    common_axes: list[CommonAxis] = Field(default_factory=list)  # signal viewer groups, kept with the profile

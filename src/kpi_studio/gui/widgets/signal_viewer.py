@@ -269,6 +269,23 @@ class ElideLabel(QLabel):
             super().setToolTip(self._full)
 
 
+def _same_axes(a, b) -> bool:
+    """Two `common_axes` lists hold the same axes (the order of axes and signals aside)."""
+    def norm(axes):
+        out = set()
+        for d in axes or []:
+            if isinstance(d, dict):
+                rng = d.get("range")
+                out.add((d.get("name"), frozenset(d.get("signals") or []),
+                         tuple(float(x) for x in rng) if isinstance(rng, (list, tuple)) else None))
+        return out
+
+    try:
+        return norm(a) == norm(b)
+    except (TypeError, ValueError):
+        return False
+
+
 def _fmt(v, labels=None) -> str:
     if v is None:
         return "–"
@@ -339,6 +356,7 @@ class SignalViewer(QWidget):
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self.common: dict[str, str] = {}     # signal -> name of the common axis it shares (right-click)
         self.axis_range: dict[str, tuple] = {}  # common axis -> fixed (min, max) of its value axis
+        self._loading_axes = False  # taking the axes from the profile: do not write them back yet
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
@@ -455,6 +473,7 @@ class SignalViewer(QWidget):
         state.validated.connect(self._drop_stale_cache)
         state.validated.connect(self.refresh_events)
         state.profile_changed.connect(self._clear_preview)
+        state.profile_changed.connect(self.load_axes)
         self.pv_run.clicked.connect(self.run_preview)
         self.pv_event.currentTextChanged.connect(lambda *_: self._event_changed())
         self.pv_occ.valueChanged.connect(lambda *_: self.draw())
@@ -604,6 +623,66 @@ class SignalViewer(QWidget):
                                    "last": nxt != axis, "range": f"{rng[0]:g} … {rng[1]:g}" if rng else ""})
         self.list.doItemsLayout()
         self.list.viewport().update()
+        self._store_axes()
+
+    def axes_data(self) -> list[dict]:
+        """The common axes as kept in the profile (`common_axes`), in list order."""
+        order = [self.list.item(i).text() for i in range(self.list.count())]
+        rank = {n: i for i, n in enumerate(order)}
+        out = []
+        for a in self.axis_names():
+            members = sorted((n for n, x in self.common.items() if x == a), key=lambda n: rank.get(n, len(rank)))
+            d = {"name": a, "signals": members}
+            if a in self.axis_range:
+                d["range"] = list(self.axis_range[a])
+            out.append(d)
+        return sorted(out, key=lambda d: min(rank.get(n, len(rank)) for n in d["signals"]))
+
+    def _store_axes(self):
+        """Keep the common axes in the profile, so they come back when it is opened again."""
+        if self._loading_axes:
+            return
+        data = self.axes_data()
+        if _same_axes(data, self.state.data.get("common_axes")):
+            return
+        if data:
+            self.state.data["common_axes"] = data
+        else:
+            self.state.data.pop("common_axes", None)
+        self.state.edited()
+
+    def load_axes(self):
+        """Take the common axes from the profile (opened, new, or renamed signals)."""
+        saved = self.state.data.get("common_axes") or []
+        if _same_axes(saved, self.axes_data()):
+            return
+        for n in set(self.common) | set(self.host):
+            self.host.pop(n, None)
+        self.common, self.axis_range = {}, {}
+        for d in saved:
+            if not isinstance(d, dict) or not d.get("name") or d["name"] in self.axis_range or \
+                    d["name"] in self.common.values():
+                continue
+            members = [n for n in d.get("signals") or [] if isinstance(n, str) and n not in self.common]
+            for n in members:
+                self.common[n] = d["name"]
+                if n != members[0]:
+                    self.host[n] = members[0]
+            rng = d.get("range")
+            if members and isinstance(rng, (list, tuple)) and len(rng) == 2:
+                try:
+                    lo, hi = float(rng[0]), float(rng[1])
+                    if lo < hi:
+                        self.axis_range[d["name"]] = (lo, hi)
+                except (TypeError, ValueError):
+                    pass
+        self._loading_axes = True
+        try:
+            self._tag_axes()
+        finally:
+            self._loading_axes = False
+        if self._axes:
+            self.draw()
 
     def ask_axis_name(self, names: list[str]) -> str | None:
         current = next((self.common[n] for n in names if n in self.common), "")
