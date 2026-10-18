@@ -8,13 +8,15 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from src.kpi_studio.core.results import Status, to_frame
 
 FAIL_FILL = PatternFill("solid", start_color="FDE2E1", end_color="FDE2E1")
 HEADER_FONT = Font(bold=True)
+HEADER_ALIGN = Alignment(horizontal="center", vertical="center")
+CELL_ALIGN = Alignment(horizontal="left")
 
 
 class OutputLockedError(PermissionError):
@@ -64,10 +66,12 @@ def _style(ws, failed: list[tuple[int, int]] = ()):
     ws.freeze_panes = "A2"
     for cell in ws[1]:
         cell.font = HEADER_FONT
+        cell.alignment = HEADER_ALIGN
     for r, c in failed:
         ws.cell(row=r + 2, column=c + 1).fill = FAIL_FILL
     for row in ws.iter_rows(min_row=2):
         for cell in row:
+            cell.alignment = CELL_ALIGN  # numbers too, so every column reads from the left
             if isinstance(cell.value, float):
                 cell.number_format = NUMBER_FORMAT  # display only; the full value stays in the cell
     for i, col in enumerate(ws.iter_cols(min_row=1, max_row=min(ws.max_row, 200)), start=1):

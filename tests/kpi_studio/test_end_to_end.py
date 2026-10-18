@@ -33,6 +33,10 @@ def test_run_aeb_profile(mf4_dir, tmp_path, workers):
     ws = load_workbook(res.excel)["Summary"]
     floats = [c for row in ws.iter_rows(min_row=2) for c in row if isinstance(c.value, float)]
     assert floats and all(c.number_format == "0.000" for c in floats)  # shown with 3 decimals
+    wb = load_workbook(res.excel)
+    for sheet in wb.worksheets:  # headers centered, every data cell left aligned
+        assert all(c.alignment.horizontal == "center" for c in sheet[1])
+        assert all(c.alignment.horizontal == "left" for row in sheet.iter_rows(min_row=2) for c in row)
 
 
 def test_bad_file_is_isolated(mf4_dir, tmp_path):
