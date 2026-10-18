@@ -58,6 +58,7 @@ class CompiledKpi:
     reducer: Optional[ToolSpec] = None
     of: Optional[Compiled] = None
     args: dict = field(default_factory=dict)
+    which: list = field(default_factory=list)  # which form: [(label, Compiled condition)]
     unit: str = ""   # taken from the signal the KPI reads; the profile's 'unit' only when it cannot be inferred
 
     @property
@@ -113,6 +114,8 @@ def kpi_unit(kdef: KpiDef, units: Mapping[str, str]) -> str:
         inferred = expr_unit(kdef.value, units)
     elif kdef.form == "duration":
         inferred = "s"
+    elif kdef.form == "which":
+        return ""  # a text result
     elif kdef.form == "reduce" and kdef.reduce:
         try:
             spec = toolbox.get("reducer", kdef.reduce)
@@ -303,6 +306,10 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         elif kdef.form == "duration":
             for m in kdef.duration:
                 check_moment(m, "duration")
+        elif kdef.form == "which":
+            ck.which = [(label, cexpr(f"{where}.which.{label}", cond)) for label, cond in kdef.which.items()]
+            for m in kdef.between or ():
+                check_moment(m, "between")
         elif kdef.form == "formula":
             earlier = seen_by_event.get(kdef.event, set())
             try:
@@ -348,7 +355,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
     for k in kpis:
         if k.defn.form == "formula":
             continue
-        for c in (k.value, k.of):
+        for c in (k.value, k.of, *(c for _label, c in k.which)):
             if c is not None:
                 used |= c.deps
     for p in profile.plots:

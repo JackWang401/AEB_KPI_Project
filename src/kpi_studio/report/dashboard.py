@@ -37,6 +37,14 @@ def _fmt(v) -> str:
     return f"{v:.3f}"
 
 
+def _text_counts(d: pd.DataFrame) -> str:
+    """Text results (e.g. 'PB + FB') counted over the OK occurrences, most frequent first; '' for numbers."""
+    if d.empty or "text" not in d:
+        return ""
+    texts = d[(d["status"] == Status.OK) & (d["text"].fillna("") != "")]["text"]
+    return ", ".join(f"{t} ×{n}" for t, n in texts.value_counts().items())
+
+
 def kpi_stats(outcomes: list, kpi_order: list[str], units: dict) -> list[dict]:
     """One row per KPI: event, unit, OK / failed counts and mean, min, max of the OK values."""
     res = to_frame([r for o in outcomes for r in o.results])
@@ -49,6 +57,7 @@ def kpi_stats(outcomes: list, kpi_order: list[str], units: dict) -> list[dict]:
             "unit": units.get(name, ""), "n": int(ok.size), "failed": int(len(d) - ok.size),
             "mean": ok.mean() if ok.size else None, "min": ok.min() if ok.size else None,
             "max": ok.max() if ok.size else None,
+            "counts": _text_counts(d),
         })
     return rows
 
@@ -97,8 +106,9 @@ def build_dashboard(entries: list[FigureEntry], out_dir: str | Path, *, outcomes
         f"<tr><td class='name'>{html.escape(s['kpi'])}</td><td>{html.escape(s['event'])}</td>"
         f"<td>{html.escape(s['unit'])}</td><td class='num'>{s['n']}</td>"
         f"<td class='num{' bad' if s['failed'] else ''}'>{s['failed']}</td>"
-        f"<td class='num'>{_fmt(s['mean'])}</td><td class='num'>{_fmt(s['min'])}</td>"
-        f"<td class='num'>{_fmt(s['max'])}</td></tr>" for s in stats)
+        + (f"<td colspan='3'>{html.escape(s['counts'])}</td></tr>" if s.get("counts") else
+           f"<td class='num'>{_fmt(s['mean'])}</td><td class='num'>{_fmt(s['min'])}</td>"
+           f"<td class='num'>{_fmt(s['max'])}</td></tr>") for s in stats)
     stats_html = (f"""<section class="card"><div class="card-head">
   <span class="muted">Over all occurrences. failed = the KPI could not be computed (see the Excel Details sheet).</span></div>
   <div class="table-wrap"><table><thead><tr><th>KPI</th><th>Event</th><th>Unit</th><th class='num'>n</th>

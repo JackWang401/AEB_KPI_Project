@@ -198,7 +198,8 @@ def timeseries_figure(p: PlotDef, trace, occurrence, moments: list, kpis: list, 
                                text=f"{m.moment} {m.time:.2f}s", showarrow=False, xanchor="left",
                                font=dict(size=11, color=INK_2), bgcolor="rgba(255,255,255,0.85)")
     ok = [k for k in kpis if k.status == Status.OK and k.value is not None]
-    caption = "  ·  ".join(f"{k.kpi} = {k.value:.4g}{(' ' + k.unit) if k.unit else ''}" for k in ok[:8])
+    caption = "  ·  ".join(f"{k.kpi} = {k.text or f'{k.value:.4g}'}{(' ' + k.unit) if k.unit else ''}"
+                           for k in ok[:8])
     title = f"{p.title or p.event}: {Path(trace.file).name} #{trace.occurrence}"
     fig.update_xaxes(title_text="time [s] (shaded: event active)", row=rows, col=1)
     height = 200 * rows + 200

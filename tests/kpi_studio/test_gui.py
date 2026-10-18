@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
 import numpy as np  # noqa: E402
+from src.kpi_studio.gui.pages import kpi_page  # noqa: E402
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 
 from src.kpi_studio.gui.main_window import MainWindow  # noqa: E402
@@ -56,6 +57,29 @@ def test_edit_event_and_kpi_validates(qtbot, window, mf4_dir):
     page.event_form.load(name)
     page.event_form.start.setText("egoSpeed >")
     assert not page.event_form.start.check()
+
+
+def test_which_kpi_form(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.new_kpi()
+    form = page.kpi_form
+    form.event.setCurrentText("aeb")
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
+    assert form.m1.currentText() == "start" and form.m2.currentText() == "end"
+    assert form.rows["From"][0].text() == "Between"
+    for label, cond in (("PB", "egoSpeed > 5"), ("FB", "longActAccel < -2")):
+        form.which.add_row()
+        r = form.which.table.rowCount() - 1
+        form.which.table.item(r, 0).setText(label)
+        form.which.table.cellWidget(r, 1).setText(cond)
+        form.which.table.cellWidget(r, 1).editingFinished.emit()
+    k = window.state.data["kpis"][-1]
+    assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and "between" not in k
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    form.load(len(window.state.data["kpis"]) - 1)  # reloads into the same rows
+    assert form.which.items() == k["which"] and form.which.isVisibleTo(form)
 
 
 def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):

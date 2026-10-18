@@ -53,7 +53,76 @@ from src.kpi_studio.gui.widgets.flow_layout import FlowLayout
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
-         ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs")]
+         ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs"),
+         ("which", "Which conditions are met (text)")]
+
+
+class WhichTable(QWidget):
+    """Label + condition rows of a 'which' KPI: its result names the conditions met in the range."""
+
+    def __init__(self, state, on_change):
+        super().__init__()
+        self.state, self.on_change = state, on_change
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        hint = QLabel("The result lists the labels whose condition is met in the range, e.g. PB + FB "
+                      "(in this order), or none.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        row.addWidget(hint, 1)
+        for b in context_menu.plus_minus(add=self.add_row, remove=self.remove_row, add_tip="Add a condition",
+                                         remove_tip="Delete the selected condition"):
+            row.addWidget(b)
+        lay.addLayout(row)
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Label", "Condition"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setMinimumHeight(110)
+        self.table.setMaximumHeight(170)  # a few rows; the form below stays in view
+        self.table.itemChanged.connect(lambda *_: self.on_change())
+        lay.addWidget(self.table)
+
+    def set_items(self, items: dict):
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        for label, cond in items.items():
+            self._append(label, cond)
+        self.table.blockSignals(False)
+
+    def _append(self, label="", cond=""):
+        r = self.table.rowCount()
+        blocked = self.table.blockSignals(True)
+        self.table.insertRow(r)
+        self.table.setItem(r, 0, QTableWidgetItem(label))
+        self.table.blockSignals(blocked)
+        edit = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
+                        placeholder="e.g. pb_state == ACTIVE")
+        edit.setText(cond)
+        edit.editingFinished.connect(self.on_change)
+        self.table.setCellWidget(r, 1, edit)
+
+    def add_row(self):
+        self._append()
+        self.table.setCurrentCell(self.table.rowCount() - 1, 0)
+        self.table.editItem(self.table.item(self.table.rowCount() - 1, 0))
+
+    def remove_row(self):
+        r = self.table.currentRow()
+        if r >= 0:
+            self.table.removeRow(r)
+            self.on_change()
+
+    def items(self) -> dict:
+        out = {}
+        for r in range(self.table.rowCount()):
+            label = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
+            edit = self.table.cellWidget(r, 1)
+            cond = edit.text().strip() if edit is not None else ""
+            if label or cond:
+                out[label] = cond
+        return out
 
 
 def _spin(minimum=0.0, maximum=1e6, decimals=2, step=0.1):
@@ -525,6 +594,7 @@ class KpiForm(QWidget):
         self.reducer.addItems(toolbox.names("reducer"))
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
+        self.which = WhichTable(self.state, self.save)
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed only for formulas
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "Only a formula needs a unit typed in.")
@@ -536,6 +606,7 @@ class KpiForm(QWidget):
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
                          ("Reducer", self.reducer), ("Expression", self.expr), ("Formula", self.formula),
+                         ("Conditions", self.which),
                          ("At moment", self.at), ("From", rng), ("Options", self.args), ("Unit", self.unit),
                          ("Description", self.desc)):
             lab = QLabel(label)
@@ -599,16 +670,19 @@ class KpiForm(QWidget):
         self.event.blockSignals(False)
         self._fill_moments(k.get("event", ""))
         form = ("value" if "value" in k else "duration" if "duration" in k else "formula" if "formula" in k
-                else "reduce")
+                else "which" if "which" in k else "reduce")
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(k.get("value") or k.get("of") or "")
         self.formula.setText(k.get("formula", ""))
         if form == "reduce":
             rng = k.get("between") or ["window_start", "window_end"]
+        elif form == "which":
+            rng = k.get("between") or ["start", "end"]
         else:
             rng = k.get("duration") or ["start", "end"]
         for combo, value in ((self.at, k.get("at", "start")), (self.m1, rng[0]), (self.m2, rng[1])):
             self._set_moment(combo, value)
+        self.which.set_items(k.get("which") or {})
         self.reducer.setCurrentText(k.get("reduce", "max"))
         self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)
@@ -623,8 +697,9 @@ class KpiForm(QWidget):
             "duration": {"From"},
             "reduce": {"Reducer", "Expression", "From", "Options"},
             "formula": {"Formula"},
+            "which": {"Conditions", "From"},
         }[form]
-        for label in ("Reducer", "Expression", "Formula", "At moment", "From", "Options"):
+        for label in ("Reducer", "Expression", "Formula", "Conditions", "At moment", "From", "Options"):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
             if hasattr(w, "setVisible"):
@@ -634,10 +709,13 @@ class KpiForm(QWidget):
                     wid = w.itemAt(i).widget()
                     if wid:
                         wid.setVisible(label in visible)
-        self.rows["From"][0].setText("Between" if form == "reduce" else "From")
+        self.rows["From"][0].setText("Between" if form in ("reduce", "which") else "From")
 
     def form_changed(self):
         form = self.form.currentData()
+        if form == "which" and not self._loading and self.index is not None and "which" not in self.k:
+            for combo, value in ((self.m1, "start"), (self.m2, "end")):  # the braking window itself
+                self._set_moment(combo, value)
         self._show_form(form)
         self.save()
 
@@ -665,6 +743,10 @@ class KpiForm(QWidget):
                     k["args"] = args
             except Exception:  # noqa: BLE001
                 pass
+        elif form == "which":
+            k["which"] = self.which.items()
+            if (self.m1.currentText(), self.m2.currentText()) != ("start", "end"):
+                k["between"] = [self.m1.currentText(), self.m2.currentText()]
         else:
             k.update(formula=self.formula.text().strip())
         if form == "formula":

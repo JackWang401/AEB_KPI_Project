@@ -119,7 +119,8 @@ class FileEvaluator:
         self.env = Env(time=frame.time, values=dict(frame.values), missing=dict(frame.missing))
         self.env.values[TIME] = frame.time
         self._cache: dict[str, object] = {}  # expr source -> array | MissingSignal
-        self.capture = capture or {}  # event -> {"signals": [...], "max": n}
+        self.capture = capture or {}
+        self.texts: dict[str, str] = {}  # text results of 'which' KPIs, picked up with their value  # event -> {"signals": [...], "max": n}
 
     # ---- expressions are evaluated once per file over the whole recording
     def full(self, c: Compiled) -> np.ndarray:
@@ -263,6 +264,15 @@ class FileEvaluator:
             if d.form == "duration":
                 a, b = self._ref_kpi(times, d.duration[0]), self._ref_kpi(times, d.duration[1])
                 return b - a, b, Status.OK, ""
+            if d.form == "which":  # the labels of the conditions met anywhere in the range
+                lo_name, hi_name = d.between or ("start", "end")
+                lo, hi = self._ref_kpi(times, lo_name), self._ref_kpi(times, hi_name)
+                sl = _slice(self.time, lo, hi)
+                if sl.stop - sl.start == 0:
+                    return None, None, Status.NO_SAMPLES, f"no samples in {lo:.3f}s..{hi:.3f}s"
+                met = [i for i, (_label, c) in enumerate(k.which) if as_bool(self.full(c)[sl]).any()]
+                self.texts[d.name] = " + ".join(k.which[i][0] for i in met) or "none"
+                return float(sum(2 ** i for i in met)), hi, Status.OK, ""
             # reduce
             lo_name, hi_name = d.between or ("window_start", "window_end")
             lo, hi = self._ref_kpi(times, lo_name), self._ref_kpi(times, hi_name)
@@ -331,7 +341,7 @@ class FileEvaluator:
                     value, mt, status, msg = self.kpi(k, times, done)
                     done[k.defn.name] = (value, status)
                     outcome.results.append(KpiResult(self.file, ename, i, k.defn.name, value,
-                                                     k.unit, mt, status, msg))
+                                                     k.unit, mt, status, msg, self.texts.pop(k.defn.name, "")))
                 if cap and i <= cap.get("max", 50):
                     outcome.traces.append(self._trace(occ, cap.get("signals", [])))
         return outcome

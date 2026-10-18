@@ -910,7 +910,9 @@ class SignalViewer(QWidget):
         if k is None:
             return []
         deps = [*(sorted(k.value.deps) if k.value is not None else []),
-                *(sorted(k.of.deps) if k.of is not None else [])]
+                *(sorted(k.of.deps) if k.of is not None else []),
+                *(d for _label, c in k.which for d in sorted(c.deps))]
+        deps = list(dict.fromkeys(deps))
         return [d for d in deps if d != "time"]
 
     def _place_kpis(self, axes, results):
@@ -918,7 +920,7 @@ class SignalViewer(QWidget):
         others = []
         for k in results:
             ok = k.status == Status.OK
-            value = "—" if k.value is None else f"{k.value:.3f}"
+            value = "—" if k.value is None else (k.text or f"{k.value:.3f}")
             text = f"{k.kpi} = {value}" + (f" {k.unit}" if k.unit and k.value is not None else "")
             if not ok:
                 why = k.message or k.status

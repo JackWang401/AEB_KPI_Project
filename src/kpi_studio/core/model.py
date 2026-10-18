@@ -219,11 +219,15 @@ class KpiDef(_Strict):
     args: dict[str, Any] = Field(default_factory=dict)
     # formula form: expression over KPIs listed earlier for the same event
     formula: Optional[str] = None
+    # which form: {label: condition}; the result names the conditions met anywhere in the range,
+    # e.g. "PB + FB" (labels joined in this order), or "none"
+    which: Optional[dict[str, str]] = None
 
     @model_validator(mode="after")
     def _one_form(self):
         if self.use:
-            others = [k for k in ("name", "event", "value", "at", "duration", "reduce", "of", "between", "formula")
+            others = [k for k in ("name", "event", "value", "at", "duration", "reduce", "of", "between", "formula",
+                                  "which")
                       if getattr(self, k) is not None]
             if others:
                 raise ValueError(f"'use' entries only accept 'as'; remove {others}")
@@ -240,11 +244,12 @@ class KpiDef(_Strict):
             ("duration", self.duration is not None),
             ("reduce", self.reduce is not None),
             ("formula", self.formula is not None),
+            ("which", self.which is not None),
         ) if present]
         if len(forms) != 1:
             raise ValueError(
                 f"KPI '{self.name}' needs exactly one of 'value' (+ 'at'), 'duration', 'reduce' (+ 'of') "
-                f"or 'formula'"
+                f"'formula' or 'which'"
             )
         form = forms[0]
         if form == "value" and not self.at:
@@ -253,8 +258,13 @@ class KpiDef(_Strict):
             raise ValueError(f"KPI '{self.name}': 'at' is only used with 'value'")
         if form == "reduce" and not self.of:
             raise ValueError(f"KPI '{self.name}': 'reduce' needs 'of' (an expression)")
-        if form != "reduce" and (self.of or self.between or self.args):
-            raise ValueError(f"KPI '{self.name}': 'of', 'between' and 'args' are only used with 'reduce'")
+        if form != "reduce" and (self.of or self.args):
+            raise ValueError(f"KPI '{self.name}': 'of' and 'args' are only used with 'reduce'")
+        if form not in ("reduce", "which") and self.between:
+            raise ValueError(f"KPI '{self.name}': 'between' is only used with 'reduce' and 'which'")
+        if form == "which" and (not self.which or not all(str(k).strip() and str(v).strip()
+                                                          for k, v in self.which.items())):
+            raise ValueError(f"KPI '{self.name}': 'which' needs at least one label with a condition")
         return self
 
     @property
@@ -265,6 +275,8 @@ class KpiDef(_Strict):
             return "duration"
         if self.formula is not None:
             return "formula"
+        if self.which is not None:
+            return "which"
         return "reduce"
 
 

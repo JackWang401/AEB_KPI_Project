@@ -43,7 +43,9 @@ def summary_table(outcomes: list, kpi_order: list[str], units: dict[str, str],
     lookup = {}
     if not res.empty:
         for r in res.itertuples(index=False):
-            lookup[(r.file, r.event, r.occurrence, r.kpi)] = (r.value, r.status)
+            text = getattr(r, "text", "")
+            lookup[(r.file, r.event, r.occurrence, r.kpi)] = (text if isinstance(text, str) and text else r.value,
+                                                              r.status)
     for j, k in enumerate(kpis):
         col = []
         for i, row in rows.iterrows():

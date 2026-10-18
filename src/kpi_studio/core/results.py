@@ -49,6 +49,7 @@ class KpiResult:
     moment_time: Optional[float]
     status: str
     message: str = ""
+    text: str = ""   # a text result (KPIs of the 'which' form), e.g. "PB + FB"; value then holds its code
 
 
 @dataclass

@@ -209,3 +209,29 @@ def test_end_never_met_is_reported():
     out = evaluate_frame(compile_profile(prof), SignalFrame(time=t, values={"fb": fb}), "f")
     assert [(o.t_start, o.t_end) for o in out.occurrences] == [(1.0, 3.0), (5.0, 7.0)]
     assert not [i for i in out.issues if "end condition" in i.message]
+
+
+def test_which_kpi_names_the_conditions_met():
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+    from src.kpi_studio.report.excel_writer import summary_table
+
+    states = {"IDLE": 1, "ACTIVE": 4}
+    prof = parse_profile({
+        "name": "p",
+        "signals": {"fb_state": {"channels": ["fb"], "kind": "enum", "enum": states},
+                    "pb_state": {"channels": ["pb"], "kind": "enum", "enum": states}},
+        "events": {"e": {"start": "rising(fb_state == ACTIVE) or rising(pb_state == ACTIVE)",
+                         "end": "fb_state != ACTIVE and pb_state != ACTIVE"}},
+        "kpis": [{"name": "braking_type", "event": "e",
+                  "which": {"PB": "pb_state == ACTIVE", "FB": "fb_state == ACTIVE"}}]}, "t")
+    cp = compile_profile(prof)
+    t = np.arange(0, 16, 1.0)
+    fb = np.array([1, 4, 4, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1, 1], float)
+    pb = np.array([1, 1, 1, 1, 4, 4, 1, 1, 1, 4, 4, 1, 1, 1, 1, 1], float)
+    out = evaluate_frame(cp, SignalFrame(time=t, values={"fb_state": fb, "pb_state": pb}), "f")
+    assert [r.text for r in out.results] == ["FB", "PB", "PB + FB"]
+    assert [r.value for r in out.results] == [2.0, 1.0, 3.0]  # a code for formulas: PB = 1, FB = 2
+    table, _ = summary_table([out], ["braking_type"], {})
+    assert list(table["braking_type"]) == ["FB", "PB", "PB + FB"]
