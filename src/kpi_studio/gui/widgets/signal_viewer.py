@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -228,6 +228,7 @@ class SignalViewer(QWidget):
         self._dragging = None
         self.side_px = MARGIN_PX["right"]  # width of the signal / value list right of the plots (drag its border)
         self._side_drag = False
+        self._zoom = None  # right-drag zoom in progress: (axes, x0, y0, px0, py0, rectangle)
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
@@ -304,6 +305,9 @@ class SignalViewer(QWidget):
         self.fig, self.canvas, Toolbar = make_canvas()
         self.fig.set_layout_engine("none")  # margins are set in pixels (_apply_layout)
         self.toolbar = Toolbar(self.canvas, right, coordinates=False)  # no (x, y) readout
+        self.canvas.setFocusPolicy(Qt.StrongFocus)
+        for key in (QKeySequence.Undo, QKeySequence("Meta+Z")):  # Ctrl+Z / ⌘Z, and Control+Z on a Mac
+            QShortcut(key, self.canvas, self.undo_zoom, context=Qt.WidgetShortcut)
         self.toolbar.setIconSize(QSize(18, 18))  # compact: leave the height to the plots
         rl.addWidget(self.toolbar)
         # subplots share the panel height; when there are too many for it, they scroll
@@ -656,6 +660,7 @@ class SignalViewer(QWidget):
         from matplotlib.ticker import MaxNLocator
 
         self.fig.clear()
+        self.toolbar.update()  # new subplots: forget the zoom history of the old ones
         self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()
         self._bool_axes = set()
         self._legend = {}
@@ -1039,8 +1044,14 @@ class SignalViewer(QWidget):
             return
         if self.toolbar.mode or event.inaxes not in self._axes or event.xdata is None:
             return
-        if event.button == 3:
-            self.clear_cursors()
+        if event.button == 3:  # drag: zoom into the box; a plain right-click clears the cursors
+            from matplotlib.patches import Rectangle
+            ax = event.inaxes
+            rect = Rectangle((event.xdata, event.ydata), 0, 0, fill=True, facecolor="#2a78d6", alpha=0.12,
+                             edgecolor="#2a78d6", lw=0.8, zorder=6)
+            ax.add_patch(rect)
+            self._zoom = (ax, event.xdata, event.ydata, event.x, event.y, rect)
+            self.canvas.setFocus()
             return
         if event.button != 1:
             return
@@ -1048,6 +1059,12 @@ class SignalViewer(QWidget):
         self.set_cursor(self._dragging, event.xdata)
 
     def _on_motion(self, event):
+        if self._zoom is not None:
+            ax, x0, y0, _, _, rect = self._zoom
+            x, y = ax.transData.inverted().transform((event.x, event.y))
+            rect.set_bounds(min(x0, x), min(y0, y), abs(x - x0), abs(y - y0))
+            self.canvas.draw_idle()
+            return
         if self._side_drag:
             ratio = self.canvas.devicePixelRatioF()
             self.set_side_width((self.fig.bbox.width - event.x) / ratio)
@@ -1059,9 +1076,37 @@ class SignalViewer(QWidget):
         if self._dragging is not None and event.xdata is not None and event.inaxes in self._axes:
             self.set_cursor(self._dragging, event.xdata)
 
-    def _on_release(self, _event):
+    def _on_release(self, event):
         self._dragging = None
         self._side_drag = False
+        if self._zoom is not None:
+            ax, x0, y0, px0, py0, rect = self._zoom
+            self._zoom = None
+            rect.remove()
+            ratio = self.canvas.devicePixelRatioF()
+            dx, dy = abs(event.x - px0) / ratio, abs(event.y - py0) / ratio
+            if dx < 5 and dy < 5:
+                self.clear_cursors()
+                return
+            x, y = ax.transData.inverted().transform((event.x, event.y))
+            self.zoom_to(ax, (x0, x) if dx >= 5 else None, (y0, y) if dy >= 10 else None)
+
+    def zoom_to(self, ax, xs=None, ys=None):
+        """Zoom to a time range (every subplot) and/or a value range of `ax`; Ctrl+Z (⌘Z) goes back."""
+        if self.toolbar._nav_stack() is None:
+            self.toolbar.push_current()  # the full view, to come back to
+        if xs is not None:
+            ax.set_xlim(min(xs), max(xs))
+        if ys is not None:
+            ax.set_ylim(min(ys), max(ys))
+        self.toolbar.push_current()
+        self._update_cursors()
+
+    def undo_zoom(self):
+        """Back to the view before the last zoom (Ctrl+Z / ⌘Z on the plot)."""
+        if self.toolbar._nav_stack._pos > 0:
+            self.toolbar.back()
+            self._update_cursors()
 
     def set_cursor(self, which: int, t):
         self.cursors[which] = None if t is None else float(t)
@@ -1124,7 +1169,7 @@ class SignalViewer(QWidget):
             info.append(f"B = {b:.3f} s")
         if a is not None and b is not None:
             info.append(f"Δt = {b - a:.3f} s")
-        self.cursor_info.setText("   ".join(info) if info else "Click a plot to place a cursor (Shift+click: second)")
+        self.cursor_info.setText("   ".join(info) if info else "Click a plot to place a cursor (Shift+click: second) · right-drag to zoom, Ctrl+Z to undo")
         self.canvas.draw_idle()
 
     def _draw_side_lists(self):

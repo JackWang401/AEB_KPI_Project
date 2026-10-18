@@ -7,6 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
+import numpy as np  # noqa: E402
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 
 from src.kpi_studio.gui.main_window import MainWindow  # noqa: E402
@@ -259,7 +260,9 @@ def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     # cursors survive a redraw, and right-click clears them
     viewer.draw()
     assert len(viewer.fig.axes[0].get_lines()) == 3
-    viewer._on_press(SimpleNamespace(inaxes=viewer.fig.axes[0], xdata=t[5], button=3, key=None))
+    click = SimpleNamespace(inaxes=viewer.fig.axes[0], xdata=t[5], ydata=0.0, x=100.0, y=100.0, button=3, key=None)
+    viewer._on_press(click)
+    viewer._on_release(click)
     assert viewer.cursors == [None, None]
     assert viewer.value_at(t, y, t[-1] + 100) is None
 
@@ -1734,6 +1737,40 @@ def test_drag_the_border_to_widen_the_value_list(qtbot, window, mf4_dir):
     viewer._on_release(ev)
     assert viewer.side_px > before + 100 and ax.bbox.x1 < x1 - 100  # the plots give the room
     assert viewer.cursors == [None, None]  # dragging the border places no cursor
+
+
+def test_right_drag_zooms_and_ctrl_z_goes_back(qtbot, window, mf4_dir):
+    from types import SimpleNamespace
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 800)
+    window.show()
+    viewer.plot_signals(["egoSpeed", "longActAccel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    top, bottom = viewer._axes
+    full_x, full_y = top.get_xlim(), top.get_ylim()
+    (px0, py0), (px1, py1) = top.transData.transform([(4.0, full_y[0] + 1), (8.0, full_y[1] - 1)])
+
+    def ev(px, py):
+        x, y = top.transData.inverted().transform((px, py))
+        return SimpleNamespace(inaxes=top, xdata=x, ydata=y, x=px, y=py, button=3, key=None)
+
+    viewer._on_press(ev(px0, py0))
+    viewer._on_motion(ev((px0 + px1) / 2, (py0 + py1) / 2))
+    viewer._on_release(ev(px1, py1))
+    assert np.allclose(top.get_xlim(), (4.0, 8.0)) and np.allclose(bottom.get_xlim(), (4.0, 8.0))
+    assert np.allclose(top.get_ylim(), (full_y[0] + 1, full_y[1] - 1))
+    assert not top.patches  # the zoom box is gone
+    viewer._on_press(ev(px0, py0))  # a second zoom, time only
+    viewer._on_release(ev(px0 + 60, py0 + 2))
+    assert top.get_xlim()[1] - top.get_xlim()[0] < 4.0
+    viewer.undo_zoom()
+    assert np.allclose(top.get_xlim(), (4.0, 8.0))
+    viewer.undo_zoom()
+    assert np.allclose(top.get_xlim(), full_x) and np.allclose(top.get_ylim(), full_y)
+    viewer.undo_zoom()  # nothing left to undo
+    assert np.allclose(top.get_xlim(), full_x)
+    assert viewer.cursors == [None, None]
 
 
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
