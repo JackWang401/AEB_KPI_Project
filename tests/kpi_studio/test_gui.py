@@ -2006,24 +2006,85 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
     qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
     assert len(viewer._axes) == 3
-    monkeypatch.setattr(sv.QInputDialog, "getText", staticmethod(lambda *a, **k: ("accel", True)))
+
+    def action(menu, text):
+        for a in menu.actions():
+            if a.text() == text:
+                return a
+            if a.menu() is not None and (found := action(a.menu(), text)) is not None:
+                return found
+        return None
+
+    # no axis yet: one signal cannot share, two or more make a new axis at once
+    menu = viewer.signal_menu(["egoSpeed"])
+    assert not action(menu, "Common axis").isEnabled()
     menu = viewer.signal_menu(["longActAccel", "aebTargetDecel"])
-    act = next(a for a in menu.actions() if a.text() == "Common axis…")
-    act.trigger()
+    action(menu, "Common axis").trigger()
+    assert viewer.common == {"longActAccel": "axis 1", "aebTargetDecel": "axis 1"}
     assert len(viewer._axes) == 2
     assert ["longActAccel", "aebTargetDecel"] in [viewer._ax_groups[a] for a in viewer._axes]
     ax = next(a for a in viewer._axes if len(viewer._ax_groups[a]) == 2)
-    assert "accel" in [t.get_text() for t in ax.texts]  # the axis is named in its subplot
+    assert "axis 1" in [t.get_text() for t in ax.texts]  # the axis is named in its subplot
     items = {viewer.list.item(i).text(): viewer.list.item(i) for i in range(viewer.list.count())}
-    assert items["longActAccel"].data(sv.AXIS_ROLE)[0] == "accel" == items["aebTargetDecel"].data(sv.AXIS_ROLE)[0]
+    assert items["longActAccel"].data(sv.AXIS_ROLE)[0] == "axis 1" == items["aebTargetDecel"].data(sv.AXIS_ROLE)[0]
     assert items["egoSpeed"].data(sv.AXIS_ROLE) is None
-    viewer.set_common_axis(["egoSpeed"], "accel")  # an existing name: joins that axis
-    assert len(viewer._axes) == 1 and len(viewer._ax_groups[viewer._axes[0]]) == 3
+
+    # an axis exists: a signal joins it, or starts a new one
     menu = viewer.signal_menu(["egoSpeed"])
-    next(a for a in menu.actions() if a.text() == "Remove from common axis").trigger()
+    assert action(menu, "Join axis 1") is not None and action(menu, "New common axis") is not None
+    action(menu, "New common axis").trigger()
+    assert viewer.common["egoSpeed"] == "axis 2" and len(viewer._axes) == 2
+    menu = viewer.signal_menu(["egoSpeed"])
+    action(menu, "Join axis 1").trigger()
+    assert len(viewer._axes) == 1 and len(viewer._ax_groups[viewer._axes[0]]) == 3
+    assert set(viewer.common.values()) == {"axis 1"}
+
+    # the range of a common axis
+    monkeypatch.setattr(viewer, "ask_axis_range", lambda label: (-12.0, 30.0))
+    menu = viewer.signal_menu(["egoSpeed"])
+    action(menu, "Range of common axis…").trigger()
+    assert viewer._axes[0].get_ylim() == (-12.0, 30.0)
+    viewer.draw()  # kept when drawn again
+    assert viewer._axes[0].get_ylim() == (-12.0, 30.0)
+    monkeypatch.setattr(viewer, "ask_axis_range", lambda label: None)  # automatic again
+    menu = viewer.signal_menu(["egoSpeed"])
+    action(menu, "Range of common axis…").trigger()
+    assert "axis 1" not in viewer.axis_range and viewer._axes[0].get_ylim() != (-12.0, 30.0)
+
+    # rename
+    monkeypatch.setattr(sv.QInputDialog, "getText", staticmethod(lambda *a, **k: ("accel", True)))
+    menu = viewer.signal_menu(["egoSpeed"])
+    action(menu, "Rename common axis…").trigger()
+    assert set(viewer.common.values()) == {"accel"}
+
+    menu = viewer.signal_menu(["egoSpeed"])
+    action(menu, "Remove from common axis").trigger()
     assert len(viewer._axes) == 2 and "egoSpeed" not in viewer.common
     viewer.uncommon(["longActAccel"])  # one left: the axis is gone
     assert viewer.common == {} and len(viewer._axes) == 3
+
+
+def test_common_axis_range_dialog(qtbot, window):
+    from PySide6.QtCore import QTimer
+
+    viewer = window.viewer
+    seen = {}
+
+    def fill():
+        dlg = viewer._range_dialog
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLineEdit
+        dlg.findChild(QCheckBox).setChecked(False)
+        lo, hi = dlg.findChildren(QLineEdit)
+        lo.setText("5")
+        hi.setText("1")
+        dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+        seen["error"] = dlg.isVisible()
+        hi.setText("9")
+        dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+
+    QTimer.singleShot(0, fill)
+    assert viewer.ask_axis_range("axis 1") == (5.0, 9.0)
+    assert seen["error"]  # min above max is refused
 
 
 def test_software_version_column_in_files(qtbot, window, mf4_dir):

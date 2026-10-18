@@ -16,9 +16,11 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    enter a shift (positive moves it later). The offset is used by the
    viewer, the event preview and the KPI run; it is not saved with the profile.
    On the command line: `--offset FILE=SECONDS` (repeatable).
-   In the signal viewer, select signals, right-click and choose *Common axis…*: name the axis
-   and they are drawn in one subplot (an existing name joins that axis). The list tags them with
-   the axis name; *Remove from common axis* undoes it.
+   In the signal viewer, select 2 or more signals, right-click and choose *Common axis*: they are
+   drawn in one subplot on one value axis (*axis 1*, *axis 2*, …). Once an axis exists, *Common axis*
+   offers *Join axis N* or *New common axis*. *Range of common axis…* fixes its minimum and maximum
+   (or back to automatic), *Rename common axis…* names it, *Remove from common axis* undoes it.
+   The list tags each signal with its axis name.
 2. **Signals** – import libraries (`vehicle`, `aeb_core`, …) or pick channels
    from the tree. A signal may list several channel names; the first one found
    in a file is used. *Add derived…* builds a derived signal step by step:

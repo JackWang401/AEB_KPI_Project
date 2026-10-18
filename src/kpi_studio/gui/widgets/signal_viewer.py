@@ -259,6 +259,7 @@ class SignalViewer(QWidget):
         self._zoom = None  # right-drag zoom in progress: (axes, x0, y0, px0, py0, rectangle)
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self.common: dict[str, str] = {}     # signal -> name of the common axis it shares (right-click)
+        self.axis_range: dict[str, tuple] = {}  # common axis -> fixed (min, max) of its value axis
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
@@ -501,6 +502,101 @@ class SignalViewer(QWidget):
         if label:
             self.set_common_axis(names, label)
 
+    def axis_names(self) -> list[str]:
+        return list(dict.fromkeys(self.common.values()))
+
+    def new_common_axis(self, names: list[str]) -> str:
+        """Put `names` on a new common axis, named axis 1, axis 2, … (rename it from the menu)."""
+        taken = self.axis_names()
+        label = next(f"axis {k}" for k in range(1, len(taken) + 2) if f"axis {k}" not in taken)
+        self.set_common_axis(names, label)
+        return label
+
+    def rename_axis(self, old: str, new: str):
+        new = new.strip()
+        if not new or new == old:
+            return
+        if new in self.axis_names():  # an existing name: the two axes become one
+            self.set_common_axis([n for n, a in self.common.items() if a == old], new)
+            self.axis_range.pop(old, None)
+            return
+        self.common = {n: (new if a == old else a) for n, a in self.common.items()}
+        if old in self.axis_range:
+            self.axis_range[new] = self.axis_range.pop(old)
+        self._tag_axes()
+        self.draw()
+
+    def ask_rename_axis(self, label: str):
+        text, ok = QInputDialog.getText(self, "Rename common axis", "New name (an existing name merges the "
+                                        "two axes):", text=label)
+        if ok:
+            self.rename_axis(label, text)
+
+    def set_axis_range(self, label: str, rng):
+        """Fix the value range of common axis `label` to (min, max); None: fit to the data again."""
+        if rng is None:
+            self.axis_range.pop(label, None)
+        else:
+            lo, hi = float(rng[0]), float(rng[1])
+            if not lo < hi:
+                raise ValueError("the minimum must be below the maximum")
+            self.axis_range[label] = (lo, hi)
+        self.draw()
+
+    def _axis_of(self, label: str):
+        return next((ax for ax, g in self._ax_groups.items() if any(self.common.get(n) == label for n in g)), None)
+
+    def ask_axis_range(self, label: str):
+        """Dialog for the range of common axis `label`: (min, max), None for automatic, or False if cancelled."""
+        from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit
+
+        cur = self.axis_range.get(label)
+        ax = self._axis_of(label)
+        shown = cur or (ax.get_ylim() if ax is not None else (0.0, 1.0))
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Range of {label}")
+        form = QFormLayout(dlg)
+        auto = QCheckBox("Automatic (fit to the signals)")
+        auto.setChecked(cur is None)
+        lo, hi = QLineEdit(f"{shown[0]:.6g}"), QLineEdit(f"{shown[1]:.6g}")
+        form.addRow(auto)
+        form.addRow("Minimum", lo)
+        form.addRow("Maximum", hi)
+        err = QLabel("")
+        err.setStyleSheet("color: #c0392b;")
+        form.addRow(err)
+        for w in (lo, hi):
+            w.setEnabled(cur is not None)
+        auto.toggled.connect(lambda on: [w.setEnabled(not on) for w in (lo, hi)])
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        form.addRow(buttons)
+        result = []
+
+        def accept():
+            if auto.isChecked():
+                result.append(None)
+                return dlg.accept()
+            try:
+                a, b = float(lo.text()), float(hi.text())
+            except ValueError:
+                return err.setText("Type a number in both boxes")
+            if not a < b:
+                return err.setText("The minimum must be below the maximum")
+            result.append((a, b))
+            dlg.accept()
+
+        buttons.accepted.connect(accept)
+        buttons.rejected.connect(dlg.reject)
+        self._range_dialog = dlg  # for tests
+        if dlg.exec() != QDialog.Accepted or not result:
+            return False
+        return result[0]
+
+    def range_axis(self, label: str):
+        rng = self.ask_axis_range(label)
+        if rng is not False:
+            self.set_axis_range(label, rng)
+
     def set_common_axis(self, names: list[str], label: str):
         """Draw `names` in one subplot named `label`, together with any signals already on that axis."""
         members = [n for n, a in self.common.items() if a == label and n not in names]
@@ -529,6 +625,8 @@ class SignalViewer(QWidget):
                 self.host[o] = rest[0]
             if label and len([o for o, a in self.common.items() if a == label]) == 1:
                 self.common = {o: a for o, a in self.common.items() if a != label}  # one left: no axis
+            if label and label not in self.common.values():
+                self.axis_range.pop(label, None)
         if draw:
             self._tag_axes()
             self.draw()
@@ -715,6 +813,7 @@ class SignalViewer(QWidget):
     def separate_all(self):
         self.host.clear()
         self.common.clear()
+        self.axis_range.clear()
         self._tag_axes()
         self.draw()
 
@@ -825,6 +924,8 @@ class SignalViewer(QWidget):
                 ax.margins(y=0.08)
             self._ax_groups[ax] = group
             label = next((self.common[n] for n in group if n in self.common), None)
+            if label in self.axis_range:  # a range chosen for the common axis (right-click)
+                ax.set_ylim(*self.axis_range[label])
             if label and multi:  # the common axis' name, top left in its colour
                 ax.text(0.005, 0.97, label, transform=ax.transAxes, ha="left", va="top", fontsize=7.5,
                         color=self.axis_colour(label), fontweight="bold",
@@ -996,6 +1097,8 @@ class SignalViewer(QWidget):
         lo, hi = occ.t_window_start, occ.t_window_end
         axes[0].set_xlim(lo, hi)
         for ax in axes:  # fit y to the window, not the whole file
+            if self._fixed_range(ax):
+                continue
             parts = [y[(t >= lo) & (t <= hi)] for _, t, y, _ in self._series.get(ax, [])]
             vals = np.concatenate(parts) if parts else np.array([])
             vals = vals[np.isfinite(vals)]
@@ -1065,14 +1168,49 @@ class SignalViewer(QWidget):
             act.setToolTip(KIND_TIPS[k] if own else "Derived signals have no Kind")
             act.triggered.connect(lambda _on, ns=own, k=k: self.set_kind(ns, k))
         menu.addSeparator()
-        act = menu.addAction("Common axis…")
-        act.setToolTip("Name an axis: these signals are drawn together in one subplot")
-        act.triggered.connect(lambda _on, ns=list(names): self.common_axis(ns))
+        self._common_menu(menu, list(names))
+        return menu
+
+    def _common_menu(self, menu: QMenu, names: list[str]):
+        """Common axis entries: a new axis for the selected signals, or join one already there;
+        then the range, name and removal of the axes they are on."""
+        axes = self.axis_names()
+        if not axes:
+            act = menu.addAction("Common axis")
+            act.setEnabled(len(names) >= 2)
+            act.setToolTip("Draw the selected signals together in one subplot, on one value axis"
+                           if len(names) >= 2 else "Select 2 or more signals (Ctrl/Shift-click) to share an axis")
+            act.triggered.connect(lambda _on, ns=names: self.new_common_axis(ns))
+        else:
+            sub = QMenu("Common axis", menu)  # owned by the menu, so it outlives this function
+            menu.addMenu(sub)
+            sub.setToolTipsVisible(True)
+            for a in axes:
+                act = sub.addAction(f"Join {a}")
+                act.setCheckable(True)
+                act.setChecked(bool(names) and all(self.common.get(n) == a for n in names))
+                act.setToolTip(f"Draw the selected signals in the subplot of {a}")
+                act.triggered.connect(lambda _on, ns=names, a=a: self.set_common_axis(ns, a))
+            sub.addSeparator()
+            act = sub.addAction("New common axis")
+            act.setToolTip("Put the selected signals on an axis of their own")
+            act.triggered.connect(lambda _on, ns=names: self.new_common_axis(ns))
+        own = list(dict.fromkeys(self.common[n] for n in names if n in self.common))
+        for a in own:
+            suffix = f" ({a})" if len(own) > 1 else ""
+            act = menu.addAction(f"Range of common axis{suffix}…")
+            rng = self.axis_range.get(a)
+            act.setToolTip(f"Now {rng[0]:g} to {rng[1]:g}" if rng else "Now fitted to the signals")
+            act.triggered.connect(lambda _on, a=a: self.range_axis(a))
+            act = menu.addAction(f"Rename common axis{suffix}…")
+            act.triggered.connect(lambda _on, a=a: self.ask_rename_axis(a))
         on = [n for n in names if n in self.common]
         if on:
             act = menu.addAction("Remove from common axis")
             act.triggered.connect(lambda _on, ns=on: self.uncommon(ns))
-        return menu
+
+    def _fixed_range(self, ax) -> bool:
+        return any(self.common.get(n) in self.axis_range for n in self._ax_groups.get(ax, []))
 
     def _kind_editable(self, name: str) -> bool:
         return name in (self.state.data.get("signals") or {}) or (
