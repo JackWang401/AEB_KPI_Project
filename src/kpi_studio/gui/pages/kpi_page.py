@@ -278,6 +278,35 @@ class EventForm(QWidget):
         bl.addWidget(hint)
         lay.addWidget(box, 1)
 
+        # range KPIs of this event: one row per KPI that reduces an expression between two moments
+        rbox = QGroupBox()
+        rbox.setObjectName("plainBox")
+        rl = QVBoxLayout(rbox)
+        rrow = QHBoxLayout()
+        rtitle = QLabel("Range KPIs: one value over a range between two moments (e.g. all, max, min, mean)")
+        rtitle.setObjectName("sectionTitle")
+        rtitle.setWordWrap(True)
+        rtitle.setMinimumWidth(120)
+        rrow.addWidget(rtitle, 1)
+        for b in context_menu.plus_minus(add=self.add_range, remove=self.delete_range, add_tip="Add a range KPI",
+                                         remove_tip="Delete the selected range KPIs"):
+            rrow.addWidget(b)
+        rl.addLayout(rrow)
+        self.ranges = QTableWidget(0, 6)
+        self.ranges.setHorizontalHeaderLabels(["Name", "Reducer", "Expression", "From", "To", "Options"])
+        rh = self.ranges.horizontalHeader()
+        rh.setSectionResizeMode(2, QHeaderView.Stretch)
+        for col, width in ((0, 125), (1, 85), (3, 100), (4, 100), (5, 70)):  # set widths (still draggable)
+            rh.setSectionResizeMode(col, QHeaderView.Fixed)
+            rh.resizeSection(col, width)
+        rl.addWidget(self.ranges)
+        rhint = QLabel("Expression: a signal, or a condition for all / any (e.g. ego_speed_kph > 0). "
+                       "The KPIs also show in the KPI list on the left.")
+        rhint.setWordWrap(True)
+        rhint.setObjectName("hint")
+        rl.addWidget(rhint)
+        lay.addWidget(rbox, 1)
+
         self.name_edit.editingFinished.connect(self.rename)
         self.desc.editingFinished.connect(lambda: self.set("description", self.desc.text()))
         self.mode.currentIndexChanged.connect(self.mode_changed)
@@ -298,6 +327,8 @@ class EventForm(QWidget):
         # right-click: on a moment, Edit condition / Delete moment; Add moment anywhere
         context_menu.install(self.moments, add=[("Add moment", self.add_moment)], item=self._moment_actions)
         self.moments.itemChanged.connect(self.moment_renamed)
+        context_menu.install(self.ranges, add=[("Add range KPI", self.add_range)], item=self._range_actions)
+        self.ranges.itemChanged.connect(self.range_renamed)
         for w in (self.start, self.end):
             w.focused.connect(page.set_target)
 
@@ -364,6 +395,7 @@ class EventForm(QWidget):
         self.pre.setValue(float(w.get("pre", 0) or 0))
         self.post.setValue(float(w.get("post", 0) or 0))
         self.load_moments()
+        self.load_ranges()
         self._show_mode()
         self._loading = False
 
@@ -574,6 +606,132 @@ class EventForm(QWidget):
             combo.setCurrentText("first")  # saves, and drops the old rule's options
         else:
             self.save_moment(row)
+
+    # ---- range KPIs
+    def range_rows(self) -> list[int]:
+        """Indexes in the profile's KPI list of this event's range (reduce) KPIs, in list order."""
+        return [i for i, k in enumerate(self.state.data.get("kpis", []) or [])
+                if k.get("event") == self.name and k.get("reduce") is not None]
+
+    def load_ranges(self):
+        kpis = self.state.data.get("kpis", []) or []
+        rows = self.range_rows()
+        moments = self.moment_names()
+        self.ranges.blockSignals(True)
+        self.ranges.setRowCount(len(rows))
+        for r, idx in enumerate(rows):
+            k = kpis[idx]
+            item = QTableWidgetItem(k.get("name", ""))
+            item.setData(Qt.UserRole, idx)
+            self.ranges.setItem(r, 0, item)
+            red = QComboBox()
+            red.addItems(toolbox.names("reducer"))
+            red.setCurrentText(k.get("reduce") or "max")
+            red.currentTextChanged.connect(lambda *_, row=r: self.save_range(row))
+            self.ranges.setCellWidget(r, 1, red)
+            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
+                            build_fn=lambda e, row=r: self.build_range_row(row))
+            expr.setPlaceholderText("▾ pick a signal, or type a condition")
+            expr.setText(k.get("of") or "")
+            expr.focused.connect(self.page.set_target)
+            expr.editingFinished.connect(lambda row=r: self.save_range(row))
+            self.ranges.setCellWidget(r, 2, expr)
+            between = k.get("between") or ["window_start", "window_end"]
+            for col, value in ((3, between[0]), (4, between[1])):
+                combo = QComboBox()
+                combo.addItems(moments)
+                KpiForm._set_moment(combo, value)
+                combo.currentTextChanged.connect(lambda t, c=combo: KpiForm._set_moment(c, t))
+                combo.currentTextChanged.connect(lambda *_, row=r: self.save_range(row))
+                self.ranges.setCellWidget(r, col, combo)
+            opts = QLineEdit(format_options(k.get("args") or {}))
+            opts.setPlaceholderText("reducer options")
+            opts.editingFinished.connect(lambda row=r: self.save_range(row))
+            self.ranges.setCellWidget(r, 5, opts)
+        self.ranges.blockSignals(False)
+
+    def save_range(self, row: int):
+        if self._loading or self.name is None:
+            return
+        idx = self.ranges.item(row, 0).data(Qt.UserRole)
+        old = self.state.data["kpis"][idx]
+        opts_edit = self.ranges.cellWidget(row, 5)
+        try:
+            args = parse_options(opts_edit.text())
+            opts_edit.setStyleSheet("")
+        except Exception as exc:  # noqa: BLE001
+            opts_edit.setStyleSheet("QLineEdit { border: 1px solid #e34948; }")
+            opts_edit.setToolTip(f"Could not read options: {exc}")
+            return
+        k = {"name": old.get("name"), "event": self.name, "reduce": self.ranges.cellWidget(row, 1).currentText(),
+             "of": self.ranges.cellWidget(row, 2).text().strip(),
+             "between": [self.ranges.cellWidget(row, 3).currentText(), self.ranges.cellWidget(row, 4).currentText()]}
+        if args:
+            k["args"] = args
+        for key in ("unit", "description"):
+            if old.get(key):
+                k[key] = old[key]
+        if k != old:
+            self.state.data["kpis"][idx] = k
+            self.state.edited()
+            self.page.refresh_kpi_labels()
+
+    def range_renamed(self, item):
+        if item.column() != 0:
+            return
+        idx = item.data(Qt.UserRole)
+        kpis = self.state.data["kpis"]
+        old, new = kpis[idx].get("name"), item.text().strip()
+        if new == old:
+            return
+        taken = {k.get("name") for i, k in enumerate(kpis) if i != idx}
+        if not NAME_RE.match(new) or new in taken:
+            self.ranges.blockSignals(True)
+            item.setText(old)
+            self.ranges.blockSignals(False)
+            return
+        kpis[idx]["name"] = new
+        rename_kpi(self.state.data, self.name, old, new)
+        self.state.edited()
+        self.page.refresh_kpi_labels()
+
+    def add_range(self):
+        if self.name is None:
+            return
+        kpis = self.state.data.setdefault("kpis", [])
+        names = {k.get("name") for k in kpis}
+        i = 1
+        while f"range{i}" in names:
+            i += 1
+        kpis.append({"name": f"range{i}", "event": self.name, "reduce": "all", "of": "",
+                     "between": ["start", "end"]})
+        self.state.edited(structure=True)
+        self.load_ranges()
+
+    def delete_range(self):
+        rows = sorted({i.row() for i in self.ranges.selectedIndexes()})
+        idxs = sorted((self.ranges.item(r, 0).data(Qt.UserRole) for r in rows), reverse=True)
+        for idx in idxs:
+            del self.state.data["kpis"][idx]
+        if idxs:
+            self.state.edited(structure=True)
+            self.load_ranges()
+
+    def _range_actions(self, rows):
+        actions = []
+        if len(rows) == 1:
+            row = next(iter(rows))
+            actions.append(("Edit condition", lambda: self.build_range_row(row)))
+        actions.append(("Delete range KPI" if len(rows) == 1 else f"Delete {len(rows)} range KPIs",
+                        self.delete_range))
+        return actions
+
+    def build_range_row(self, row: int):
+        edit = self.ranges.cellWidget(row, 2)
+        dlg = ConditionBuilder(self.state.signal_names(), self, initial=edit.text(), enums=self.state.enum_map())
+        if dlg.exec() == QDialog.Accepted and dlg.expression():
+            edit.setText(dlg.expression())
+            self.save_range(row)
 
     def delete_moment(self):
         rows = sorted({i.row() for i in self.moments.selectedIndexes()}, reverse=True)

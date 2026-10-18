@@ -83,6 +83,33 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
     assert form.which.items() == k["which"] and form.which.isVisibleTo(form)
 
 
+def test_range_kpis_under_the_moments(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.select_event("aeb")
+    ef = page.event_form
+    before = len(window.state.data["kpis"])
+    existing = ef.ranges.rowCount()
+    ef.add_range()
+    assert ef.ranges.rowCount() == existing + 1 and len(window.state.data["kpis"]) == before + 1
+    r = ef.ranges.rowCount() - 1
+    ef.ranges.cellWidget(r, 2).setText("egoSpeed > 0")
+    ef.ranges.cellWidget(r, 2).editingFinished.emit()
+    ef.ranges.cellWidget(r, 1).setCurrentText("any")
+    ef.ranges.cellWidget(r, 4).setCurrentText("window_end")
+    k = window.state.data["kpis"][-1]
+    assert k == {"name": k["name"], "event": "aeb", "reduce": "any", "of": "egoSpeed > 0",
+                 "between": ["start", "window_end"]}
+    ef.ranges.item(r, 0).setText("moving")
+    assert window.state.data["kpis"][-1]["name"] == "moving"
+    assert page.kpis.item(before).text() == "aeb.moving"  # also in the KPI list
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    ef.ranges.selectRow(r)
+    ef.delete_range()
+    assert len(window.state.data["kpis"]) == before and ef.ranges.rowCount() == existing
+
+
 def test_happens_kpi_form(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     page = window.kpi_page
