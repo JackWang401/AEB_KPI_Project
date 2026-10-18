@@ -256,25 +256,23 @@ class RunService:
         return [outcomes[r.name] for r in recs if r.name in outcomes]
 
     def target_dir(self) -> Path:
-        """Where the result ends up (the timestamped folder name is decided at run time)."""
-        return input_results_dir(self.files) if self.output_root is None else self.output_root
+        """Where the result ends up: `kpi_results` next to the input data, or in the chosen folder."""
+        return input_results_dir(self.files) if self.output_root is None else self.output_root / RESULTS_DIRNAME
 
     def run(self, output_dir: Optional[Path] = None) -> RunResult:
         final_dir = None
         if output_dir:
             out_dir = Path(output_dir)
-        elif self.output_root is None:
-            # build next to the old result, then swap, so a failed run never leaves a half-written folder
-            final_dir = input_results_dir(self.files)
+        else:
+            # always the same kpi_results folder (so the same Excel file), replaced by each run: built
+            # beside the old result, then swapped in, so a failed run never leaves a half-written folder
+            final_dir = self.target_dir()
             if final_dir.exists() and not _is_ours(final_dir):
                 raise RuntimeError(f"{final_dir} exists but was not written by KPI Studio; "
-                                   "rename or move it, or choose a custom output folder")
+                                   "rename or move it, or choose another output folder")
             out_dir = final_dir.with_name(f"{final_dir.name}.tmp-{os.getpid()}")
             if out_dir.exists():
                 shutil.rmtree(out_dir)
-        else:
-            stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = self.output_root / f"{_slug(self.resolved.name)}_{stamp}"
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / OUTPUT_MARKER).write_text("Written by KPI Studio; replaced by the next run.\n", encoding="utf-8")
         result = self._run_into(out_dir)

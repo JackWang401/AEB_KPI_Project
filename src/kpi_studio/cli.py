@@ -139,7 +139,7 @@ def main(argv=None) -> int:
     p.add_argument("profile")
     p.add_argument("files", nargs="+", help="MF4 files, folders or glob patterns")
     p.add_argument("-o", "--output", default=None,
-                   help="custom output folder (a new timestamped folder per run); default: "
+                   help="custom output folder (results in its kpi_results folder, replaced on every run); default: "
                         "'kpi_results' next to the input files, replaced on every run")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--force", action="store_true", help="run even if preflight reports errors")

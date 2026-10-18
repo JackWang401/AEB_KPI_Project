@@ -396,7 +396,9 @@ class RunPage(QWidget):
         if self.custom_dir is not None:
             self._shown_default = None
             self.out_dir.setText(self.custom_dir)
-            self.out_hint.setText("Each run writes a new folder in it, named after the profile and the time.")
+            target = Path(self.custom_dir) / "kpi_results"
+            self.out_hint.setText(f"Results go to {target / 'kpi_results.xlsx'}"
+                                  + (" (replacing the previous result)" if target.exists() else "") + ".")
             return
         target = input_results_dir(self.state.checked_files) if self.state.checked_files else None
         self._shown_default = str(target) if target is not None else ""

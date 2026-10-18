@@ -118,3 +118,15 @@ def test_merged_and_kpi_coloured_plots_are_written(mf4_dir, tmp_path):
     names = [Path(p).name for p in res.plots]
     assert sum("Stop distance" in n for n in names) == 1  # two scatter plots, one chart, the first's title
     assert not any("Dead time" in n for n in names)
+
+
+def test_custom_output_folder_keeps_one_excel(mf4_dir, tmp_path):
+    folder, _ = mf4_dir
+    files = [str(folder / "a.mf4")]
+    root = tmp_path / "mine"
+    (root).mkdir()
+    (root / "notes.txt").write_text("keep me")
+    first = RunService(PROFILE, files, root).run()
+    second = RunService(PROFILE, files, root).run()
+    assert first.excel == second.excel == root / "kpi_results" / "kpi_results.xlsx" and second.excel.exists()
+    assert sorted(p.name for p in root.iterdir()) == ["kpi_results", "notes.txt"]  # replaced, not added

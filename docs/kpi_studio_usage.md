@@ -48,7 +48,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    number to draw both in one chart (same X and Y axes, told apart by marker shape; titled by
    the first title set). By default the
    result goes to `kpi_results/` next to the input MF4 files and replaces the previous
-   result there (one result per data folder); *Browse* picks another folder (each run then gets its own timestamped folder in it), *Default* goes back.
+   result there (one result per data folder); *Browse* picks another folder (results then go to its `kpi_results/`, replaced by each run, so
+   it is always the same Excel file), *Default* goes back.
    The output folder holds `kpi_results.xlsx`, `plots/`, `dashboard.html` and the resolved
    profile used for the run.
 
@@ -63,8 +64,8 @@ python -m src.kpi_studio.cli tools     [--kind moment]
 ```
 
 Example: `python -m src.kpi_studio.cli run src/kpi_studio/profiles/aeb_basic.kpi.yaml rec1.mf4 rec2.mf4`
-writes `kpi_results/` next to the MF4 files (replaced each run); `-o OUT` writes a new
-timestamped folder under OUT instead.
+writes `kpi_results/` next to the MF4 files (replaced each run); `-o OUT` writes
+`OUT/kpi_results/` instead (also replaced each run).
 
 ## Toolbox
 
