@@ -1916,4 +1916,10 @@ def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
     sizer._drag = (1, x0, {k: h.sectionSize(k) for k in sizer._visible()})
     sizer.drag_to(x0 + 40)
     assert h.sectionSize(1) == before + 40
+    x1 = h.sectionViewportPosition(3)  # widen Operator past what its box used to stop at
+    sizer._drag = (2, x1, {k: h.sectionSize(k) for k in sizer._visible()})
+    sizer.drag_to(x1 + 80)
+    qtbot.wait(50)
+    for c in (1, 2, 3):  # every field fills its whole column, whatever the width
+        assert table.cellWidget(0, c).width() >= table.columnWidth(c) - 1, c  # less the grid line
     assert form.which.items() == {"PB": "egoSpeed > 5"}

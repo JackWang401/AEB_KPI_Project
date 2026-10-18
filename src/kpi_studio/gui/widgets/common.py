@@ -560,7 +560,8 @@ class ConditionRow(QWidget):
         self.op = QComboBox()
         self.op.addItems(ConditionBuilder.OPS + [self.EXPRESSION])
         self.op.setMinimumWidth(70)
-        self.op.setMaximumWidth(110)
+        if laid_out:  # in a table the column decides the width
+            self.op.setMaximumWidth(110)
         self.op.setItemData(self.op.count() - 1, "Type the whole condition in the value field", Qt.ToolTipRole)
         self.val = QLineEdit()
         self.val.setMinimumWidth(70)
