@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import re
 from typing import Callable, Optional
@@ -430,6 +431,113 @@ class ToolPalette(QWidget):
             self.insert_requested.emit(spec.name)
 
 
+def parse_condition_rows(text: str) -> Optional[list[dict]]:
+    """Split a condition into ConditionBuilder rows: [{join, open, sig, op, val, close}], or None when
+    it can't be shown as rows (brackets nested deeper than two, arithmetic, other functions...)."""
+    try:
+        tree = ast.parse(text.strip(), mode="eval").body
+    except SyntaxError:
+        return None
+    cmp_ops = {ast.Eq: "==", ast.NotEq: "!=", ast.Gt: ">", ast.GtE: ">=", ast.Lt: "<", ast.LtE: "<="}
+
+    def src(node) -> str:
+        return ast.get_source_segment(text.strip(), node) or ast.unparse(node)
+
+    def values(node) -> Optional[str]:
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return ", ".join(src(e) for e in node.elts)
+        return None
+
+    def is_test(node):
+        """`s == v` or `s in (a, b)`: (signal, value text), else None."""
+        if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.left, ast.Name)):
+            return None
+        op, right = node.ops[0], node.comparators[0]
+        if isinstance(op, ast.Eq):
+            return node.left.id, src(right)
+        if isinstance(op, ast.In) and values(right) is not None:
+            return node.left.id, values(right)
+        return None
+
+    def edge(node):
+        """rising(test) / falling(test): (function, signal, value), else None."""
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("rising", "falling")
+                and len(node.args) == 1 and not node.keywords):
+            t = is_test(node.args[0])
+            if t is not None:
+                return node.func.id, *t
+        return None
+
+    def leaf(node) -> Optional[dict]:
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And) and len(node.values) == 2:
+            a, b = edge(node.values[0]), edge(node.values[1])
+            if a and b and a[0] == "falling" and b[0] == "rising" and a[1] == b[1] and "," not in a[2] + b[2]:
+                return {"sig": a[1], "op": "changes from → to", "val": f"{a[2]}, {b[2]}"}
+        if isinstance(node, ast.Name):  # a flag on its own: true while it is not 0
+            return {"sig": node.id, "op": "!=", "val": "0"}
+        e = edge(node)
+        if e is not None:
+            return {"sig": e[1], "op": "changes to" if e[0] == "rising" else "changes from", "val": e[2]}
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.left, ast.Name):
+            op, right = node.ops[0], node.comparators[0]
+            if type(op) in cmp_ops:
+                return {"sig": node.left.id, "op": cmp_ops[type(op)], "val": src(right)}
+            if isinstance(op, ast.In) and values(right) is not None:
+                return {"sig": node.left.id, "op": "in", "val": values(right)}
+        return None
+
+    def rows_of(node) -> Optional[list[dict]]:
+        one = leaf(node)
+        if one is not None:
+            return [dict(one, join="and", nots=0, opens=0, close=0)]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            inner = rows_of(node.operand)
+            if inner is None:
+                return None
+            if len(inner) > 1:  # not (group)
+                inner = bracket(inner)
+            if inner[0]["nots"]:
+                return None
+            inner[0]["nots"] = 1
+            return inner
+        if isinstance(node, ast.BoolOp):
+            out = []
+            join = "and" if isinstance(node.op, ast.And) else "or"
+            for child in node.values:
+                part = rows_of(child)
+                if part is None:
+                    return None
+                if len(part) > 1 and isinstance(child, ast.BoolOp) and leaf(child) is None:
+                    part = bracket(part)  # (a or b) and c
+                if out:
+                    part[0]["join"] = join
+                out += part
+            return out
+        return None
+
+    def bracket(rows):
+        if rows[0]["nots"]:  # (not a ...): a row's not always comes before its brackets
+            raise ValueError
+        rows[0]["opens"] += 1
+        rows[-1]["close"] += 1
+        return rows
+
+    try:
+        rows = rows_of(tree)
+    except ValueError:
+        return None
+    if rows is None:
+        return None
+    out = []
+    for r in rows:
+        if r["opens"] > 2 or r["close"] > 2:
+            return None
+        opening = ("not " if r["nots"] else "") + "(" * r["opens"]
+        out.append({"join": r["join"], "open": opening.strip(), "sig": r["sig"], "op": r["op"],
+                    "val": r["val"], "close": ")" * r["close"]})
+    return out
+
+
 class ConditionBuilder(QDialog):
     """Build `a > 1 and b == FULL` from rows, without typing syntax. Each row can open and close
     brackets and says how it joins the row above (and / or), so `(a > 1 and b == 2) or not (c < 3)`
@@ -479,8 +587,31 @@ class ConditionBuilder(QDialog):
         self.links: list[tuple] = []  # per row: (join with the row above, opening, closing brackets)
         self.resize(760, 10)
         self.add_row()
-        if initial:
-            self.preview.setText(f"Current: {initial}")
+        if initial and not self.load_expression(initial):
+            self.preview.setText(f"Current: {initial}<br><span style='color:#c27a00'>This condition can't be "
+                                 "split into rows. Edit it in the field instead, or build a new one here "
+                                 "(OK replaces it).</span>")
+
+    def load_expression(self, text: str) -> bool:
+        """Fill the rows from an existing condition, e.g. one built here before. False (rows left as
+        they were) when it uses something the rows can't show, such as arithmetic or other functions."""
+        rows = parse_condition_rows(text)
+        if not rows:
+            return False
+        while len(self.rows) > 1:
+            self.delete_row(len(self.rows) - 1)
+        for i, r in enumerate(rows):
+            if i:
+                self.add_row()
+            (sig, op, val), (join, opening, closing) = self.rows[i], self.links[i]
+            join.setCurrentText(r["join"])
+            opening.setCurrentText(r["open"])
+            sig.setCurrentText(r["sig"])
+            op.setCurrentText(r["op"])
+            val.setText(r["val"])
+            closing.setCurrentText(r["close"])
+        self.update_preview()
+        return True
 
     def add_row(self):
         sig = QComboBox()

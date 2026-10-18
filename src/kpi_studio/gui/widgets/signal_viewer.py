@@ -467,7 +467,7 @@ class SignalViewer(QWidget):
             self._cache_key = key
             self.cache.clear()
             if stale and self._axes and self.worker is None:
-                QTimer.singleShot(0, self.load)  # re-read what is plotted, so the plot never goes blank
+                QTimer.singleShot(0, self, self.load)  # re-read what is plotted, so the plot never goes blank
 
     def checked(self) -> list[str]:
         return [self.list.item(i).text() for i in range(self.list.count())

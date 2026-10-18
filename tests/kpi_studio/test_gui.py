@@ -1773,6 +1773,26 @@ def test_right_drag_zooms_and_ctrl_z_goes_back(qtbot, window, mf4_dir):
     assert viewer.cursors == [None, None]
 
 
+def test_condition_builder_opens_with_the_current_condition(qtbot):
+    from src.kpi_studio.gui.widgets.common import ConditionBuilder
+    for text, same in [
+        ("rising(fb_state == AUTO_EMERGENCY_BRAKING_PLANNER_STATE_ACTIVE) or rising(pb_state == ACTIVE)", None),
+        ("falling(fb_state == ACTIVE) and egoSpeed > 2", None),
+        ("not ((a > 1 or b in (1, 2)) and c != -1)", None),
+        ("(falling(m == 0) and rising(m == 3))", None),
+        ("(a > 1 and b == 2) or not (c < 3)", "(a > 1 and b == 2) or not c < 3"),
+        ("aeb_abort and x > 1", "aeb_abort != 0 and x > 1"),
+    ]:
+        dlg = ConditionBuilder(["a", "b", "c"], None, initial=text)
+        qtbot.addWidget(dlg)
+        assert dlg.expression() == (same or text)
+    dlg = ConditionBuilder(["a"], None, initial="abs(a) > 3")  # can't be rows: said so, rows left empty
+    qtbot.addWidget(dlg)
+    assert dlg.expression() == "" and "can't be split into rows" in dlg.preview.text()
+    rows = dlg.rows
+    assert len(rows) == 1
+
+
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
     from src.kpi_studio.gui.pages.signals_page import KINDS
     _load(qtbot, window, mf4_dir)
