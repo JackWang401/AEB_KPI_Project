@@ -139,13 +139,13 @@ def process_file(cp: CompiledProfile, source, index=None) -> FileOutcome:
 
 
 def _worker(profile_dict: dict, name: str, files: list[str], user_tool_files: list[str],
-            offsets: Optional[dict] = None) -> FileOutcome:
+            offsets: Optional[dict] = None, indexes: Optional[dict] = None) -> FileOutcome:
     # runs in a child process: rebuild the compiled profile from plain data
     for f in user_tool_files:
         toolbox.load_user_tools(Path(f).parent)
     profile = Profile.model_validate(profile_dict)
     _, cp = profile_store.load_compiled(profile)
-    return process_file(cp, Recording(name, files, dict(offsets or {})))
+    return process_file(cp, Recording(name, files, dict(offsets or {})), indexes)
 
 
 # ----------------------------------------------------------------------------- run
@@ -233,7 +233,9 @@ class RunService:
             # spawn (not fork): same behaviour on Windows/macOS/Linux and safe with Qt threads
             ctx = multiprocessing.get_context("spawn")
             with ProcessPoolExecutor(max_workers=min(self.workers, total), mp_context=ctx) as pool:
-                futures = {pool.submit(_worker, data, r.name, r.files, user_files, r.offsets): r for r in recs}
+                futures = {pool.submit(_worker, data, r.name, r.files, user_files, r.offsets,
+                                       {f: self.indexes[f] for f in r.files if f in self.indexes}): r
+                           for r in recs}
                 done = 0
                 for fut in as_completed(futures):
                     r = futures[fut]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -25,10 +26,15 @@ class IndexWorker(QThread):
         self.files = list(files)
 
     def run(self):
-        for f in self.files:
-            if self.isInterruptionRequested():
-                return
-            self.indexed.emit(f, index_file(f))
+        # several headers at once: opening a file is mostly waiting on the disk
+        with ThreadPoolExecutor(max_workers=max(1, min(4, len(self.files)))) as pool:
+            futures = {pool.submit(index_file, f): f for f in self.files}
+            for fut in as_completed(futures):
+                if self.isInterruptionRequested():
+                    for other in futures:
+                        other.cancel()
+                    return
+                self.indexed.emit(futures[fut], fut.result())
 
 
 class PreviewWorker(QThread):

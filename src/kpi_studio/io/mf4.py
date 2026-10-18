@@ -7,9 +7,13 @@ case-insensitivity and an optional ``Group::channel`` form to pick one raster.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import logging
+import os
+import pickle
 import re
+import threading
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +56,7 @@ class RecordingIndex:
     end: Optional[float] = None
     error: str = ""
     abs_start: Optional[float] = None   # measurement start (header), seconds since the epoch
+    block_addrs: Optional[dict] = None  # group -> address of its data blocks, to open only those later
 
     @property
     def ok(self) -> bool:
@@ -67,12 +72,48 @@ class RecordingIndex:
         return sorted({c.name for c in self.channels})
 
 
-def _open(path: str):
+_only_blocks = threading.local()  # data block addresses to resolve while this thread opens a file
+_lazy_installed = False
+
+
+def _install_lazy_blocks() -> None:
+    """Opening a file normally walks the data block list of every channel group, which on a large
+    file is most of the opening time. While `_only_blocks.addrs` is set, only the groups with those
+    data block addresses are walked; the other groups then hold no data and must not be read."""
+    global _lazy_installed
+    if _lazy_installed:
+        return
+    from asammdf.blocks.mdf_v4 import MDF4
+
+    original = MDF4._get_data_blocks_info
+
+    def only_wanted(self, *args, **kwargs):
+        wanted = getattr(_only_blocks, "addrs", None)
+        if wanted is not None and kwargs.get("address") not in wanted:
+            return iter(())
+        return original(self, *args, **kwargs)
+
+    MDF4._get_data_blocks_info = only_wanted
+    _lazy_installed = True
+
+
+def _open(path: str, blocks: Optional[set] = None):
+    """`blocks`: data block addresses of the groups that will be read (None: all groups)."""
     from asammdf import MDF  # imported lazily: heavy, and core/tests do not need it
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return MDF(path)
+        if blocks is None:
+            return MDF(path)
+        try:
+            _install_lazy_blocks()
+        except Exception:  # noqa: BLE001 - another asammdf layout: open the usual way
+            return MDF(path)
+        _only_blocks.addrs = set(blocks)
+        try:
+            return MDF(path)
+        finally:
+            _only_blocks.addrs = None
 
 
 def _group_name(group, i: int) -> str:
@@ -84,9 +125,67 @@ def _group_name(group, i: int) -> str:
     return f"group_{i}"
 
 
-def index_file(path: str | Path) -> RecordingIndex:
-    """Read channel names/units/groups and the time range, without loading samples."""
+INDEX_CACHE_VERSION = 2
+
+
+def _cache_dir() -> Path:
+    return Path(os.environ.get("KPI_STUDIO_CACHE_DIR") or Path.home() / ".kpi_studio" / "index_cache")
+
+
+def _cache_file(path: str) -> Optional[Path]:
+    """Cache entry of one file's index, keyed by its full path, size and modification time."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = f"{INDEX_CACHE_VERSION}|{Path(path).resolve()}|{st.st_size}|{st.st_mtime_ns}"
+    return _cache_dir() / (hashlib.sha1(key.encode("utf-8")).hexdigest() + ".pkl")
+
+
+def index_file(path: str | Path, cache: bool = True) -> RecordingIndex:
+    """Read channel names/units/groups and the time range, without loading samples.
+    An index is kept on disk, so a file already seen (same path, size and time) is not opened again."""
     path = str(path)
+    entry = _cache_file(path) if cache else None
+    if entry is not None and entry.is_file():
+        try:
+            with open(entry, "rb") as fh:
+                idx = pickle.load(fh)
+            if isinstance(idx, RecordingIndex) and idx.ok:
+                idx.path = path
+                return idx
+        except Exception:  # noqa: BLE001
+            pass
+    idx = _index_file(path)
+    if entry is not None and idx.ok:
+        try:
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            tmp = entry.with_suffix(f".{os.getpid()}.tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump(idx, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, entry)
+        except Exception:  # noqa: BLE001
+            pass
+    return idx
+
+
+def _time_range(mdf, gi: int, group) -> tuple[Optional[float], Optional[float]]:
+    """First and last time stamp of one channel group, reading only those two records."""
+    n = int(getattr(group.channel_group, "cycles_nr", 0) or 0)
+    if n <= 0:
+        return None, None
+    try:
+        first = mdf.get_master(gi, record_offset=0, record_count=1)
+        last = mdf.get_master(gi, record_offset=n - 1, record_count=1)
+        if len(first) and len(last):
+            return float(first[0]), float(last[-1])
+    except Exception:  # noqa: BLE001
+        pass
+    m = mdf.get_master(gi)  # fallback: the whole time channel
+    return (float(m[0]), float(m[-1])) if m is not None and len(m) else (None, None)
+
+
+def _index_file(path: str) -> RecordingIndex:
     idx = RecordingIndex(path=path)
     try:
         mdf = _open(path)
@@ -98,6 +197,10 @@ def index_file(path: str | Path) -> RecordingIndex:
             idx.abs_start = float(mdf.header.start_time.timestamp())
         except Exception:  # noqa: BLE001
             idx.abs_start = None
+        try:
+            idx.block_addrs = {gi: int(g.data_group.data_block_addr) for gi, g in enumerate(mdf.groups)}
+        except Exception:  # noqa: BLE001
+            idx.block_addrs = None
         for gi, group in enumerate(mdf.groups):
             gname = _group_name(group, gi)
             master_index = getattr(group.channel_group, "master_index", None)
@@ -109,14 +212,14 @@ def index_file(path: str | Path) -> RecordingIndex:
                 unit, comment, discrete, enum = channel_meta(ch)
                 idx.channels.append(ChannelInfo(ch.name, gi, ci, unit, gname, comment, discrete, enum))
         starts, ends = [], []
-        for gi in range(len(mdf.groups)):
+        for gi, group in enumerate(mdf.groups):
             try:
-                m = mdf.get_master(gi)
-                if m is not None and len(m):
-                    starts.append(float(m[0]))
-                    ends.append(float(m[-1]))
+                a, b = _time_range(mdf, gi, group)
             except Exception:  # noqa: BLE001
                 continue
+            if a is not None:
+                starts.append(a)
+                ends.append(b)
         if starts:
             idx.start, idx.end = min(starts), max(ends)
     except Exception as exc:  # noqa: BLE001
@@ -339,12 +442,54 @@ def resolve_recording(defs: dict[str, SignalDef], rec: Recording, indexes: dict)
     return out
 
 
-def _attach_raw_values(rs, mdf, ch) -> None:
+def _read_file(mdf, wanted: list) -> list:
+    """Read channels of one open file: [(signal, ChannelInfo)] -> [(signal, Signal or Exception)].
+    Channels are read with one `select` (each data group is read once, however many channels it holds)
+    in raw form; physical values are computed from it, and enum channels keep the raw numbers too."""
+    out = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            sigs = mdf.select([(ch.name, ch.group, ch.index) for _, ch in wanted], raw=True)
+        except Exception:  # noqa: BLE001 - one bad channel: read them one by one
+            sigs = []
+            for _, ch in wanted:
+                try:
+                    sigs.append(mdf.get(ch.name, group=ch.group, index=ch.index, raw=True))
+                except Exception as exc:  # noqa: BLE001
+                    sigs.append(exc)
+        for (sname, _), rsig in zip(wanted, sigs):
+            if isinstance(rsig, Exception):
+                out.append((sname, rsig))
+                continue
+            try:
+                sig = rsig.physical()
+                sig.raw_signal = rsig
+                out.append((sname, sig))
+            except Exception as exc:  # noqa: BLE001
+                out.append((sname, exc))
+    return out
+
+
+def _complete(mdf, wanted: list, read: list) -> bool:
+    """Every channel came back with as many samples as its group holds."""
+    for (_, ch), (_, sig) in zip(wanted, read):
+        if isinstance(sig, Exception):
+            return False
+        try:
+            n = int(mdf.groups[ch.group].channel_group.cycles_nr)
+        except Exception:  # noqa: BLE001
+            return False
+        if len(sig.samples) != n:
+            return False
+    return True
+
+
+def _attach_raw_values(rs, sig) -> None:
     """Text samples from a value-to-text conversion: keep the raw numbers and the labels too."""
+    if sig is None:
+        return
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            sig = mdf.get(ch.name, group=ch.group, index=ch.index, raw=True)
         vals = np.asarray(sig.samples)
         if vals.dtype.kind not in "biuf" or len(vals) != len(rs.samples):
             return
@@ -388,34 +533,48 @@ def read_signals(source, defs: dict[str, SignalDef],
               + float(rec.offsets.get(f, 0.0)) for f in rec.files}
 
     mapping = resolve_recording(defs, rec, indexes)
+    by_file: dict[str, list[str]] = {}
+    for sname, (f, ch, note) in mapping.items():
+        sdef = defs[sname]
+        if ch is None:
+            sev = "error" if sdef.required else "warning"
+            where = f" in any of the {len(rec.files)} files" if multi else ""
+            issues.append(FileIssue(sev, f"signal '{sname}': none of {sdef.channels} found{where}"))
+            continue
+        if note:
+            issues.append(FileIssue("info", f"signal '{sname}': {note}"))
+        by_file.setdefault(f, []).append(sname)
+
     raw: dict[str, RawSignal] = {}
-    opened: dict[str, object] = {}
-    try:
-        for sname, (f, ch, note) in mapping.items():
-            sdef = defs[sname]
-            if ch is None:
-                sev = "error" if sdef.required else "warning"
-                where = f" in any of the {len(rec.files)} files" if multi else ""
-                issues.append(FileIssue(sev, f"signal '{sname}': none of {sdef.channels} found{where}"))
-                continue
-            if note:
-                issues.append(FileIssue("info", f"signal '{sname}': {note}"))
-            try:
-                if f not in opened:
-                    opened[f] = _open(f)
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    sig = opened[f].get(ch.name, group=ch.group, index=ch.index)
+    for f, names in by_file.items():
+        wanted = [(n, mapping[n][1]) for n in names]
+        addrs = indexes[f].block_addrs
+        blocks = None if not addrs else {addrs.get(ch.group, -1) for _, ch in wanted}
+        try:
+            mdf = _open(f, blocks)
+            read = _read_file(mdf, wanted)
+            if blocks is not None and not _complete(mdf, wanted, read):
+                mdf.close()  # the file is not laid out as the index says: open it the usual way
+                mdf = _open(f)
+                read = _read_file(mdf, wanted)
+        except Exception as exc:  # noqa: BLE001
+            for sname in names:
+                issues.append(FileIssue("error" if defs[sname].required else "warning",
+                                        f"signal '{sname}': cannot open {Path(f).name}: {exc}"))
+            continue
+        try:
+            for sname, sig in read:
+                ch, sdef = mapping[sname][1], defs[sname]
+                if isinstance(sig, Exception):
+                    issues.append(FileIssue("error" if sdef.required else "warning",
+                                            f"signal '{sname}': failed to read '{ch.name}': {sig}"))
+                    continue
                 raw[sname] = RawSignal(sname, np.asarray(sig.timestamps) + offset[f], np.asarray(sig.samples),
                                        unit=str(sig.unit or ch.unit or ""),
                                        channel=f"{ch.name} ({Path(f).name})" if multi else ch.name, group=ch.group)
                 if raw[sname].samples.dtype.kind in "SUO":
-                    _attach_raw_values(raw[sname], opened[f], ch)
-            except Exception as exc:  # noqa: BLE001
-                issues.append(FileIssue("error" if sdef.required else "warning",
-                                        f"signal '{sname}': failed to read '{ch.name}': {exc}"))
-    finally:
-        for mdf in opened.values():
+                    _attach_raw_values(raw[sname], getattr(sig, "raw_signal", None))
+        finally:
             try:
                 mdf.close()
             except Exception:  # noqa: BLE001

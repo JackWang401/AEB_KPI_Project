@@ -57,6 +57,11 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    *SW version* column of the Files panel (double-click); it is written next to its results and kept
    for later runs.
 
+Speed: each file's header (channel list, time range) is read once and kept in
+`~/.kpi_studio/index_cache/` (set `KPI_STUDIO_CACHE_DIR` to move it), so adding a file again is instant;
+a changed file is read again. A run opens only the channel groups that hold mapped signals and reads
+each group once. *Parallel files* on the Run page processes that many recordings at the same time.
+
 ## Command line
 
 ```
