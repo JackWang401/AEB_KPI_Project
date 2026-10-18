@@ -307,7 +307,7 @@ class PlotDef(_Strict):
     reference_lines: list[RefLine] = Field(default_factory=list)
     x_range: Optional[list[Optional[float]]] = None  # [min, max]; an empty end adapts to the data
     y_range: Optional[list[Optional[float]]] = None
-    merge: str = ""  # scatter plots with the same merge name are drawn in one chart
+    merge: str = ""  # scatter plots with the same merge id are drawn in one chart (titled by the first title set)
 
     @model_validator(mode="after")
     def _fields_for_type(self):

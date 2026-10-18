@@ -335,9 +335,11 @@ def render_plots(profile, outcomes: list, out_dir: str | Path, units: dict, file
                 continue
             merged_done.add(p.merge)
             group = [q for q in profile.plots if q.type == "scatter" and q.merge == p.merge]
-            fig = scatter_figure(group, wide, units, files, p.merge)
+            title = next((q.title for q in group if q.title), "") or \
+                f"{', '.join(dict.fromkeys(q.y for q in group))} vs {p.x}"
+            fig = scatter_figure(group, wide, units, files, title)
             if fig is not None:
-                save(fig, p.merge, p.type)
+                save(fig, title, p.type)
         else:
             fig = kpi_figure(p, wide, units, files)
             if fig is not None:

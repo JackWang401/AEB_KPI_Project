@@ -1979,13 +1979,17 @@ def test_merge_and_colour_options_in_the_plot_table(qtbot, window, mf4_dir, tmp_
     colour = page.plots.cellWidget(0, 4)
     assert [colour.itemText(i) for i in range(3)] == ["file", "event", "none"] and colour.findText(kpis[2]) >= 0
     colour.setCurrentText(kpis[2])
-    for r in (0, 1):
-        page.plots.cellWidget(r, 8).setCurrentText("together")
+    merge = page.plots.cellWidget(1, 8)
+    assert [merge.itemText(i) for i in range(merge.count())] == ["own chart", "row 1"]  # box row 3 not offered
+    merge.setCurrentIndex(1)  # row 2 joins row 1's chart
     assert page.plots.cellWidget(2, 8) is None  # box plots are not merged
     plots = window.state.data["plots"]
-    assert plots[0]["color_by"] == kpis[2] and plots[0]["merge"] == plots[1]["merge"] == "together"
+    assert plots[0]["color_by"] == kpis[2] and plots[0]["merge"] == plots[1]["merge"] == "chart1"
+    qtbot.waitUntil(lambda: page.plots.cellWidget(0, 8).currentText() == "row 2")  # shown on both rows
     window.state.validate_now()
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    page.plots.cellWidget(0, 8).setCurrentIndex(0)  # row 1 back to its own chart: row 2 is alone again
+    assert "merge" not in plots[0] and "merge" not in plots[1]
     plots[2]["merge"] = "together"
     window.state.validate_now()
     assert any("only scatter plots can be merged" in str(i) for i in window.state.issues)

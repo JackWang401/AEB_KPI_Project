@@ -106,7 +106,7 @@ class AxesDialog(QDialog):
 
 class RunPage(QWidget):
     PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
-                 "Signals (timeseries)", "Axis ranges", "Merge into"]
+                 "Signals (timeseries)", "Axis ranges", "Merge with row"]
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -250,17 +250,49 @@ class RunPage(QWidget):
             axes.setEnabled(ptype != "timeseries")
             axes.clicked.connect(lambda *_, row=r: self.edit_axes(row))
             self.plots.setCellWidget(r, 7, axes)
-            if ptype == "scatter":  # plots with the same name here are drawn in one chart
-                merges = sorted({q.get("merge") for q in plots if q.get("merge")})
-                merge = self._choice(r, "merge", merges, p.get("merge", ""), editable=True)
-                merge.lineEdit().setPlaceholderText("own chart")
-                merge.setToolTip("Scatter plots with the same name here are drawn in one chart (they share X). "
-                                 "Type a new name, or pick one to join it; empty: a chart of its own.")
+            if ptype == "scatter":  # pick another scatter row: both are drawn in one chart
+                merge = QComboBox()
+                merge.addItem("own chart", None)
+                for t, q in enumerate(plots):
+                    if t != r and q.get("type", "scatter") == "scatter":
+                        merge.addItem(f"row {t + 1}", t)
+                with_row = self.merged_with(r)
+                merge.setCurrentIndex(max(merge.findData(with_row), 0) if with_row is not None else 0)
+                merge.setToolTip("Draw this scatter plot in the same chart as another row's (they share X)")
+                merge.currentIndexChanged.connect(lambda _i, row=r, w=merge: self.merge_rows(row, w.currentData()))
                 self.plots.setCellWidget(r, 8, merge)
             else:
                 self.plots.removeCellWidget(r, 8)
                 self.plots.setItem(r, 8, QTableWidgetItem(""))
         self._loading = False
+
+    def merged_with(self, row: int) -> Optional[int]:
+        """The first other row drawn in the same chart as `row`, or None."""
+        plots = self.state.data.get("plots", []) or []
+        key = plots[row].get("merge")
+        if not key:
+            return None
+        return next((t for t, q in enumerate(plots) if t != row and q.get("merge") == key), None)
+
+    def merge_rows(self, row: int, target: Optional[int]):
+        """Put `row` in `target`'s chart (target None: back to a chart of its own)."""
+        if self._loading:
+            return
+        plots = self.state.data["plots"]
+        old = plots[row].pop("merge", None)
+        if target is not None:
+            key = plots[target].get("merge")
+            if not key:  # a new merged chart: an id no other chart uses
+                used = {q.get("merge") for q in plots}
+                key = next(f"chart{n}" for n in range(1, len(plots) + 2) if f"chart{n}" not in used)
+                plots[target]["merge"] = key
+            plots[row]["merge"] = key
+        if old:  # a chart left with one plot is an ordinary chart again
+            rest = [q for q in plots if q.get("merge") == old]
+            if len(rest) == 1:
+                rest[0].pop("merge")
+        self.state.edited()
+        QTimer.singleShot(0, self, self.refresh_plots)  # other rows show the new pairing
 
     def _choice(self, row: int, key: str, choices: list[str], current: str, editable=False) -> QComboBox:
         combo = QComboBox()

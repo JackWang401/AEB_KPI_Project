@@ -116,5 +116,5 @@ def test_merged_and_kpi_coloured_plots_are_written(mf4_dir, tmp_path):
         prof.unlink()
     assert res.n_ok == 2
     names = [Path(p).name for p in res.plots]
-    assert sum("braking" in n for n in names) == 1  # two scatter plots, one chart
-    assert not any("Stop distance" in n or "Dead time" in n for n in names)
+    assert sum("Stop distance" in n for n in names) == 1  # two scatter plots, one chart, the first's title
+    assert not any("Dead time" in n for n in names)
