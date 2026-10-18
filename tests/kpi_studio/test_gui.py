@@ -1669,7 +1669,7 @@ def test_boolean_signals_are_shaded_strips_at_the_bottom(qtbot, window, mf4_dir)
     line = bottom.get_lines()[0]
     assert line.get_drawstyle() == "steps-post"
     assert bottom.collections and bottom.collections[0].get_facecolor()[0][3] < 0.5  # light shade
-    assert list(bottom.get_yticks()) == [0, 1]
+    assert len(bottom.get_yticks()) == 0  # no value axis for a flag
     assert bottom.get_position().height < top.get_position().height  # a low strip
 
 

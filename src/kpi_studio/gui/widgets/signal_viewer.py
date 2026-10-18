@@ -48,7 +48,7 @@ from src.kpi_studio.io.mf4 import read_signals
 NO_EVENT = "(signals only)"
 SIGNAL_MIME = "application/x-kpi-studio-signals"
 LINESTYLES = ["-", "--", ":", "-."]
-MARGIN_PX = dict(left=64, right=250, top=10, bottom=40, gap=12)   # right: the signal / value list
+MARGIN_PX = dict(left=64, right=250, top=10, bottom=40, gap=0)   # right: the signal / value list
 
 
 class SignalList(QListWidget):
@@ -714,7 +714,7 @@ class SignalViewer(QWidget):
                     if enum and not multi:
                         self._enum_ticks(ax, enum, y)
             if all(self.kind(n) == "boolean" for n in group):
-                ax.set_yticks([0, 1])
+                ax.set_yticks([])  # a flag needs no value axis: the shading shows when it is on
                 ax.set_ylim(-0.15, 1.25)
                 self._bool_axes.add(ax)
             elif ax not in self._enum_axes:
