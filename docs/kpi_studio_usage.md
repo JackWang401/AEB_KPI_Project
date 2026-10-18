@@ -47,8 +47,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    *changes from → to 0, 3* → `(falling(sig == 0) and rising(sig == 3))`. Use them as
    an event's *Start when* or, with *Edit condition* under Moments, as a `first` moment.
    The ▾ list of every condition field (start, end, moments) starts with the same
-   *Edit condition*, so one method serves all three. *Run preview* evaluates the profile on one file and draws the
-   window and moments. *Save KPI to library* shares a KPI between profiles.
+   *Edit condition*, so one method serves all three. *Run preview* evaluates the profile on every checked file and draws the
+   window and moments; *occurrence* (n / total) steps through the event's occurrences in all files. *Save KPI to library* shares a KPI between profiles.
 4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. A scatter plot's *Colour / group by*
    can also be a KPI: a numeric KPI colours the points on a light-to-dark scale, a text KPI (e.g.
    `PB + FB`) gives one colour per text. In *Merge with row*, pick another scatter plot's row

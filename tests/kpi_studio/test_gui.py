@@ -3,6 +3,7 @@
 import os
 
 import pytest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
@@ -102,7 +103,8 @@ def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     n_res = sum(1 for r in viewer.preview["outcome"].results if r.event == "aeb" and r.occurrence == 1)
     assert len(listed) + len(viewer.kpi_others) == n_res  # the rest are named in the status tip
     if viewer.kpi_others:
-        assert "not plotted" in viewer.pv_status.text() and viewer.kpi_others[0] in viewer.pv_status.toolTip()
+        assert viewer.kpi_others[0] in viewer.pv_run.toolTip()
+    assert viewer.pv_status.text() == "" and viewer.pv_status.isHidden()  # no grey status text
     assert viewer.kpi_signals("aeb", "vehSpd") == ["egoSpeedKph"]
     run = window.run_page
     run.out_dir.setText(str(tmp_path / "out"))
@@ -167,6 +169,30 @@ def test_signal_viewer_works_while_an_event_is_incomplete(qtbot, window, mf4_dir
     qtbot.waitUntil(lambda: viewer.data is not None and viewer.worker is None, timeout=20000)
     assert {"egoSpeed", "longJerk"} <= set(viewer.data["values"])
     assert len(window.signals_page.viewer.fig.axes) == 2
+
+
+def test_occurrences_of_every_file(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    viewer.set_event("aeb")
+    viewer.run_preview()
+    qtbot.waitUntil(lambda: bool(len(viewer.previews) == 2 and viewer.preview_worker is None
+                                 and viewer.worker is None), timeout=30000)
+    occs = viewer.all_occurrences()
+    files = [Path(name).name for name, _ in occs]
+    assert files == ["a.mf4", "a.mf4", "b.mf4"]  # a.mf4 has two, b.mf4 one
+    assert viewer.pv_occ.maximum() == 3 and viewer.pv_occ.suffix() == " / 3"
+    assert viewer.pv_run.text() == "Run preview" and viewer.pv_run.isEnabled()
+    viewer.pv_occ.setValue(3)  # steps into the next file
+    qtbot.waitUntil(lambda: viewer.worker is None and bool(viewer._axes), timeout=20000)
+    assert Path(viewer.preview["rec"]).name == "b.mf4" and [Path(n).name for n in viewer.selected_names()] == ["b.mf4"]
+    _, occ = occs[2]
+    assert viewer._axes[0].get_xlim() == (occ.t_window_start, occ.t_window_end)
+    assert "b.mf4" in viewer._axes[0].get_title() and "#1" in viewer._axes[0].get_title()
+    viewer.pv_occ.setValue(2)  # and back
+    qtbot.waitUntil(lambda: viewer.worker is None, timeout=20000)
+    assert Path(viewer.preview["rec"]).name == "a.mf4"
+    assert viewer._axes[0].get_xlim() == (occs[1][1].t_window_start, occs[1][1].t_window_end)
 
 
 def test_preview_shows_whole_file_when_event_never_fires(qtbot, window, mf4_dir):

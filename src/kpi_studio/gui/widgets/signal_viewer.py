@@ -254,6 +254,7 @@ class ElideLabel(QLabel):
     def setText(self, text):
         self._full = text or ""
         self._elide()
+        self.setVisible(bool(self._full))  # shown only when there is something to act on
 
     def text(self):
         return self._full
@@ -361,7 +362,9 @@ class SignalViewer(QWidget):
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
-        self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome} from Run preview
+        self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome}: the recording shown
+        self.previews: dict = {}              # recording -> FileOutcome of the last Run preview (all recordings)
+        self._pv_queue: list = []             # recordings still to preview
         self.preview_worker = None
 
         lay = QVBoxLayout(self)
@@ -395,12 +398,16 @@ class SignalViewer(QWidget):
         pbar.addWidget(self.pv_occ)
         self.pv_run = QPushButton("Run preview")
         self.pv_run.setObjectName("primary")
-        self.pv_run.setToolTip("Evaluate the profile on the first ticked recording")
+        self.pv_run.setToolTip("Evaluate the profile on every checked recording; the occurrence box then "
+                               "steps through the event's occurrences in all of them")
         pbar.addWidget(self.pv_run)
         self.pv_status = ElideLabel()  # long texts shorten with … instead of widening the window
         self.pv_status.setObjectName("hint")
         pbar.addWidget(self.pv_status, 2)
         pbar.addWidget(self.status, 1)
+        self.pv_status.setText("")  # (both appear only with something to act on)
+        self.status.setText("")
+        pbar.addStretch(1)
         self.cursor_info = QLabel()
         self.cursor_info.setObjectName("hint")
         pbar.addWidget(self.cursor_info)
@@ -477,7 +484,7 @@ class SignalViewer(QWidget):
         state.profile_changed.connect(self.load_axes)
         self.pv_run.clicked.connect(self.run_preview)
         self.pv_event.currentTextChanged.connect(lambda *_: self._event_changed())
-        self.pv_occ.valueChanged.connect(lambda *_: self.draw())
+        self.pv_occ.valueChanged.connect(lambda *_: self.goto_occurrence())
         self._cache_key = None
         self.refresh_files()
         self.refresh_names()
@@ -516,8 +523,9 @@ class SignalViewer(QWidget):
         hit = {r.name for r in recs if set(r.files) & set(files)}
         for name in hit:
             self.cache.pop(name, None)
-        if self.preview and self.preview["rec"] in hit:
+        if self.preview and self.preview["rec"] in hit or hit & set(self.previews):
             self.preview = None
+            self.previews = {n: o for n, o in self.previews.items() if n not in hit}
             self.pv_status.setText("Time offset changed: press Run preview again")
         if hit & set(self.selected_names()):
             self._reload_timer.start()
@@ -959,7 +967,7 @@ class SignalViewer(QWidget):
             self.draw()
             return
         r = self.queue.pop(0)
-        self.status.setText(f"Reading {r.label}…")
+        self.status.setText("")
         self.worker = SignalLoadWorker(self._cp, r, dict(self.state.indexes), self)
         self.worker.done.connect(self._loaded)
         self.worker.failed.connect(lambda m, r=r: self.status.setText(f"Could not read {r.label}: "
@@ -992,8 +1000,8 @@ class SignalViewer(QWidget):
             miss = f", missing {len(d['missing'])}" if d["missing"] else ""
             parts.append(f"{Path(r.name).name}: {span}{miss}")
             tips += [f"{Path(r.name).name}: {k}: {v}" for k, v in d["missing"].items()] + d["issues"]
-        self.status.setText("  ·  ".join(parts))
-        self.status.setToolTip("\n".join(tips))
+        self.status.setText("")  # (file names and time spans are not shown: the plot says it)
+        self.load_btn.setToolTip("\n".join(["Read the ticked signals from the recording", *parts, *tips]))
 
     # ------------------------------------------------------------------ drag and drop
     def eventFilter(self, obj, event):
@@ -1216,23 +1224,52 @@ class SignalViewer(QWidget):
 
     def _event_changed(self):
         self._update_occ_range()
-        self.draw()
+        self.goto_occurrence()
 
     def _clear_preview(self):
         self.preview = None
+        self.previews = {}
         self.pv_status.setText("")
+        self._update_occ_range()
         self.draw()
 
     def _occurrences(self):
+        """Occurrences of the chosen event in the recording shown."""
         ev = self.current_event()
         if not self.preview or ev is None:
             return []
         return [o for o in self.preview["outcome"].occurrences if o.event == ev]
 
+    def all_occurrences(self) -> list:
+        """(recording, occurrence) of the chosen event in every previewed recording, in recording order."""
+        ev = self.current_event()
+        if ev is None:
+            return []
+        return [(name, o) for name, out in self.previews.items() for o in out.occurrences if o.event == ev]
+
     def _update_occ_range(self):
+        n = len(self.all_occurrences())
         self.pv_occ.blockSignals(True)
-        self.pv_occ.setMaximum(max(len(self._occurrences()), 1))
+        self.pv_occ.setMaximum(max(n, 1))
+        self.pv_occ.setSuffix(f" / {n}" if n else "")
         self.pv_occ.blockSignals(False)
+
+    def current_occurrence(self):
+        """(recording, occurrence) chosen in the occurrence box, or None."""
+        occs = self.all_occurrences()
+        k = self.pv_occ.value() - 1
+        return occs[k] if 0 <= k < len(occs) else None
+
+    def goto_occurrence(self):
+        """Show the chosen occurrence: switch to its recording (read by the preview) and zoom to it."""
+        hit = self.current_occurrence()
+        if hit is not None and (self.preview is None or self.preview["rec"] != hit[0]):
+            self.preview = {"rec": hit[0], "outcome": self.previews[hit[0]]}
+            self.select_recordings([hit[0]])
+        if hit is not None and hit[0] not in self.cache:
+            self.load()
+            return
+        self.draw()
 
     def default_signals(self, event: str) -> list[str]:
         """Signals the event's trigger and moments use (first four)."""
@@ -1257,22 +1294,39 @@ class SignalViewer(QWidget):
             return
         if not self.selected() and self.files.count():
             self.select_recordings([self.files.item(0).data(Qt.UserRole)])
-        rec = self.current_file()
-        if rec is None:
+        recs = self.state.recordings()
+        if not recs:
             return
+        first = self.current_file()  # the recording shown is previewed first
+        if first is not None:
+            recs = [r for r in recs if r.name == first.name] + [r for r in recs if r.name != first.name]
+        self.preview, self.previews = None, {}
+        self.pv_status.setText("")
+        self._pv_queue = list(recs)
+        self._pv_total = len(recs)
+        self.pv_run.setEnabled(False)
+        self._next_preview()
+
+    def _next_preview(self):
         from src.kpi_studio.gui.workers import PreviewWorker
 
-        self.pv_status.setText(f"Running the profile on {rec.label}…")
-        self.pv_run.setEnabled(False)
+        if not self._pv_queue:
+            self.pv_run.setText("Run preview")
+            self.pv_run.setEnabled(True)
+            return
+        rec = self._pv_queue.pop(0)
+        if self._pv_total > 1:
+            self.pv_run.setText(f"Running {self._pv_total - len(self._pv_queue)}/{self._pv_total}…")
         self.preview_worker = PreviewWorker(self.state.compiled, rec, dict(self.state.indexes), self)
         self.preview_worker.done.connect(lambda data, r=rec: self._preview_done(r, data))
-        self.preview_worker.failed.connect(lambda m: self.pv_status.setText("Preview failed: " + m.splitlines()[0]))
+        self.preview_worker.failed.connect(
+            lambda m, r=rec: self.pv_status.setText(f"Preview of {Path(r.name).name} failed: " + m.splitlines()[0]))
         self.preview_worker.finished.connect(self._preview_finished)
         self.preview_worker.start()
 
     def _preview_finished(self):
         self.preview_worker = None
-        self.pv_run.setEnabled(True)
+        self._next_preview()
 
     def _preview_done(self, rec, data):
         if dict(rec.offsets) != self._current_offsets(rec.name):
@@ -1287,6 +1341,14 @@ class SignalViewer(QWidget):
             "units": signal_units(self.state.compiled.profile), "labels": old.get("labels", {}),
             "missing": old.get("missing", {}),
             "issues": [i.message for i in out.issues if i.severity != "info"]}
+        self.previews = {**self.previews, rec.name: out}
+        # in recording order, so the occurrence box steps through them file by file
+        order = [r.name for r in self.state.recordings()]
+        self.previews = dict(sorted(self.previews.items(), key=lambda kv: order.index(kv[0])
+                                    if kv[0] in order else len(order)))
+        if self.preview is not None:  # another recording is shown: only the occurrence count changes
+            self._update_occ_range()
+            return
         self.data = self.cache[rec.name]
         self.preview = {"rec": rec.name, "outcome": out}
         ev = self.current_event()
@@ -1296,13 +1358,12 @@ class SignalViewer(QWidget):
         if not self.checked() and ev:
             self.set_checked(self.default_signals(ev) or self.state.signal_names()[:3])
         self._update_occ_range()
-        n = len(self._occurrences())
+        first = next((k for k, (name, _) in enumerate(self.all_occurrences()) if name == rec.name), 0)
+        self.pv_occ.blockSignals(True)
+        self.pv_occ.setValue(first + 1)
+        self.pv_occ.blockSignals(False)
         issues = [i.message for i in out.issues if i.severity != "info"]
-        self.pv_status.setText(f"{rec.label}: {len(out.occurrences)} occurrence(s)"
-                               + (f", {n} of '{ev}'" if ev else "")
-                               + (f"  ·  {len(issues)} warning(s)" if issues else ""))
         self._issues_tip = "\n".join(issues)
-        self.pv_status.setToolTip(self._issues_tip)
         self.draw()
 
     def _decorate_preview(self, axes, loaded):
@@ -1314,15 +1375,18 @@ class SignalViewer(QWidget):
             return
         out = self.preview["outcome"]
         occs = self._occurrences()
-        idx = self.pv_occ.value()
-        occ = next((o for o in occs if o.index == idx), None)
+        hit = self.current_occurrence()
+        occ = hit[1] if hit is not None and hit[0] == self.preview["rec"] else None
+        idx = occ.index if occ is not None else 0
         if occ is None:
             for ax in axes:
                 for o in occs:
                     ax.axvspan(o.t_start, o.t_end, color="#2a78d6", alpha=0.10, lw=0)
             axes[0].set_title(f"Whole file: no occurrence of '{ev}' found" if not occs
-                              else f"Whole file: occurrence #{idx} of '{ev}' not found", fontsize=8, color="#6b6b66")
+                              else f"Whole file: {len(occs)} occurrence(s) of '{ev}'", fontsize=8, color="#6b6b66")
             return
+        if len(self.previews) > 1:  # several recordings: say which one this occurrence is from
+            axes[0].set_title(f"{Path(self.preview['rec']).name}  ·  {ev} #{idx}", fontsize=8, color="#6b6b66")
         moments = [m for m in out.moments if m.event == ev and m.occurrence == idx]
         for i, ax in enumerate(axes):
             ax.axvspan(occ.t_start, occ.t_end, color="#2a78d6", alpha=0.10, lw=0)
@@ -1377,15 +1441,12 @@ class SignalViewer(QWidget):
             else:
                 self.kpi_lines.setdefault(spot[0], {}).setdefault(spot[1], []).append((text, ok))
         self.kpi_others = others
-        base = self.pv_status.text().split("  ·  KPIs")[0]
-        if others:
-            self.pv_status.setText(f"{base}  ·  KPIs of signals not plotted: {len(others)} (hover)")
-            self.pv_status.setToolTip("\n\n".join(filter(None, [
-                getattr(self, "_issues_tip", ""),
-                "Tick the signal a KPI reads to see its value next to it:\n" + "\n".join(others)])))
-        else:
-            self.pv_status.setText(base)
-            self.pv_status.setToolTip(getattr(self, "_issues_tip", ""))
+        self.pv_run.setToolTip("\n\n".join(filter(None, [
+            "Evaluate the profile on every checked recording; the occurrence box then steps through "
+            "the event's occurrences in all of them",
+            getattr(self, "_issues_tip", ""),
+            ("KPIs of signals not plotted (tick the signal a KPI reads to see it):\n" + "\n".join(others))
+            if others else ""])))
 
     # ------------------------------------------------------------------ cursors
     def signal_menu(self, names: list[str], menu: QMenu | None = None) -> QMenu:
@@ -1688,7 +1749,7 @@ class SignalViewer(QWidget):
             info.append(f"B = {b:.3f} s")
         if a is not None and b is not None:
             info.append(f"Δt = {b - a:.3f} s")
-        self.cursor_info.setText("   ".join(info) if info else "Click a plot to place a cursor (Shift+click: second) · right-drag to zoom, Ctrl+Z to undo")
+        self.cursor_info.setText("   ".join(info))  # cursor times only while cursors are placed
         self.canvas.draw_idle()
 
     def _draw_side_lists(self):
