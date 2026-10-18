@@ -546,13 +546,12 @@ class ConditionRow(QWidget):
     changed = Signal()
     EXPRESSION = "expression"
 
-    def __init__(self, names_fn: Callable[[], list[str]], enums_fn: Callable[[], dict], parent=None):
+    def __init__(self, names_fn: Callable[[], list[str]], enums_fn: Callable[[], dict], parent=None,
+                 *, laid_out: bool = True):
+        """laid_out=False leaves sig / op / val unplaced, e.g. for a table that shows each in its own column."""
         super().__init__(parent)
         self.names_fn, self.enums_fn = names_fn, enums_fn
         self.value_picker: Optional[NamePicker] = None
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
         self.sig = QComboBox()
         self.sig.setEditable(True)
         self.sig.addItems(sorted(names_fn(), key=str.lower))
@@ -570,8 +569,12 @@ class ConditionRow(QWidget):
         self.val.addAction(pick, QLineEdit.TrailingPosition)
         pick.triggered.connect(self.open_values)
         self.pick_action = pick
-        for w, stretch in ((self.sig, 3), (self.op, 0), (self.val, 2)):
-            lay.addWidget(w, stretch)
+        if laid_out:
+            lay = QHBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(4)
+            for w, stretch in ((self.sig, 3), (self.op, 0), (self.val, 2)):
+                lay.addWidget(w, stretch)
         self.sig.currentTextChanged.connect(self._update)
         self.op.currentTextChanged.connect(self._update)
         self.sig.activated.connect(lambda *_: self.changed.emit())

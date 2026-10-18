@@ -72,8 +72,8 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
         form.which.add_row()
         r = form.which.table.rowCount() - 1
         form.which.table.item(r, 0).setText(label)
-        form.which.table.cellWidget(r, 1).set_expression(cond)
-        form.which.table.cellWidget(r, 1).changed.emit()
+        form.which.rows[r].set_expression(cond)
+        form.which.rows[r].changed.emit()
     k = window.state.data["kpis"][-1]
     assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and "between" not in k
     window.state.validate_now()
@@ -1892,3 +1892,28 @@ def test_condition_row_fields(qtbot, window, mf4_dir):
     assert row.expression() == "gear == D"
     row.set_expression("a > 1 and b < 2")  # more than one row: kept as typed
     assert row.op.currentText() == "expression" and row.expression() == "a > 1 and b < 2"
+
+
+def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 1000)
+    window.show()
+    window.open_panel("Events & KPIs")
+    page = window.kpi_page
+    page.new_kpi()
+    form = page.kpi_form
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
+    form.which.set_items({"PB": "egoSpeed > 5"})
+    table = form.which.table
+    assert [table.horizontalHeaderItem(c).text() for c in range(4)] == ["Label", "Signal", "Operator", "Value"]
+    row = form.which.rows[0]
+    assert [table.cellWidget(0, c) for c in (1, 2, 3)] == [row.sig, row.op, row.val]
+    h = table.horizontalHeader()
+    qtbot.waitUntil(lambda: bool(h.property("columnSizer")))
+    sizer = h._column_sizer
+    x0 = h.sectionViewportPosition(2)  # the border between Signal and Operator
+    before = h.sectionSize(1)
+    sizer._drag = (1, x0, {k: h.sectionSize(k) for k in sizer._visible()})
+    sizer.drag_to(x0 + 40)
+    assert h.sectionSize(1) == before + 40
+    assert form.which.items() == {"PB": "egoSpeed > 5"}

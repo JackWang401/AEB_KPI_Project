@@ -59,27 +59,38 @@ FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"
 
 
 class WhichTable(QWidget):
-    """Label + condition rows of a 'which' KPI: its result names the conditions met in the range."""
+    """Label + condition rows of a 'which' KPI: its result names the conditions met in the range.
+    Each condition is signal / operator / value in its own column, so each column can be dragged wider."""
+
+    COLUMNS = ["Label", "Signal", "Operator", "Value"]
 
     def __init__(self, state, on_change):
         super().__init__()
         self.state, self.on_change = state, on_change
+        self.rows: list[ConditionRow] = []  # one per table row, in order
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)  # no stretching gaps in the form
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        row = QHBoxLayout()
+        lay.setSpacing(4)
+        row = QHBoxLayout()  # hint with + / − on the right, as above the Moments table
         hint = QLabel("The result lists the labels whose condition is met in the range, e.g. PB + FB "
                       "(in this order), or none.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
+        hint.setMinimumWidth(120)
         row.addWidget(hint, 1)
         for b in context_menu.plus_minus(add=self.add_row, remove=self.remove_row, add_tip="Add a condition",
                                          remove_tip="Delete the selected condition"):
             row.addWidget(b)
         lay.addLayout(row)
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Label", "Condition: signal, operator, value"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.setColumnWidth(0, 70)
+        self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setHorizontalHeaderLabels(self.COLUMNS)
+        h = self.table.horizontalHeader()
+        for col in (1, 3):  # Signal and Value share the free width
+            h.setSectionResizeMode(col, QHeaderView.Stretch)
+        for col, width in ((0, 70), (2, 90)):  # Label and Operator: set widths (still draggable)
+            h.setSectionResizeMode(col, QHeaderView.Fixed)
+            h.resizeSection(col, width)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(110)
         self.table.setMaximumHeight(170)  # a few rows; the form below stays in view
@@ -89,6 +100,7 @@ class WhichTable(QWidget):
     def set_items(self, items: dict):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
+        self.rows.clear()
         for label, cond in items.items():
             self._append(label, cond)
         self.table.blockSignals(False)
@@ -99,11 +111,14 @@ class WhichTable(QWidget):
         self.table.insertRow(r)
         self.table.setItem(r, 0, QTableWidgetItem(label))
         self.table.blockSignals(blocked)
-        row = ConditionRow(self.state.signal_names, self.state.enum_map)
+        row = ConditionRow(self.state.signal_names, self.state.enum_map, self.table, laid_out=False)
+        row.hide()  # holds the logic; its fields sit in the cells
         row.set_expression(cond)
         row.changed.connect(self.on_change)
-        self.table.setCellWidget(r, 1, row)
-        self.table.setRowHeight(r, max(self.table.rowHeight(r), row.sizeHint().height() + 6))
+        self.rows.append(row)
+        for col, w in enumerate((row.sig, row.op, row.val), start=1):
+            self.table.setCellWidget(r, col, w)
+        self.table.setRowHeight(r, max(self.table.rowHeight(r), row.sig.sizeHint().height() + 6))
 
     def add_row(self):
         self._append()
@@ -114,14 +129,14 @@ class WhichTable(QWidget):
         r = self.table.currentRow()
         if r >= 0:
             self.table.removeRow(r)
+            self.rows.pop(r).deleteLater()
             self.on_change()
 
     def items(self) -> dict:
         out = {}
-        for r in range(self.table.rowCount()):
+        for r, row in enumerate(self.rows):
             label = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
-            edit = self.table.cellWidget(r, 1)
-            cond = edit.expression() if edit is not None else ""
+            cond = row.expression()
             if label or cond:
                 out[label] = cond
         return out
@@ -602,9 +617,9 @@ class KpiForm(QWidget):
                              "Only a formula needs a unit typed in.")
         self.desc = QLineEdit()
         rng = QHBoxLayout()
-        rng.addWidget(self.m1)
+        rng.addWidget(self.m1, 1)
         rng.addWidget(QLabel("to"))
-        rng.addWidget(self.m2)
+        rng.addWidget(self.m2, 1)
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
                          ("Reducer", self.reducer), ("Expression", self.expr), ("Formula", self.formula),
