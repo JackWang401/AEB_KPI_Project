@@ -276,6 +276,12 @@ class FileEvaluator:
             # reduce
             lo_name, hi_name = d.between or ("window_start", "window_end")
             lo, hi = self._ref_kpi(times, lo_name), self._ref_kpi(times, hi_name)
+            if hi < lo:
+                return None, hi, Status.NO_SAMPLES, (f"'{hi_name}' ({hi:.3f}s) comes before '{lo_name}' "
+                                                     f"({lo:.3f}s): the range is reversed")
+            if hi == lo:
+                return None, hi, Status.NO_SAMPLES, (f"'{lo_name}' and '{hi_name}' are at the same time "
+                                                     f"({lo:.3f}s): no range to take the {d.reduce} over")
             arr = self.full(k.of)
             if k.scale != 1.0:
                 arr = arr * k.scale  # into the unit the reducer takes

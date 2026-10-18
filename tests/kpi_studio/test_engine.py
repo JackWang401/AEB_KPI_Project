@@ -266,3 +266,22 @@ def test_distance_rejects_a_value_that_is_not_a_speed():
         "kpis": [{"name": "dist", "event": "e", "reduce": "distance", "of": "a"}]}, "t")
     with pytest.raises(ProfileError, match="distance needs a value in m/s"):
         compile_profile(prof)
+
+
+@pytest.mark.parametrize("a_on, b_on, says", [([0, 1, 1, 1, 0, 0], [0, 1, 1, 1, 0, 0], "are at the same time"),
+                                               ([0, 0, 1, 1, 0, 0], [0, 1, 1, 1, 0, 0], "the range is reversed")])
+def test_reduce_over_an_empty_range_says_why(a_on, b_on, says):
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p", "signals": {n: {"channels": [n]} for n in ("v", "on", "ma", "mb")},
+        "events": {"e": {"start": "on > 0", "end": "on < 1",
+                         "moments": {"a": {"first": "ma > 0"}, "b": {"first": "mb > 0"}}}},
+        "kpis": [{"name": "dist", "event": "e", "reduce": "integral", "of": "v", "between": ["a", "b"]}]}, "t")
+    cp = compile_profile(prof)
+    t = np.arange(0, 6, 1.0)
+    vals = {"v": np.full_like(t, 5.0), "on": np.array([0, 1, 1, 1, 0, 0], float),
+            "ma": np.array(a_on, float), "mb": np.array(b_on, float)}
+    r = evaluate_frame(cp, SignalFrame(time=t, values=vals), "f").results[0]
+    assert r.value is None and says in r.message, r.message
