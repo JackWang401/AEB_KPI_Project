@@ -72,8 +72,8 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
         form.which.add_row()
         r = form.which.table.rowCount() - 1
         form.which.table.item(r, 0).setText(label)
-        form.which.table.cellWidget(r, 1).setText(cond)
-        form.which.table.cellWidget(r, 1).editingFinished.emit()
+        form.which.table.cellWidget(r, 1).set_expression(cond)
+        form.which.table.cellWidget(r, 1).changed.emit()
     k = window.state.data["kpis"][-1]
     assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and "between" not in k
     window.state.validate_now()
@@ -1875,3 +1875,20 @@ def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):
     box.setCurrentIndex(KINDS.index("boolean"))
     delegate.setModelData(box, table.model(), ix)
     assert window.state.data["signals"]["egoSpeed"]["kind"] == "boolean"
+
+
+def test_condition_row_fields(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.widgets.common import ConditionRow
+    _load(qtbot, window, mf4_dir)
+    row = ConditionRow(window.state.signal_names, lambda: {"gear": {"P": 0, "D": 1}})
+    qtbot.addWidget(row)
+    row.set_expression("egoSpeed > 5")
+    assert (row.sig.currentText(), row.op.currentText(), row.val.text()) == ("egoSpeed", ">", "5")
+    assert not row.pick_action.isVisible()
+    row.sig.setCurrentText("gear")
+    assert row.pick_action.isVisible()
+    row.op.setCurrentText("==")
+    row.pick_value("D")
+    assert row.expression() == "gear == D"
+    row.set_expression("a > 1 and b < 2")  # more than one row: kept as typed
+    assert row.op.currentText() == "expression" and row.expression() == "a > 1 and b < 2"

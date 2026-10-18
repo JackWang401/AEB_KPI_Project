@@ -539,6 +539,97 @@ def parse_condition_rows(text: str) -> Optional[list[dict]]:
     return out
 
 
+class ConditionRow(QWidget):
+    """One condition as  signal  operator  value  (the same fields as a row of Edit condition), with the
+    signal's enum values to pick. A condition these fields can't show is kept as typed ('expression')."""
+
+    changed = Signal()
+    EXPRESSION = "expression"
+
+    def __init__(self, names_fn: Callable[[], list[str]], enums_fn: Callable[[], dict], parent=None):
+        super().__init__(parent)
+        self.names_fn, self.enums_fn = names_fn, enums_fn
+        self.value_picker: Optional[NamePicker] = None
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.sig = QComboBox()
+        self.sig.setEditable(True)
+        self.sig.addItems(sorted(names_fn(), key=str.lower))
+        self.sig.setCurrentText("")
+        self.sig.setMinimumWidth(130)
+        self.op = QComboBox()
+        self.op.addItems(ConditionBuilder.OPS + [self.EXPRESSION])
+        self.op.setMinimumWidth(70)
+        self.op.setMaximumWidth(110)
+        self.op.setItemData(self.op.count() - 1, "Type the whole condition in the value field", Qt.ToolTipRole)
+        self.val = QLineEdit()
+        self.val.setMinimumWidth(70)
+        pick = QAction(_arrow_icon(), "Pick a value", self.val)
+        pick.setToolTip("Pick one of the signal's enum values")
+        self.val.addAction(pick, QLineEdit.TrailingPosition)
+        pick.triggered.connect(self.open_values)
+        self.pick_action = pick
+        for w, stretch in ((self.sig, 3), (self.op, 0), (self.val, 2)):
+            lay.addWidget(w, stretch)
+        self.sig.currentTextChanged.connect(self._update)
+        self.op.currentTextChanged.connect(self._update)
+        self.sig.activated.connect(lambda *_: self.changed.emit())
+        self.op.activated.connect(lambda *_: self.changed.emit())
+        self.val.editingFinished.connect(self.changed.emit)
+        self._update()
+
+    def values_of(self, signal: str) -> list[str]:
+        return enum_tokens(self.enums_fn().get(signal.strip()) or {})
+
+    def _update(self, *_):
+        expression = self.op.currentText() == self.EXPRESSION
+        self.sig.setEnabled(not expression)
+        has = not expression and bool(self.values_of(self.sig.currentText()))
+        self.pick_action.setVisible(has)
+        hint = "a condition, e.g. a > 1 and b == 2" if expression else \
+            ConditionBuilder.HINTS.get(self.op.currentText(), "value")
+        self.val.setPlaceholderText(f"{hint}  (or pick one ▾)" if has else hint)
+
+    def open_values(self):
+        sig = self.sig.currentText().strip()
+        self.value_picker = NamePicker({f"Values of {sig}": self.values_of(sig)}, self)
+        self.value_picker.picked.connect(self.pick_value)
+        lst = self.value_picker.list
+        lst.setMinimumWidth(min(max(self.val.width(), lst.sizeHintForColumn(0) + 40), 900))
+        self.value_picker.popup(self.val.mapToGlobal(self.val.rect().bottomLeft()))
+
+    def pick_value(self, value: str):
+        current = self.val.text().strip().rstrip(",").strip()
+        self.val.setText(f"{current}, {value}" if self.op.currentText() in ConditionBuilder.MULTI and current
+                         else value)
+        self.changed.emit()
+
+    def expression(self) -> str:
+        o, v = self.op.currentText(), self.val.text().strip()
+        if o == self.EXPRESSION:
+            return v
+        s = self.sig.currentText().strip()
+        return ConditionBuilder.row_expression(s, o, v) if s and v else ""
+
+    def set_expression(self, text: str):
+        rows = parse_condition_rows(text) if text.strip() else None
+        simple = rows is not None and len(rows) == 1 and not rows[0]["open"] and not rows[0]["close"]
+        for w in (self.sig, self.op, self.val):
+            w.blockSignals(True)
+        if simple:
+            self.sig.setCurrentText(rows[0]["sig"])
+            self.op.setCurrentText(rows[0]["op"])
+            self.val.setText(rows[0]["val"])
+        else:
+            self.sig.setCurrentText("")
+            self.op.setCurrentText(self.EXPRESSION if text.strip() else "==")
+            self.val.setText(text.strip())
+        for w in (self.sig, self.op, self.val):
+            w.blockSignals(False)
+        self._update()
+
+
 class ConditionBuilder(QDialog):
     """Build `a > 1 and b == FULL` from rows, without typing syntax. Each row can open and close
     brackets and says how it joins the row above (and / or), so `(a > 1 and b == 2) or not (c < 3)`

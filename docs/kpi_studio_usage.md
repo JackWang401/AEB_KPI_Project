@@ -27,7 +27,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    as `target_decel_window`), its moments (e.g. `decel_onset`, `argmin`,
    `crossing`), then KPIs (value at a moment, duration, a reducer over a range,
    a formula, or *which conditions are met*: a text result such as `PB + FB` naming the
-   conditions met between two moments, e.g. which braking functions were active in the window). Every window in a file is found, each one a separate occurrence. The rule
+   conditions met between two moments, e.g. which braking functions were active in the window; each condition is a signal, operator and
+   value, with an enum signal's values to pick, or *expression* to type a longer one). Every window in a file is found, each one a separate occurrence. The rule
    before *Start when* / *End when* picks which time the condition is met: *first* (the default),
    or *last* (start at the last time it becomes true before the end; end at the last time it is met
    before the next start). *Edit condition* writes conditions for you, including value changes:

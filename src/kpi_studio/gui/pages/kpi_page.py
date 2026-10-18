@@ -44,6 +44,7 @@ from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import (
     PAGE_MARGINS,
     ConditionBuilder,
+    ConditionRow,
     ExprEdit,
     ToolPalette,
     format_options,
@@ -76,8 +77,9 @@ class WhichTable(QWidget):
             row.addWidget(b)
         lay.addLayout(row)
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Label", "Condition"])
+        self.table.setHorizontalHeaderLabels(["Label", "Condition: signal, operator, value"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setColumnWidth(0, 70)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(110)
         self.table.setMaximumHeight(170)  # a few rows; the form below stays in view
@@ -97,11 +99,11 @@ class WhichTable(QWidget):
         self.table.insertRow(r)
         self.table.setItem(r, 0, QTableWidgetItem(label))
         self.table.blockSignals(blocked)
-        edit = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
-                        placeholder="e.g. pb_state == ACTIVE")
-        edit.setText(cond)
-        edit.editingFinished.connect(self.on_change)
-        self.table.setCellWidget(r, 1, edit)
+        row = ConditionRow(self.state.signal_names, self.state.enum_map)
+        row.set_expression(cond)
+        row.changed.connect(self.on_change)
+        self.table.setCellWidget(r, 1, row)
+        self.table.setRowHeight(r, max(self.table.rowHeight(r), row.sizeHint().height() + 6))
 
     def add_row(self):
         self._append()
@@ -119,7 +121,7 @@ class WhichTable(QWidget):
         for r in range(self.table.rowCount()):
             label = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
             edit = self.table.cellWidget(r, 1)
-            cond = edit.text().strip() if edit is not None else ""
+            cond = edit.expression() if edit is not None else ""
             if label or cond:
                 out[label] = cond
         return out
