@@ -157,6 +157,16 @@ class FileEvaluator:
             intervals = edges_to_intervals(self.time, start, end, ev.defn.start_rule, ev.defn.end_rule)
         return clean_intervals(intervals, ev.defn.merge_gap, ev.defn.min_duration)
 
+    def _open_end(self, ev: CompiledEvent, t_start: float) -> str:
+        """Why the last window runs to the end of the file (its end condition is never met), or ''."""
+        hits = as_bool(self.full(ev.end))
+        if hits[self.time > t_start].any():
+            return ""
+        never = not hits.any()
+        return (f"the end condition '{ev.defn.end}' is {'never true in this file' if never else 'not met after'}"
+                f"{'' if never else f' the start at {t_start:.2f} s'}, so the window from {t_start:.2f} s runs "
+                "to the end of the file and no later window can start")
+
     def _why_none(self, ev: CompiledEvent) -> str:
         """A hint for 'no occurrences': was the start condition ever true?"""
         if ev.preset is not None or ev.start is None:
@@ -300,6 +310,10 @@ class FileEvaluator:
                 continue
             if not intervals:
                 outcome.issues.append(FileIssue("info", f"event '{ename}': no occurrences" + self._why_none(ev)))
+            elif ev.preset is None and ev.end is not None:
+                open_end = self._open_end(ev, intervals[-1][0])
+                if open_end:
+                    outcome.issues.append(FileIssue("warning", f"event '{ename}': {open_end}"))
             cap = self.capture.get(ename)
             for i, (s, e) in enumerate(intervals, start=1):
                 w = ev.defn.window

@@ -186,3 +186,26 @@ def test_kpi_unit_comes_from_its_signal():
     assert kpi_unit(KpiDef(name="k", event="e", duration=("start", "end")), units) == "s"
     assert kpi_unit(KpiDef(name="k", event="e", reduce="max", of="a"), units) == "m/s^2"
     assert kpi_unit(KpiDef(name="k", event="e", reduce="count_rising", of="v > 1"), units) == ""
+
+
+def test_end_never_met_is_reported():
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({"name": "p", "signals": {"fb": {"channels": ["fb"]}, "pb": {"channels": ["pb"]}},
+                          "events": {"e": {"start": "rising(fb == 4)",
+                                           "end": "falling(fb == 4) and falling(pb == 4)"}}}, "t")
+    cp = compile_profile(prof)
+    t = np.arange(0, 10, 1.0)
+    fb = np.array([1, 4, 4, 1, 1, 4, 4, 1, 1, 1], float)
+    frame = SignalFrame(time=t, values={"fb": fb, "pb": np.full(t.size, 4.0)})  # pb never falls
+    out = evaluate_frame(cp, frame, "f")
+    assert len(out.occurrences) == 1 and out.occurrences[0].t_end == 9.0  # runs to the end of the file
+    msg = next(i.message for i in out.issues if "end condition" in i.message)
+    assert "never true in this file" in msg and "runs to the end of the file" in msg
+    prof = parse_profile({"name": "p", "signals": {"fb": {"channels": ["fb"]}},
+                          "events": {"e": {"start": "rising(fb == 4)", "end": "falling(fb == 4)"}}}, "t")
+    out = evaluate_frame(compile_profile(prof), SignalFrame(time=t, values={"fb": fb}), "f")
+    assert [(o.t_start, o.t_end) for o in out.occurrences] == [(1.0, 3.0), (5.0, 7.0)]
+    assert not [i for i in out.issues if "end condition" in i.message]
