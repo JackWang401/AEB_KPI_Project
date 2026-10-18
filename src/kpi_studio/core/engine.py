@@ -63,24 +63,35 @@ def _slice(time: np.ndarray, lo: float, hi: float) -> slice:
     return slice(i0, i1)
 
 
-def edges_to_intervals(time: np.ndarray, start: np.ndarray, end: Optional[np.ndarray]) -> list[tuple[float, float]]:
-    """Occurrences from a start condition (rising edges) and optional end condition."""
+def edges_to_intervals(time: np.ndarray, start: np.ndarray, end: Optional[np.ndarray],
+                       start_rule: str = "first", end_rule: str = "first") -> list[tuple[float, float]]:
+    """Occurrences (every one in the file) from a start condition (rising edges) and optional end condition.
+
+    start_rule 'last': a window starts at the last time the start condition becomes true before its end.
+    end_rule 'last': it ends at the last time the end condition is met before the next start (or the file end)."""
     start = as_bool(start)
     n = start.size
     if n == 0:
         return []
     rise = np.flatnonzero(start & ~np.concatenate(([False], start[:-1])))
+    end_hits = np.flatnonzero(as_bool(end)) if end is not None else None
     intervals = []
     last_end = -1
     for s in rise:
         if s <= last_end:
             continue
-        if end is not None:
-            e_candidates = np.flatnonzero(as_bool(end)[s + 1:])
-            e = s + 1 + e_candidates[0] if e_candidates.size else n - 1
+        if end_hits is not None:
+            after = end_hits[end_hits > s]
+            e = int(after[0]) if after.size else n - 1
+            if end_rule == "last" and after.size:
+                nxt = rise[rise > e]
+                limit = int(nxt[0]) if nxt.size else n
+                e = int(after[after < limit][-1])
         else:
             f = np.flatnonzero(~start[s:])
             e = s + f[0] if f.size else n - 1
+        if start_rule == "last":
+            s = int(rise[(rise >= s) & (rise < e)][-1]) if np.any((rise >= s) & (rise < e)) else s
         intervals.append((float(time[s]), float(time[e])))
         last_end = e
     return intervals
@@ -143,7 +154,7 @@ class FileEvaluator:
         else:
             start = self.full(ev.start)
             end = self.full(ev.end) if ev.end is not None else None
-            intervals = edges_to_intervals(self.time, start, end)
+            intervals = edges_to_intervals(self.time, start, end, ev.defn.start_rule, ev.defn.end_rule)
         return clean_intervals(intervals, ev.defn.merge_gap, ev.defn.min_duration)
 
     def _why_none(self, ev: CompiledEvent) -> str:

@@ -223,7 +223,7 @@ class ExprEdit(QLineEdit):
                  enums_fn: Optional[Callable[[], dict]] = None,
                  extras_fn: Optional[Callable[[], dict]] = None,
                  build_fn: Optional[Callable[["ExprEdit"], None]] = None,
-                 build_label: str = "Edit condition…"):
+                 build_label: str = "Edit condition"):
         super().__init__(parent)
         self.build_fn = build_fn
         self.build_label = build_label

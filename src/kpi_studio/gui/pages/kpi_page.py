@@ -99,12 +99,26 @@ class EventForm(QWidget):
                               build_fn=lambda e: self.build(e, "start"))
         self.end = ExprEdit(names, placeholder="optional; default: until the start condition is false",
                             enums_fn=enums, build_fn=lambda e: self.build(e, "end"))
-        sb, eb = QPushButton("Edit condition…"), QPushButton("Edit condition…")
+        sb, eb = QPushButton("Edit condition"), QPushButton("Edit condition")
         self.build_buttons = (sb, eb)
         for b in (sb, eb):
             b.setToolTip("Edit the condition as rows: signal, comparison, value")
             b.setMinimumWidth(b.sizeHint().width())  # the label is never cut off
         srow, erow = QHBoxLayout(), QHBoxLayout()
+        self.start_rule, self.end_rule = QComboBox(), QComboBox()
+        for combo, which in ((self.start_rule, "start"), (self.end_rule, "end")):
+            combo.addItems(["first", "last"])
+            combo.setItemData(0, f"The window {which}s the first time the condition is met"
+                              + (" (when it becomes true)" if which == "start" else " after the start"),
+                              Qt.ToolTipRole)
+            combo.setItemData(1, "The window starts the last time the condition becomes true before the end"
+                              if which == "start" else
+                              "The window ends the last time the condition is met before the next start "
+                              "(or the end of the file)", Qt.ToolTipRole)
+            combo.setToolTip(f"Rule: which time the condition is met the window {which}s at. "
+                             "Every window in the file is found, each with this rule.")
+        srow.addWidget(self.start_rule)
+        erow.addWidget(self.end_rule)
         srow.addWidget(self.start, 1)
         srow.addWidget(sb)
         erow.addWidget(self.end, 1)
@@ -183,6 +197,9 @@ class EventForm(QWidget):
         self.mode.currentIndexChanged.connect(self.mode_changed)
         self.start.editingFinished.connect(lambda: self.set("start", self.start.text().strip()))
         self.end.editingFinished.connect(lambda: self.set("end", self.end.text().strip()))
+        self.end.textChanged.connect(self._end_rule_enabled)
+        self.start_rule.currentTextChanged.connect(lambda t: self.set_rule("start_rule", t))
+        self.end_rule.currentTextChanged.connect(lambda t: self.set_rule("end_rule", t))
         sb.clicked.connect(lambda: self.build(self.start, "start"))
         eb.clicked.connect(lambda: self.build(self.end, "end"))
         self.preset.currentTextChanged.connect(lambda *_: self.save_preset())
@@ -192,7 +209,7 @@ class EventForm(QWidget):
             w.valueChanged.connect(lambda v, k=key: self.set(k, v))
         self.pre.valueChanged.connect(lambda v: self.set_window("pre", v))
         self.post.valueChanged.connect(lambda v: self.set_window("post", v))
-        # right-click: on a moment, Edit condition… / Delete moment; Add moment anywhere
+        # right-click: on a moment, Edit condition / Delete moment; Add moment anywhere
         context_menu.install(self.moments, add=[("Add moment", self.add_moment)], item=self._moment_actions)
         self.moments.itemChanged.connect(self.moment_renamed)
         for w in (self.start, self.end):
@@ -210,6 +227,24 @@ class EventForm(QWidget):
             self.ev[key] = value
             self.state.edited()
 
+    def set_rule(self, key, value):
+        """start_rule / end_rule: 'first' is the default and is left out of the profile."""
+        if self._loading or self.name is None:
+            return
+        if value == "first":
+            if self.ev.pop(key, None) is not None:
+                self.state.edited()
+        elif self.ev.get(key) != value:
+            self.ev[key] = value
+            self.state.edited()
+
+    def _end_rule_enabled(self, *_):
+        """'last' needs an end condition: without one the window ends when the start condition is false."""
+        has_end = bool(self.end.text().strip())
+        self.end_rule.setEnabled(has_end)
+        if not has_end and self.end_rule.currentText() != "first":
+            self.end_rule.setCurrentText("first")
+
     def set_window(self, key, value):
         if self._loading or self.name is None:
             return
@@ -226,6 +261,9 @@ class EventForm(QWidget):
         self.mode.setCurrentIndex(1 if preset else 0)
         self.start.setText(ev.get("start") or "")
         self.end.setText(ev.get("end") or "")
+        self.start_rule.setCurrentText(ev.get("start_rule") or "first")
+        self.end_rule.setCurrentText(ev.get("end_rule") or "first")
+        self._end_rule_enabled()
         if preset:
             self.preset.setCurrentText(preset.get("name", ""))
             of = preset.get("of", [])
@@ -245,7 +283,8 @@ class EventForm(QWidget):
 
     def _show_mode(self):
         preset = self.mode.currentIndex() == 1
-        for w in (self.start, self.end, self.start_label, self.end_label, *self.build_buttons):
+        for w in (self.start, self.end, self.start_label, self.end_label, *self.build_buttons, self.start_rule,
+                  self.end_rule):
             w.setVisible(not preset)
         for w in (self.preset, self.preset_inputs, self.preset_params, self.preset_label, self.inputs_label,
                   self.params_label):
@@ -256,8 +295,8 @@ class EventForm(QWidget):
         if self._loading:
             return
         if self.mode.currentIndex() == 1:
-            self.ev.pop("start", None)
-            self.ev.pop("end", None)
+            for key in ("start", "end", "start_rule", "end_rule"):
+                self.ev.pop(key, None)
             self.save_preset()
         else:
             self.ev.pop("preset", None)
@@ -428,7 +467,7 @@ class EventForm(QWidget):
         actions = []
         if len(rows) == 1:
             row = next(iter(rows))
-            actions.append(("Edit condition…", lambda: self.build_moment_row(row)))
+            actions.append(("Edit condition", lambda: self.build_moment_row(row)))
         actions.append(("Delete moment" if len(rows) == 1 else f"Delete {len(rows)} moments", self.delete_moment))
         return actions
 
@@ -755,7 +794,7 @@ class KpiPage(QWidget):
                                 QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored)
             self.stack.adjustSize()
         self.stack.currentChanged.connect(fit_current)
-        # in a narrow panel the fields get narrower; buttons beside them (Edit condition…) stay in view
+        # in a narrow panel the fields get narrower; buttons beside them (Edit condition) stay in view
         for form in (self.event_form, self.kpi_form):
             for combo in form.findChildren(QComboBox):
                 combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)

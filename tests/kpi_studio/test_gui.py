@@ -355,7 +355,7 @@ def test_moment_rule_options_and_build_action(qtbot, window, mf4_dir, monkeypatc
     cell = form.moments.cellWidget(0, 2)
     cell.open_picker()
     first = cell.picker.list.item(0)
-    assert first.text() == "➜ Edit condition…"
+    assert first.text() == "➜ Edit condition"
     cell.picker._pick(first)
     m1 = form.ev["moments"]["m1"]
     assert m1.get("first") == "rising(egoSpeed == 3)" and "level" not in m1 and m1["after"] == "start"
@@ -851,7 +851,7 @@ def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
     blank.actions()[0].trigger()
     assert len(form.ev["moments"]) == 2
     row_menu = menu_for(table, row=0)
-    assert texts(row_menu) == ["Edit condition…", "Delete moment", "", "Add moment"]
+    assert texts(row_menu) == ["Edit condition", "Delete moment", "", "Add moment"]
     monkeypatch.setattr(common.ConditionBuilder, "exec", lambda self: common.QDialog.Accepted)
     monkeypatch.setattr(common.ConditionBuilder, "expression", lambda self: "rising(egoSpeed == 3)")
     row_menu.actions()[0].trigger()
@@ -1791,6 +1791,32 @@ def test_condition_builder_opens_with_the_current_condition(qtbot):
     assert dlg.expression() == "" and "can't be split into rows" in dlg.preview.text()
     rows = dlg.rows
     assert len(rows) == 1
+
+
+def test_event_start_and_end_rules(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.open_panel("Events & KPIs")
+    page = window.kpi_page
+    form = page.event_form
+    events = window.state.data["events"]
+    name = "served"
+    events[name] = {"start": "egoSpeed > 1"}
+    window.state.edited(structure=True)
+    page.select_event(name)
+    assert form.build_buttons[0].text() == "Edit condition"
+    assert form.start_rule.currentText() == "first" and form.start_rule.isVisibleTo(form)
+    form.start_rule.setCurrentText("last")
+    assert events[name]["start_rule"] == "last"
+    form.start_rule.setCurrentText("first")
+    assert "start_rule" not in events[name]  # the default stays out of the profile
+    form.end.setText("")
+    assert not form.end_rule.isEnabled()  # 'last' needs an end condition
+    form.end.setText("egoSpeed < 1")
+    form.end.editingFinished.emit()
+    form.end_rule.setCurrentText("last")
+    assert events[name]["end_rule"] == "last"
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
 
 
 def test_kind_is_a_drop_down_list(qtbot, window, mf4_dir):

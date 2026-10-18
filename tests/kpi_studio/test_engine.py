@@ -103,6 +103,24 @@ def test_edges_and_merge():
     assert clean_intervals([(1, 3), (4, 5)], merge_gap=0, min_duration=1.5) == [(1, 3)]
 
 
+def test_several_windows_per_file_with_first_or_last_rules():
+    t = np.arange(20.0)
+    start = np.isin(np.arange(20), [1, 3, 10, 12])
+    end = np.isin(np.arange(20), [5, 7, 15, 17])
+    assert edges_to_intervals(t, start, end) == [(1, 5), (10, 15)]
+    assert edges_to_intervals(t, start, end, start_rule="last") == [(3, 5), (12, 15)]
+    assert edges_to_intervals(t, start, end, end_rule="last") == [(1, 7), (10, 17)]
+    assert edges_to_intervals(t, start, end, "last", "last") == [(3, 7), (12, 17)]
+
+
+def test_end_rule_last_needs_an_end():
+    import pytest
+    from src.kpi_studio.core.model import EventDef
+    with pytest.raises(ValueError):
+        EventDef(start="a > 1", end_rule="last")
+    assert EventDef(start="a > 1", end="b > 1", start_rule="last", end_rule="last").end_rule == "last"
+
+
 def test_sample_at_hold_vs_interp():
     t = np.array([0.0, 1.0])
     v = np.array([0.0, 10.0])

@@ -170,6 +170,11 @@ class EventDef(_Strict):
     description: str = ""
     start: Optional[str] = None
     end: Optional[str] = None
+    # which time each window starts / ends at when the condition is met more than once:
+    # start first = when it first becomes true, last = the last time it becomes true before the end;
+    # end first = the first time it is met after the start, last = the last time before the next start
+    start_rule: Literal["first", "last"] = "first"
+    end_rule: Literal["first", "last"] = "first"
     preset: Optional[PresetRef] = None
     min_duration: float = Field(0.0, ge=0)
     merge_gap: float = Field(0.0, ge=0)
@@ -184,6 +189,10 @@ class EventDef(_Strict):
             raise ValueError("an event needs exactly one of 'start' (a condition) or 'preset'")
         if self.preset and self.end:
             raise ValueError("'end' cannot be combined with 'preset'; the preset decides the end")
+        if self.preset and "last" in (self.start_rule, self.end_rule):
+            raise ValueError("'start_rule' / 'end_rule' cannot be combined with 'preset'")
+        if self.end_rule == "last" and not self.end:
+            raise ValueError("end_rule 'last' needs an 'End when' condition")
         for name in self.moments:
             _check_name(name, "moment")
             if name in BUILTIN_MOMENTS:
