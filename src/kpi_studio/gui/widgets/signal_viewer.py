@@ -357,6 +357,7 @@ class SignalViewer(QWidget):
         self.common: dict[str, str] = {}     # signal -> name of the common axis it shares (right-click)
         self.axis_range: dict[str, tuple] = {}  # common axis -> fixed (min, max) of its value axis
         self._loading_axes = False  # taking the axes from the profile: do not write them back yet
+        self._pending_shown = None  # ticked signals from an opened profile, until the list holds them
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
@@ -577,6 +578,31 @@ class SignalViewer(QWidget):
         self.list.blockSignals(False)
         self._set_name_tips()
         self._tag_axes()
+        self._apply_shown()
+
+    def _apply_shown(self):
+        """Tick the signals saved in the profile (`shown_signals`) once the list holds them, and plot them."""
+        if self._pending_shown is None or not self.list.count():
+            return
+        names, self._pending_shown = self._pending_shown, None
+        self.set_checked(names, only=True)
+        if self.checked():
+            self._files_ticked()
+        else:
+            self.draw()
+
+    def _store_shown(self):
+        """Keep the ticked signals in the profile, so the same plot comes back when it is opened again."""
+        if self._pending_shown is not None or self._loading_axes or not self.list.count():
+            return
+        shown = self.checked()
+        if set(shown) == set(self.state.data.get("shown_signals") or []):
+            return
+        if shown:
+            self.state.data["shown_signals"] = shown
+        else:
+            self.state.data.pop("shown_signals", None)
+        self.state.edited()
 
     def axis_colour(self, name: str) -> str:
         order = list(dict.fromkeys(self.common.values()))
@@ -652,7 +678,11 @@ class SignalViewer(QWidget):
         self.state.edited()
 
     def load_axes(self):
-        """Take the common axes from the profile (opened, new, or renamed signals)."""
+        """Take the common axes and ticked signals from the profile (opened, new, or renamed signals)."""
+        shown = [n for n in self.state.data.get("shown_signals") or [] if isinstance(n, str)]
+        if set(shown) != set(self.checked()):
+            self._pending_shown = shown
+            self._apply_shown()
         saved = self.state.data.get("common_axes") or []
         if _same_axes(saved, self.axes_data()):
             return
@@ -1052,6 +1082,7 @@ class SignalViewer(QWidget):
     def draw(self):
         from matplotlib.ticker import MaxNLocator
 
+        self._store_shown()
         self.fig.clear()
         self.toolbar.update()  # new subplots: forget the zoom history of the old ones
         self._axes, self._series, self._artists, self._ax_groups, self._enum_axes = [], {}, [], {}, set()

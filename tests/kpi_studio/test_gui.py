@@ -2115,6 +2115,29 @@ def test_common_axes_kept_in_the_profile(qtbot, window, mf4_dir, tmp_path):
     assert "common_axes" not in state.data
 
 
+def test_ticked_signals_kept_in_the_profile(qtbot, window, mf4_dir, tmp_path):
+    import yaml
+
+    _load(qtbot, window, mf4_dir)
+    viewer, state = window.viewer, window.state
+    viewer.plot_signals(["egoSpeed", "egoSpeedKph"])  # a measured and a derived signal
+    qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
+    assert set(state.data["shown_signals"]) == {"egoSpeed", "egoSpeedKph"} and state.dirty
+    path = tmp_path / "shown.kpi.yaml"
+    state.save(path)
+    assert set(yaml.safe_load(path.read_text())["shown_signals"]) == {"egoSpeed", "egoSpeedKph"}
+
+    state.new()
+    assert viewer.checked() == []
+    state.load(path)
+    qtbot.waitUntil(lambda: set(viewer.checked()) == {"egoSpeed", "egoSpeedKph"}, timeout=10000)
+    qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
+    state.validate_now()
+    assert not state.dirty and len(viewer._axes) == 2  # plotted again, and not counted as a change
+    viewer.uncheck_all()
+    assert "shown_signals" not in state.data and state.dirty
+
+
 def test_common_axes_unknown_signal_is_a_warning():
     from src.kpi_studio.core.model import Profile
     from src.kpi_studio.core.validate import compile_profile

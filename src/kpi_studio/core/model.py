@@ -387,3 +387,4 @@ class Profile(_Body):
     timebase: Timebase = Field(default_factory=Timebase)
     plots: list[PlotDef] = Field(default_factory=list)
     common_axes: list[CommonAxis] = Field(default_factory=list)  # signal viewer groups, kept with the profile
+    shown_signals: list[str] = Field(default_factory=list)  # signals (measured and derived) ticked in the viewer
