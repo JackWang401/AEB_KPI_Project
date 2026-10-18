@@ -99,8 +99,11 @@ class EventForm(QWidget):
                               build_fn=lambda e: self.build(e, "start"))
         self.end = ExprEdit(names, placeholder="optional; default: until the start condition is false",
                             enums_fn=enums, build_fn=lambda e: self.build(e, "end"))
-        sb, eb = QPushButton("Build…"), QPushButton("Build…")
+        sb, eb = QPushButton("Edit condition…"), QPushButton("Edit condition…")
         self.build_buttons = (sb, eb)
+        for b in (sb, eb):
+            b.setToolTip("Edit the condition as rows: signal, comparison, value")
+            b.setMinimumWidth(b.sizeHint().width())  # the label is never cut off
         srow, erow = QHBoxLayout(), QHBoxLayout()
         srow.addWidget(self.start, 1)
         srow.addWidget(sb)
@@ -189,7 +192,7 @@ class EventForm(QWidget):
             w.valueChanged.connect(lambda v, k=key: self.set(k, v))
         self.pre.valueChanged.connect(lambda v: self.set_window("pre", v))
         self.post.valueChanged.connect(lambda v: self.set_window("post", v))
-        # right-click: on a moment, Build condition… / Delete moment; Add moment anywhere
+        # right-click: on a moment, Edit condition… / Delete moment; Add moment anywhere
         context_menu.install(self.moments, add=[("Add moment", self.add_moment)], item=self._moment_actions)
         self.moments.itemChanged.connect(self.moment_renamed)
         for w in (self.start, self.end):
@@ -425,7 +428,7 @@ class EventForm(QWidget):
         actions = []
         if len(rows) == 1:
             row = next(iter(rows))
-            actions.append(("Build condition…", lambda: self.build_moment_row(row)))
+            actions.append(("Edit condition…", lambda: self.build_moment_row(row)))
         actions.append(("Delete moment" if len(rows) == 1 else f"Delete {len(rows)} moments", self.delete_moment))
         return actions
 
@@ -752,7 +755,7 @@ class KpiPage(QWidget):
                                 QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored)
             self.stack.adjustSize()
         self.stack.currentChanged.connect(fit_current)
-        # in a narrow panel the fields get narrower; buttons beside them (Build…) stay in view
+        # in a narrow panel the fields get narrower; buttons beside them (Edit condition…) stay in view
         for form in (self.event_form, self.kpi_form):
             for combo in form.findChildren(QComboBox):
                 combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)

@@ -26,12 +26,12 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 3. **Events & KPIs** – define an event (a start/end condition or a preset such
    as `target_decel_window`), its moments (e.g. `decel_onset`, `argmin`,
    `crossing`), then KPIs (value at a moment, duration, a reducer over a range,
-   or a formula). *Build…* writes conditions for you, including value changes:
+   or a formula). *Edit condition…* writes conditions for you, including value changes:
    *changes to 3* → `rising(sig == 3)`, *changes from 3* → `falling(sig == 3)`,
    *changes from → to 0, 3* → `(falling(sig == 0) and rising(sig == 3))`. Use them as
-   an event's *Start when* or, with *Build condition…* under Moments, as a `first` moment.
+   an event's *Start when* or, with *Edit condition…* under Moments, as a `first` moment.
    The ▾ list of every condition field (start, end, moments) starts with the same
-   *Build condition…*, so one method serves all three. *Run preview* evaluates the profile on one file and draws the
+   *Edit condition…*, so one method serves all three. *Run preview* evaluates the profile on one file and draws the
    window and moments. *Save KPI to library* shares a KPI between profiles.
 4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. By default the
    result goes to `kpi_results/` next to the input MF4 files and replaces the previous

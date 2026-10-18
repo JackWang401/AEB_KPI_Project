@@ -172,6 +172,7 @@ class NamePicker(QMenu):
                 self.list.addItem(it)
         lay.addWidget(self.filter)
         lay.addWidget(self.list)
+        self.list.setMinimumWidth(min(max(280, self.list.sizeHintForColumn(0) + 40), 900))  # full names
         act = QWidgetAction(self)
         act.setDefaultWidget(box)
         self.addAction(act)
@@ -222,7 +223,7 @@ class ExprEdit(QLineEdit):
                  enums_fn: Optional[Callable[[], dict]] = None,
                  extras_fn: Optional[Callable[[], dict]] = None,
                  build_fn: Optional[Callable[["ExprEdit"], None]] = None,
-                 build_label: str = "Build condition… (compare, changes to / from)"):
+                 build_label: str = "Edit condition…"):
         super().__init__(parent)
         self.build_fn = build_fn
         self.build_label = build_label
@@ -553,7 +554,7 @@ class ConditionBuilder(QDialog):
 
     def __init__(self, names: list[str], parent=None, initial: str = "", enums: Optional[dict] = None):
         super().__init__(parent)
-        self.setWindowTitle("Build condition")
+        self.setWindowTitle("Edit condition")
         self.names = names
         self.enums = enums or {}  # signal -> {TEXT: value}: their texts can be picked as values
         self.value_picker: Optional[NamePicker] = None

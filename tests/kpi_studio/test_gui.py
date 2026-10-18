@@ -355,7 +355,7 @@ def test_moment_rule_options_and_build_action(qtbot, window, mf4_dir, monkeypatc
     cell = form.moments.cellWidget(0, 2)
     cell.open_picker()
     first = cell.picker.list.item(0)
-    assert first.text().startswith("➜ Build condition")
+    assert first.text() == "➜ Edit condition…"
     cell.picker._pick(first)
     m1 = form.ev["moments"]["m1"]
     assert m1.get("first") == "rising(egoSpeed == 3)" and "level" not in m1 and m1["after"] == "start"
@@ -851,7 +851,7 @@ def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
     blank.actions()[0].trigger()
     assert len(form.ev["moments"]) == 2
     row_menu = menu_for(table, row=0)
-    assert texts(row_menu) == ["Build condition…", "Delete moment", "", "Add moment"]
+    assert texts(row_menu) == ["Edit condition…", "Delete moment", "", "Add moment"]
     monkeypatch.setattr(common.ConditionBuilder, "exec", lambda self: common.QDialog.Accepted)
     monkeypatch.setattr(common.ConditionBuilder, "expression", lambda self: "rising(egoSpeed == 3)")
     row_menu.actions()[0].trigger()
