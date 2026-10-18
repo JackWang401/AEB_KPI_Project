@@ -1994,3 +1994,33 @@ def test_merge_and_colour_options_in_the_plot_table(qtbot, window, mf4_dir, tmp_
     plots[2]["merge"] = "together"
     window.state.validate_now()
     assert any("only scatter plots can be merged" in str(i) for i in window.state.issues)
+
+
+def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypatch):
+    from src.kpi_studio.gui.widgets import signal_viewer as sv
+
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    window.resize(1400, 900)
+    window.show()
+    viewer.plot_signals(["egoSpeed", "longActAccel", "aebTargetDecel"])
+    qtbot.waitUntil(lambda: bool(viewer.data is not None and viewer.worker is None and viewer._axes), timeout=20000)
+    assert len(viewer._axes) == 3
+    monkeypatch.setattr(sv.QInputDialog, "getText", staticmethod(lambda *a, **k: ("accel", True)))
+    menu = viewer.signal_menu(["longActAccel", "aebTargetDecel"])
+    act = next(a for a in menu.actions() if a.text() == "Common axis…")
+    act.trigger()
+    assert len(viewer._axes) == 2
+    assert ["longActAccel", "aebTargetDecel"] in [viewer._ax_groups[a] for a in viewer._axes]
+    ax = next(a for a in viewer._axes if len(viewer._ax_groups[a]) == 2)
+    assert "accel" in [t.get_text() for t in ax.texts]  # the axis is named in its subplot
+    items = {viewer.list.item(i).text(): viewer.list.item(i) for i in range(viewer.list.count())}
+    assert items["longActAccel"].data(sv.AXIS_ROLE)[0] == "accel" == items["aebTargetDecel"].data(sv.AXIS_ROLE)[0]
+    assert items["egoSpeed"].data(sv.AXIS_ROLE) is None
+    viewer.set_common_axis(["egoSpeed"], "accel")  # an existing name: joins that axis
+    assert len(viewer._axes) == 1 and len(viewer._ax_groups[viewer._axes[0]]) == 3
+    menu = viewer.signal_menu(["egoSpeed"])
+    next(a for a in menu.actions() if a.text() == "Remove from common axis").trigger()
+    assert len(viewer._axes) == 2 and "egoSpeed" not in viewer.common
+    viewer.uncommon(["longActAccel"])  # one left: the axis is gone
+    assert viewer.common == {} and len(viewer._axes) == 3

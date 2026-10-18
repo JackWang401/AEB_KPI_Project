@@ -17,13 +17,15 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QCursor, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QCursor, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
+    QStyledItemDelegate,
     QSizePolicy,
     QSpinBox,
     QLabel,
@@ -131,6 +133,32 @@ KIND_TIPS = {
     "boolean": "0/1 flags: held, drawn as a shaded stepped line at the bottom of the plot",
     "enum": "Values with names (a value table): held, drawn as a stepped line",
 }
+AXIS_ROLE = Qt.UserRole + 7  # list item data: (common axis name, colour) the signal belongs to
+
+
+class AxisTagDelegate(QStyledItemDelegate):
+    """Draws a signal's common axis as a coloured tag at the right end of its row."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        tag = index.data(AXIS_ROLE)
+        if not tag:
+            return
+        name, colour = tag
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        fm = option.fontMetrics
+        w = min(fm.horizontalAdvance(name) + 14, option.rect.width() // 2)
+        r = option.rect.adjusted(option.rect.width() - w - 6, 3, -6, -3)
+        fill = QColor(colour)
+        fill.setAlpha(40)
+        painter.setPen(QColor(colour))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        painter.drawText(r, Qt.AlignCenter, fm.elidedText(name, Qt.ElideRight, r.width() - 8))
+        painter.restore()
+
+
 AXIS_MIN_PX = 70     # each subplot gets at least this height: with more, the plots scroll
 BOOL_RATIO = 0.4  # height of a boolean subplot, relative to the others
 
@@ -230,6 +258,7 @@ class SignalViewer(QWidget):
         self._side_drag = False
         self._zoom = None  # right-drag zoom in progress: (axes, x0, y0, px0, py0, rectangle)
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
+        self.common: dict[str, str] = {}     # signal -> name of the common axis it shares (right-click)
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
@@ -287,6 +316,7 @@ class SignalViewer(QWidget):
                              "or up and down this list to change the order of the subplots.")
         self.order: list[str] = []  # the list's order once the user dragged it (else alphabetical)
         self.list.reordered.connect(self._reordered)
+        self.list.setItemDelegate(AxisTagDelegate(self.list))
         self.step_choice: dict[str, bool] = {}  # right-click choices; otherwise discrete signals are stepped
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._list_menu)
@@ -445,6 +475,63 @@ class SignalViewer(QWidget):
             self.list.addItem(it)
         self.list.blockSignals(False)
         self._set_name_tips()
+        self._tag_axes()
+
+    def axis_colour(self, name: str) -> str:
+        order = list(dict.fromkeys(self.common.values()))
+        return COLORS[order.index(name) % len(COLORS)] if name in order else COLORS[0]
+
+    def _tag_axes(self):
+        """Show each signal's common axis as a tag in the list."""
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            axis = self.common.get(it.text())
+            it.setData(AXIS_ROLE, (axis, self.axis_colour(axis)) if axis else None)
+
+    def ask_axis_name(self, names: list[str]) -> str | None:
+        current = next((self.common[n] for n in names if n in self.common), "")
+        taken = list(dict.fromkeys(self.common.values()))
+        default = current or next(f"axis {k}" for k in range(1, len(taken) + 2) if f"axis {k}" not in taken)
+        text, ok = QInputDialog.getText(self, "Common axis", "Name of the common axis (an existing name joins "
+                                        "that axis):", text=default)
+        return text.strip() if ok and text.strip() else None
+
+    def common_axis(self, names: list[str]):
+        label = self.ask_axis_name(names)
+        if label:
+            self.set_common_axis(names, label)
+
+    def set_common_axis(self, names: list[str], label: str):
+        """Draw `names` in one subplot named `label`, together with any signals already on that axis."""
+        members = [n for n, a in self.common.items() if a == label and n not in names]
+        self.uncommon(names, draw=False)
+        host = members[0] if members else names[0]
+        for n in names:
+            self.common[n] = label
+            if n == host:
+                self.host.pop(n, None)
+            else:
+                self.host[n] = host
+        self.set_checked(names + members)
+        self._tag_axes()
+        self.draw()
+
+    def uncommon(self, names, draw=True):
+        """Take `names` off their common axis: each back to a subplot of its own."""
+        for n in names:
+            label = self.common.pop(n, None)
+            hosted = [o for o, h in self.host.items() if h == n]
+            self.host.pop(n, None)
+            rest = [o for o in hosted if o not in names]
+            for o in hosted:
+                self.host.pop(o, None)
+            for o in rest[1:]:  # the others stay together under a new host
+                self.host[o] = rest[0]
+            if label and len([o for o, a in self.common.items() if a == label]) == 1:
+                self.common = {o: a for o, a in self.common.items() if a != label}  # one left: no axis
+        if draw:
+            self._tag_axes()
+            self.draw()
 
     def _set_name_tips(self):
         """Tooltip per signal: its unit and description."""
@@ -456,6 +543,8 @@ class SignalViewer(QWidget):
             tip = ""
             if d is not None:
                 tip = "\n".join(x for x in (f"[{d.unit}]" if d.unit else "", d.description) if x)
+            if self.common.get(it.text()):
+                tip = "\n".join(x for x in (tip, f"Common axis: {self.common[it.text()]}") if x)
             it.setToolTip(tip)
 
     def _drop_stale_cache(self):
@@ -605,6 +694,12 @@ class SignalViewer(QWidget):
         """Draw `names` in the subplot `ax` (its first signal hosts them); outside any subplot: own subplots."""
         group = self._ax_groups.get(ax) or []
         host = group[0] if group else None
+        label = self.common.get(host) if host else None
+        for n in names:  # a dropped signal joins the target's common axis, or leaves its own
+            if label:
+                self.common[n] = label
+            else:
+                self.common.pop(n, None)
         for n in names:
             if host is None or n == host:
                 self.host.pop(n, None)
@@ -614,10 +709,13 @@ class SignalViewer(QWidget):
                     self.host[other] = host
             self.host[n] = host
         self.set_checked(names)
+        self._tag_axes()
         self.draw()
 
     def separate_all(self):
         self.host.clear()
+        self.common.clear()
+        self._tag_axes()
         self.draw()
 
     def _groups(self, names: list[str]) -> list[list[str]]:
@@ -726,6 +824,11 @@ class SignalViewer(QWidget):
             if ax not in self._bool_axes:
                 ax.margins(y=0.08)
             self._ax_groups[ax] = group
+            label = next((self.common[n] for n in group if n in self.common), None)
+            if label and multi:  # the common axis' name, top left in its colour
+                ax.text(0.005, 0.97, label, transform=ax.transAxes, ha="left", va="top", fontsize=7.5,
+                        color=self.axis_colour(label), fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=self.axis_colour(label), lw=0.6))
         axes[-1].set_xlabel("time [s]", fontsize=8)
         self._decorate_preview(list(axes), loaded)
         self._axes = list(axes)
@@ -961,6 +1064,14 @@ class SignalViewer(QWidget):
             act.setEnabled(bool(own))
             act.setToolTip(KIND_TIPS[k] if own else "Derived signals have no Kind")
             act.triggered.connect(lambda _on, ns=own, k=k: self.set_kind(ns, k))
+        menu.addSeparator()
+        act = menu.addAction("Common axis…")
+        act.setToolTip("Name an axis: these signals are drawn together in one subplot")
+        act.triggered.connect(lambda _on, ns=list(names): self.common_axis(ns))
+        on = [n for n in names if n in self.common]
+        if on:
+            act = menu.addAction("Remove from common axis")
+            act.triggered.connect(lambda _on, ns=on: self.uncommon(ns))
         return menu
 
     def _kind_editable(self, name: str) -> bool:
