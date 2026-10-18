@@ -13,7 +13,8 @@ import tokenize
 # fields whose values are not signal expressions
 _SKIP_KEYS = {"name", "use", "as", "event", "description", "unit", "title", "at", "duration", "between",
               "after", "before", "offset", "reduce", "x", "y", "type", "color_by", "group_by", "enum",
-              "channels", "imports", "label", "merge"}
+              "channels", "imports", "label", "merge",
+              "happens", "when"}
 
 
 def rename_in_expression(text: str, old: str, new: str) -> str:
@@ -104,8 +105,9 @@ def rename_moment(data: dict, event: str, old: str, new: str) -> int:
     for k in data.get("kpis") or []:
         if k.get("event") != event:
             continue
-        if "at" in k:
-            k["at"] = swap(k["at"])
+        for key in ("at", "happens"):
+            if key in k:
+                k[key] = swap(k[key])
         for key in ("duration", "between"):
             if isinstance(k.get(key), (list, tuple)):
                 k[key] = [swap(v) for v in k[key]]

@@ -83,6 +83,26 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
     assert form.which.items() == k["which"] and form.which.isVisibleTo(form)
 
 
+def test_happens_kpi_form(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.new_kpi()
+    form = page.kpi_form
+    form.event.setCurrentText("aeb")
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("happens"))
+    assert form.rows["At moment"][0].text() == "Moment" and form.when.isVisibleTo(form)
+    assert not form.expr.isVisibleTo(form) and not form.m1.isVisibleTo(form)
+    form.at.setCurrentText("end")
+    form.when.setCurrentIndex(1)
+    k = window.state.data["kpis"][-1]
+    assert k["happens"] == "end" and k["when"] == "not_found" and "at" not in k
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    form.load(len(window.state.data["kpis"]) - 1)
+    assert form.at.currentText() == "end" and form.when.currentData() == "not_found"
+    assert form.form.currentData() == "happens"
+
+
 def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
     _load(qtbot, window, mf4_dir)
     viewer = window.viewer

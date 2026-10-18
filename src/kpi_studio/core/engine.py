@@ -273,6 +273,13 @@ class FileEvaluator:
                 met = [i for i, (_label, c) in enumerate(k.which) if as_bool(self.full(c)[sl]).any()]
                 self.texts[d.name] = " + ".join(k.which[i][0] for i in met) or "none"
                 return float(sum(2 ** i for i in met)), hi, Status.OK, ""
+            if d.form == "happens":  # 1 when the moment is found (or, with when: not_found, is not found)
+                v = times[d.happens]
+                if isinstance(v, _MomentFailure) and v.status != Status.MOMENT_NOT_FOUND:
+                    raise _MomentFailure(v.status, f"moment '{d.happens}': {v}")
+                found = not isinstance(v, _MomentFailure)
+                hit = found if (d.when or "found") == "found" else not found
+                return (1.0 if hit else 0.0), (float(v) if found else None), Status.OK, ""
             # reduce
             lo_name, hi_name = d.between or ("window_start", "window_end")
             lo, hi = self._ref_kpi(times, lo_name), self._ref_kpi(times, hi_name)
