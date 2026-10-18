@@ -825,6 +825,9 @@ class SignalViewer(QWidget):
 
     def set_common_axis(self, names: list[str], label: str):
         """Draw `names` in one subplot named `label`, together with any signals already on that axis."""
+        names = [n for n in names if self.common.get(n) != label]  # already on it: nothing to do
+        if not names:
+            return
         members = [n for n, a in self.common.items() if a == label and n not in names]
         self.uncommon(names, draw=False)
         host = members[0] if members else names[0]
@@ -1054,10 +1057,19 @@ class SignalViewer(QWidget):
                 n = self.host[n]
             return n
 
-        groups: dict[str, list[str]] = {}
+        def key(n):
+            # a common axis is one subplot whatever the drag-and-drop links say
+            axis = self.common.get(n) or self.common.get(root(n))
+            return ("axis", axis) if axis else ("host", root(n))
+
+        groups: dict[tuple, list[str]] = {}
         for n in names:
-            groups.setdefault(root(n), []).append(n)
-        return [[r] + [n for n in g if n != r] for r, g in groups.items()]
+            groups.setdefault(key(n), []).append(n)
+        out = []
+        for k, g in groups.items():
+            r = root(g[0]) if k[0] == "host" else next((n for n in g if self.host.get(n) not in g), g[0])
+            out.append([r] + [n for n in g if n != r] if r in g else g)
+        return out
 
     def _apply_layout(self):
         """Fixed pixel margins, so labels and moment names never squeeze the subplots."""

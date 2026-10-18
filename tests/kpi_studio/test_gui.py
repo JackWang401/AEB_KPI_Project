@@ -2138,6 +2138,19 @@ def test_ticked_signals_kept_in_the_profile(qtbot, window, mf4_dir, tmp_path):
     assert "shown_signals" not in state.data and state.dirty
 
 
+def test_common_axis_signals_always_share_a_subplot(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer = window.viewer
+    viewer.plot_signals(["longActAccel", "aebTargetDecel", "egoSpeed"])
+    qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
+    viewer.new_common_axis(["longActAccel", "aebTargetDecel"])
+    viewer.host = {"longActAccel": "aebTargetDecel", "aebTargetDecel": "longActAccel"}  # stale links
+    viewer.draw()
+    assert sorted(map(sorted, viewer._ax_groups.values())) == [["aebTargetDecel", "longActAccel"], ["egoSpeed"]]
+    viewer.set_common_axis(["longActAccel"], "axis 1")  # joining its own axis changes nothing
+    assert viewer.common == {"longActAccel": "axis 1", "aebTargetDecel": "axis 1"}
+
+
 def test_common_axes_unknown_signal_is_a_warning():
     from src.kpi_studio.core.model import Profile
     from src.kpi_studio.core.validate import compile_profile
