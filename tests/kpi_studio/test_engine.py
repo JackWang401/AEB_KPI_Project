@@ -261,6 +261,29 @@ def test_kpis_over_named_ranges():
     assert {r.kpi: r.value for r in out.results} == {"vmax": 8.0, "len": 2.0, "evlen": 4.0, "moving": 0.0}
 
 
+def test_change_is_the_difference_at_the_two_moments():
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p",
+        "signals": {"on": {"channels": ["on"]}, "v": {"channels": ["v"], "unit": "km/h"}},
+        "events": {"e": {"start": "on > 0", "end": "on < 1",
+                         "moments": {"slow": {"first": "v < 3", "after": "start"},
+                                     "mid": {"offset": "start", "by": 0.5}},
+                         "ranges": {"braking": ["start", "slow"], "half": ["start", "mid"]}}},
+        "kpis": [{"name": "dv", "event": "e", "reduce": "change", "of": "v", "over": "braking"},
+                 {"name": "dv_half", "event": "e", "reduce": "change", "of": "v", "over": "half"}]}, "t")
+    cp = compile_profile(prof)
+    assert cp.kpis[0].unit == "km/h"
+    t = np.arange(0, 10, 1.0)
+    on = np.array([0, 0, 1, 1, 1, 1, 0, 0, 0, 0], float)
+    v = np.array([9, 9, 8, 6, 2, 1, 0, 0, 0, 0], float)
+    out = evaluate_frame(cp, SignalFrame(time=t, values={"on": on, "v": v}), "f")
+    assert {r.kpi: r.value for r in out.results} == {"dv": -6.0, "dv_half": -1.0}  # 2 - 8; 7 (interpolated) - 8
+
+
 def test_unknown_range_is_an_error():
     from src.kpi_studio.core.validate import compile_profile
     from src.kpi_studio.io.profile_store import parse_profile

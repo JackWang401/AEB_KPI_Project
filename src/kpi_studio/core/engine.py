@@ -290,7 +290,10 @@ class FileEvaluator:
             sl = _slice(self.time, lo, hi)
             if sl.stop - sl.start == 0:
                 return None, None, Status.NO_SAMPLES, f"no samples in {lo:.3f}s..{hi:.3f}s"
-            v = k.reducer.func(ToolContext(self.time[sl]), arr[sl], **k.args)
+            if d.reduce == "change":  # exactly the values at the two moments, as 'value at a moment' reads them
+                v = (sample_at(self.time, arr, hi, hold=k.of.hold) - sample_at(self.time, arr, lo, hold=k.of.hold))
+            else:
+                v = k.reducer.func(ToolContext(self.time[sl]), arr[sl], **k.args)
             if v is None or not np.isfinite(v):
                 return None, hi, Status.NO_SAMPLES, f"{d.reduce} of '{d.of}' has no valid samples"
             return float(v), hi, Status.OK, ""

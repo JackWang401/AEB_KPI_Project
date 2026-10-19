@@ -100,6 +100,13 @@ def last_value(ctx, x):
     return float(v[-1]) if v.size else float("nan")
 
 
+@tool("reducer", "Statistics", unit="same")
+def change(ctx, x):
+    """Value at the end of the range minus the value at its start (e.g. speed lost between two moments)."""
+    v = _finite(x)
+    return float(v[-1] - v[0]) if v.size else float("nan")
+
+
 @tool("reducer", "Integrals", unit="x*s")
 def integral(ctx, x):
     """Trapezoidal integral over the range (NaN samples dropped)."""
