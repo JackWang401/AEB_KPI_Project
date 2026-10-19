@@ -83,9 +83,12 @@ class AppState(QObject):
         flat = profile_store.inline_libraries(data, path.parent)  # KPI Studio has no libraries
         merged = copy.deepcopy(NEW_PROFILE)
         merged.update(flat)
+        from src.kpi_studio.core.rename import use_named_ranges
+
+        moved = use_named_ranges(merged)  # KPIs over two moments -> over a named range of the event
         self.data = merged
         self.path = path
-        self._set_dirty(flat != data)
+        self._set_dirty(flat != data or bool(moved))
         self.profile_changed.emit()
         self.validate_now()
 
@@ -248,6 +251,14 @@ class AppState(QObject):
         if ev is None and self.resolved is not None and event in self.resolved.events:
             return list(BUILTIN_MOMENTS) + list(self.resolved.events[event].moments)
         return list(BUILTIN_MOMENTS) + list((ev or {}).get("moments", {}) or {})
+
+    def ranges_of(self, event: str) -> list[str]:
+        from src.kpi_studio.core.model import BUILTIN_RANGES
+
+        ev = self.data.get("events", {}).get(event)
+        if ev is None and self.resolved is not None and event in self.resolved.events:
+            return list(BUILTIN_RANGES) + list(self.resolved.events[event].ranges)
+        return list(BUILTIN_RANGES) + list((ev or {}).get("ranges", {}) or {})
 
     # ------------------------------------------------------------------ files
     def set_files(self, files: list[str]):

@@ -34,10 +34,11 @@ from PySide6.QtWidgets import (
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.model import (
     BUILTIN_MOMENTS,
+    BUILTIN_RANGES,
     KpiDef,
     signal_units,
 )
-from src.kpi_studio.core.rename import rename_kpi, rename_moment
+from src.kpi_studio.core.rename import rename_kpi, rename_moment, rename_range, use_named_ranges
 from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
 from src.kpi_studio.gui.widgets import context_menu
@@ -53,9 +54,9 @@ from src.kpi_studio.gui.widgets.common import (
 from src.kpi_studio.gui.widgets.flow_layout import FlowLayout
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
-         ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs"),
-         ("which", "Which conditions are met (text)")]
+FORMS = [("value", "At a moment"), ("range", "Over a range"), ("formula", "Formula of earlier KPIs")]
+# reducers that are not toolbox tools: the range's length, and the conditions met in it
+SPECIAL_REDUCERS = [("duration", "duration (length of the range)"), ("which", "which conditions are met (text)")]
 
 
 class WhichTable(QWidget):
@@ -276,7 +277,30 @@ class EventForm(QWidget):
         hint.setWordWrap(True)
         hint.setObjectName("hint")
         bl.addWidget(hint)
-        lay.addWidget(box, 1)
+        lay.addWidget(box, 2)
+
+        # named ranges: from one moment to another; KPIs reduce over them
+        rbox = QGroupBox()
+        rbox.setObjectName("plainBox")
+        rl = QVBoxLayout(rbox)
+        rrow = QHBoxLayout()
+        rtitle = QLabel("Ranges: spans from one moment to another that KPIs are taken over (event = start to end, "
+                        "window = window_start to window_end are built in)")
+        rtitle.setObjectName("sectionTitle")
+        rtitle.setWordWrap(True)
+        rtitle.setMinimumWidth(120)
+        rrow.addWidget(rtitle, 1)
+        for b in context_menu.plus_minus(add=self.add_range, remove=self.delete_range, add_tip="Add a range",
+                                         remove_tip="Delete the selected ranges"):
+            rrow.addWidget(b)
+        rl.addLayout(rrow)
+        self.ranges = QTableWidget(0, 3)
+        self.ranges.setHorizontalHeaderLabels(["Name", "From moment", "To moment"])
+        rh = self.ranges.horizontalHeader()
+        for col in range(3):
+            rh.setSectionResizeMode(col, QHeaderView.Stretch)
+        rl.addWidget(self.ranges)
+        lay.addWidget(rbox, 1)
 
         self.name_edit.editingFinished.connect(self.rename)
         self.desc.editingFinished.connect(lambda: self.set("description", self.desc.text()))
@@ -298,6 +322,10 @@ class EventForm(QWidget):
         # right-click: on a moment, Edit condition / Delete moment; Add moment anywhere
         context_menu.install(self.moments, add=[("Add moment", self.add_moment)], item=self._moment_actions)
         self.moments.itemChanged.connect(self.moment_renamed)
+        context_menu.install(self.ranges, add=[("Add range", self.add_range)],
+                             item=lambda rows: [("Delete range" if len(rows) == 1 else f"Delete {len(rows)} ranges",
+                                                 self.delete_range)])
+        self.ranges.itemChanged.connect(self.range_renamed)
         for w in (self.start, self.end):
             w.focused.connect(page.set_target)
 
@@ -364,6 +392,7 @@ class EventForm(QWidget):
         self.pre.setValue(float(w.get("pre", 0) or 0))
         self.post.setValue(float(w.get("post", 0) or 0))
         self.load_moments()
+        self.load_ranges()
         self._show_mode()
         self._loading = False
 
@@ -575,6 +604,73 @@ class EventForm(QWidget):
         else:
             self.save_moment(row)
 
+    # ---- ranges
+    def load_ranges(self):
+        ranges = self.ev.get("ranges", {}) or {}
+        moments = self.moment_names()
+        self.ranges.blockSignals(True)
+        self.ranges.setRowCount(len(ranges))
+        for r, (rname, pair) in enumerate(ranges.items()):
+            item = QTableWidgetItem(rname)
+            item.setData(Qt.UserRole, rname)
+            self.ranges.setItem(r, 0, item)
+            pair = list(pair or []) + ["start", "end"][len(pair or []):]
+            for col, value in ((1, pair[0]), (2, pair[1])):
+                combo = QComboBox()
+                combo.addItems(moments)
+                KpiForm._set_moment(combo, str(value))
+                combo.currentTextChanged.connect(lambda t, c=combo: KpiForm._set_moment(c, t))
+                combo.currentTextChanged.connect(lambda *_, row=r: self.save_range(row))
+                self.ranges.setCellWidget(r, col, combo)
+        self.ranges.blockSignals(False)
+
+    def save_range(self, row: int):
+        if self._loading or self.name is None:
+            return
+        rname = self.ranges.item(row, 0).data(Qt.UserRole)
+        pair = [self.ranges.cellWidget(row, 1).currentText(), self.ranges.cellWidget(row, 2).currentText()]
+        ranges = self.ev.setdefault("ranges", {})
+        if ranges.get(rname) != pair:
+            ranges[rname] = pair
+            self.state.edited()
+
+    def range_renamed(self, item):
+        if item.column() != 0:
+            return
+        old, new = item.data(Qt.UserRole), item.text().strip()
+        ranges = self.ev.setdefault("ranges", {})
+        if new == old:
+            return
+        if not NAME_RE.match(new) or new in ranges or new in BUILTIN_RANGES:
+            self.ranges.blockSignals(True)
+            item.setText(old)
+            self.ranges.blockSignals(False)
+            return
+        self.ev["ranges"] = {(new if k == old else k): v for k, v in ranges.items()}
+        rename_range(self.state.data, self.name, old, new)
+        self.state.edited(structure=True)
+        self.load_ranges()
+
+    def add_range(self):
+        if self.name is None:
+            return
+        ranges = self.ev.setdefault("ranges", {})
+        i = len(ranges) + 1
+        while f"range{i}" in ranges:
+            i += 1
+        ranges[f"range{i}"] = ["start", "end"]
+        self.state.edited(structure=True)
+        self.load_ranges()
+
+    def delete_range(self):
+        rows = sorted({i.row() for i in self.ranges.selectedIndexes()}, reverse=True)
+        ranges = self.ev.get("ranges", {})
+        for r in rows:
+            ranges.pop(self.ranges.item(r, 0).data(Qt.UserRole), None)
+        if rows:
+            self.state.edited(structure=True)
+            self.load_ranges()
+
     def delete_moment(self):
         rows = sorted({i.row() for i in self.moments.selectedIndexes()}, reverse=True)
         moments = self.ev.get("moments", {})
@@ -606,9 +702,15 @@ class KpiForm(QWidget):
         self.formula = QLineEdit()
         self.formula.setPlaceholderText("e.g. pedalPosMax - pedalPosAtStart")
         self.at = QComboBox()
-        self.m1, self.m2 = QComboBox(), QComboBox()
+        self.range = QComboBox()
+        self.range.setProperty("kind", "range")
+        self.range.setProperty("tip", "The range of the event to reduce over: 'event' is start to end, 'window' is "
+                              "window_start to window_end; add your own under Ranges on the event")
         self.reducer = QComboBox()
-        self.reducer.addItems(toolbox.names("reducer"))
+        for name in toolbox.names("reducer"):
+            self.reducer.addItem(name, name)
+        for key, label in SPECIAL_REDUCERS:
+            self.reducer.addItem(label, key)
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
@@ -616,15 +718,11 @@ class KpiForm(QWidget):
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "Only a formula needs a unit typed in.")
         self.desc = QLineEdit()
-        rng = QHBoxLayout()
-        rng.addWidget(self.m1, 1)
-        rng.addWidget(QLabel("to"))
-        rng.addWidget(self.m2, 1)
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
-                         ("Reducer", self.reducer), ("Expression", self.expr), ("Formula", self.formula),
-                         ("Conditions", self.which),
-                         ("At moment", self.at), ("From", rng), ("Options", self.args), ("Unit", self.unit),
+                         ("Range", self.range), ("Reducer", self.reducer), ("Expression", self.expr),
+                         ("Formula", self.formula), ("Conditions", self.which),
+                         ("At moment", self.at), ("Options", self.args), ("Unit", self.unit),
                          ("Description", self.desc)):
             lab = QLabel(label)
             lay.addRow(lab, w)
@@ -638,9 +736,10 @@ class KpiForm(QWidget):
         self.form.currentIndexChanged.connect(self.form_changed)
         self.expr.editingFinished.connect(self.save)
         self.formula.editingFinished.connect(self.save)
-        for w in (self.at, self.m1, self.m2):  # a valid choice clears the "missing moment" mark
+        for w in (self.at, self.range):  # a valid choice clears the "missing" mark
             w.currentTextChanged.connect(lambda _t, w=w: self._set_moment(w, w.currentText()))
-        for w in (self.at, self.m1, self.m2, self.reducer):
+        self.reducer.currentIndexChanged.connect(lambda *_: self._show_form(self.form.currentData()))
+        for w in (self.at, self.range, self.reducer):
             w.currentTextChanged.connect(lambda *_: self.save())
         for w in (self.args, self.unit, self.desc):
             w.editingFinished.connect(self.save)
@@ -651,34 +750,39 @@ class KpiForm(QWidget):
         return self.state.data["kpis"][self.index]
 
     def _fill_moments(self, event: str):
-        moments = self.state.moments_of(event)
-        for combo in (self.at, self.m1, self.m2):
+        for combo, items in ((self.at, self.state.moments_of(event)), (self.range, self.state.ranges_of(event))):
             cur = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
-            combo.addItems(moments)
-            if cur in moments:
+            combo.addItems(items)
+            if cur in items:
                 combo.setCurrentText(cur)
             combo.blockSignals(False)
 
     @staticmethod
     def _set_moment(combo: QComboBox, value: str):
-        """Select `value`; a moment the event no longer has is shown in red at the top, so it can be replaced."""
+        """Select `value`; a moment (or range) the event no longer has is shown in red at the top, so it can be
+        replaced."""
         combo.blockSignals(True)
+        what = "range" if combo.property("kind") == "range" else "moment"
         if value and combo.findText(value) < 0:
             combo.insertItem(0, value)
             combo.setItemData(0, QColor("#e34948"), Qt.ForegroundRole)
-            combo.setItemData(0, f"'{value}' is not a moment of this event: pick one from the list", Qt.ToolTipRole)
+            combo.setItemData(0, f"'{value}' is not a {what} of this event: pick one from the list", Qt.ToolTipRole)
         combo.setCurrentText(value)
         missing = combo.currentIndex() == 0 and combo.itemData(0, Qt.ForegroundRole) is not None
         combo.setStyleSheet("QComboBox { color: #e34948; border: 1px solid #e34948; }" if missing else "")
-        combo.setToolTip(f"'{value}' is not a moment of this event: pick one from the list" if missing else "")
+        combo.setToolTip(f"'{value}' is not a {what} of this event: pick one from the list" if missing
+                         else combo.property("tip") or "")
         combo.blockSignals(False)
 
     def load(self, index: int):
         self._loading = True
         self.index = index
         k = self.k
+        if k.get("over") is None and (k.get("between") or k.get("duration")):
+            use_named_ranges(self.state.data)  # e.g. pasted in: give its moments a named range
+            k = self.k
         self.name_edit.setText(k.get("name", ""))
         self.event.blockSignals(True)
         self.event.clear()
@@ -686,21 +790,15 @@ class KpiForm(QWidget):
         self.event.setCurrentText(k.get("event", ""))
         self.event.blockSignals(False)
         self._fill_moments(k.get("event", ""))
-        form = ("value" if "value" in k else "duration" if "duration" in k else "formula" if "formula" in k
-                else "which" if "which" in k else "reduce")
+        form = "value" if "value" in k else "formula" if "formula" in k else "range"
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(k.get("value") or k.get("of") or "")
         self.formula.setText(k.get("formula", ""))
-        if form == "reduce":
-            rng = k.get("between") or ["window_start", "window_end"]
-        elif form == "which":
-            rng = k.get("between") or ["start", "end"]
-        else:
-            rng = k.get("duration") or ["start", "end"]
-        for combo, value in ((self.at, k.get("at", "start")), (self.m1, rng[0]), (self.m2, rng[1])):
-            self._set_moment(combo, value)
+        self._set_moment(self.at, k.get("at", "start"))
+        self._set_moment(self.range, k.get("over") or ("window" if k.get("reduce") else "event"))
         self.which.set_items(k.get("which") or {})
-        self.reducer.setCurrentText(k.get("reduce", "max"))
+        reducer = "which" if "which" in k else k.get("reduce", "max")
+        self.reducer.setCurrentIndex(max(0, self.reducer.findData(reducer)))
         self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
@@ -709,30 +807,21 @@ class KpiForm(QWidget):
         self.show_status()
 
     def _show_form(self, form):
-        visible = {
-            "value": {"Expression", "At moment"},
-            "duration": {"From"},
-            "reduce": {"Reducer", "Expression", "From", "Options"},
-            "formula": {"Formula"},
-            "which": {"Conditions", "From"},
-        }[form]
-        for label in ("Reducer", "Expression", "Formula", "Conditions", "At moment", "From", "Options"):
+        reducer = self.reducer.currentData()
+        if form == "range":
+            visible = {"Range", "Reducer"} | ({"Conditions"} if reducer == "which" else set() if reducer == "duration"
+                                              else {"Expression", "Options"})
+        else:
+            visible = {"value": {"Expression", "At moment"}, "formula": {"Formula"}}[form]
+        for label in ("Range", "Reducer", "Expression", "Formula", "Conditions", "At moment", "Options"):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
-            if hasattr(w, "setVisible"):
-                w.setVisible(label in visible)
-            else:
-                for i in range(w.count()):
-                    wid = w.itemAt(i).widget()
-                    if wid:
-                        wid.setVisible(label in visible)
-        self.rows["From"][0].setText("Between" if form in ("reduce", "which") else "From")
+            w.setVisible(label in visible)
 
     def form_changed(self):
         form = self.form.currentData()
-        if form == "which" and not self._loading and self.index is not None and "which" not in self.k:
-            for combo, value in ((self.m1, "start"), (self.m2, "end")):  # the braking window itself
-                self._set_moment(combo, value)
+        if form == "range" and not self._loading and self.index is not None and self.k.get("over") is None:
+            self._set_moment(self.range, "event")  # the event itself, start to end
         self._show_form(form)
         self.save()
 
@@ -748,22 +837,21 @@ class KpiForm(QWidget):
         k = {"name": name, "event": self.event.currentText()}
         if form == "value":
             k.update(value=self.expr.text().strip(), at=self.at.currentText())
-        elif form == "duration":
-            k.update(duration=[self.m1.currentText(), self.m2.currentText()])
-        elif form == "reduce":
-            k.update(reduce=self.reducer.currentText(), of=self.expr.text().strip())
-            if (self.m1.currentText(), self.m2.currentText()) != ("window_start", "window_end"):
-                k["between"] = [self.m1.currentText(), self.m2.currentText()]
-            try:
-                args = parse_options(self.args.text())
-                if args:
-                    k["args"] = args
-            except Exception:  # noqa: BLE001
-                pass
-        elif form == "which":
-            k["which"] = self.which.items()
-            if (self.m1.currentText(), self.m2.currentText()) != ("start", "end"):
-                k["between"] = [self.m1.currentText(), self.m2.currentText()]
+        elif form == "range":
+            reducer = self.reducer.currentData()
+            if reducer == "which":
+                k["which"] = self.which.items()
+            elif reducer == "duration":
+                k["reduce"] = "duration"
+            else:
+                k.update(reduce=reducer, of=self.expr.text().strip())
+                try:
+                    args = parse_options(self.args.text())
+                    if args:
+                        k["args"] = args
+                except Exception:  # noqa: BLE001
+                    pass
+            k["over"] = self.range.currentText()
         else:
             k.update(formula=self.formula.text().strip())
         if form == "formula":

@@ -279,6 +279,8 @@ class FileEvaluator:
             if hi < lo:
                 return None, hi, Status.NO_SAMPLES, (f"'{hi_name}' ({hi:.3f}s) comes before '{lo_name}' "
                                                      f"({lo:.3f}s): the range is reversed")
+            if d.reduce == "duration":  # the length of the range
+                return hi - lo, hi, Status.OK, ""
             if hi == lo:
                 return None, hi, Status.NO_SAMPLES, (f"'{lo_name}' and '{hi_name}' are at the same time "
                                                      f"({lo:.3f}s): no range to take the {d.reduce} over")

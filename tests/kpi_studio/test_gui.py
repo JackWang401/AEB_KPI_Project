@@ -66,9 +66,9 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
-    assert form.m1.currentText() == "start" and form.m2.currentText() == "end"
-    assert form.rows["From"][0].text() == "Between"
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
+    form.reducer.setCurrentIndex(form.reducer.findData("which"))
+    assert form.range.currentText() == "event" and not form.expr.isVisibleTo(form)
     for label, cond in (("PB", "egoSpeed > 5"), ("FB", "longActAccel < -2")):
         form.which.add_row()
         r = form.which.table.rowCount() - 1
@@ -76,11 +76,69 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
         form.which.rows[r].set_expression(cond)
         form.which.rows[r].changed.emit()
     k = window.state.data["kpis"][-1]
-    assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and "between" not in k
+    assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and k["over"] == "event"
     window.state.validate_now()
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
     form.load(len(window.state.data["kpis"]) - 1)  # reloads into the same rows
     assert form.which.items() == k["which"] and form.which.isVisibleTo(form)
+
+
+def test_kpis_over_named_ranges(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.select_event("aeb")
+    ef = page.event_form
+    ef.add_range()
+    r = ef.ranges.rowCount() - 1
+    ef.ranges.cellWidget(r, 1).setCurrentText("stop")
+    ef.ranges.cellWidget(r, 2).setCurrentText("window_end")
+    ef.ranges.item(r, 0).setText("after_stop")
+    assert window.state.data["events"]["aeb"]["ranges"]["after_stop"] == ["stop", "window_end"]
+    page.new_kpi()
+    form = page.kpi_form
+    form.event.setCurrentText("aeb")
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
+    assert "after_stop" in [form.range.itemText(i) for i in range(form.range.count())]
+    form.range.setCurrentText("after_stop")
+    form.reducer.setCurrentIndex(form.reducer.findData("all"))
+    form.expr.setText("egoSpeed < 1")
+    form.expr.editingFinished.emit()
+    k = window.state.data["kpis"][-1]
+    assert k["reduce"] == "all" and k["of"] == "egoSpeed < 1" and k["over"] == "after_stop"
+    form.reducer.setCurrentIndex(form.reducer.findData("duration"))
+    k = window.state.data["kpis"][-1]
+    assert k == {"name": k["name"], "event": "aeb", "reduce": "duration", "over": "after_stop"}
+    assert form.unit.text() == "s" and not form.expr.isVisibleTo(form)
+    # renaming the range and its moment follows through to the KPI
+    page.select_event("aeb")
+    ef.ranges.item(r, 0).setText("stopped")
+    assert window.state.data["kpis"][-1]["over"] == "stopped"
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+
+
+def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
+    import yaml
+
+    from src.kpi_studio.core.rename import use_named_ranges
+
+    data = {"events": {"e": {"start": "x > 0", "moments": {"a": {"first": "x > 1"}}}},
+            "kpis": [{"name": "d", "event": "e", "duration": ["a", "end"]},
+                     {"name": "m", "event": "e", "reduce": "max", "of": "x", "between": ["a", "end"]},
+                     {"name": "w", "event": "e", "reduce": "max", "of": "x"},
+                     {"name": "t", "event": "e", "which": {"A": "x > 1"}, "between": ["start", "end"]},
+                     {"name": "v", "event": "e", "value": "x", "at": "a"}]}
+    assert use_named_ranges(data) == 4
+    assert data["events"]["e"]["ranges"] == {"a_to_end": ["a", "end"]}
+    assert [k.get("over") for k in data["kpis"]] == ["a_to_end", "a_to_end", "window", "event", None]
+    assert data["kpis"][0] == {"name": "d", "event": "e", "reduce": "duration", "over": "a_to_end"}
+    assert "between" not in data["kpis"][1]
+    path = tmp_path / "old.kpi.yaml"
+    path.write_text(yaml.safe_dump({"name": "p", "signals": {"x": {"channels": ["x"]}},
+                                    "events": {"e": {"start": "x > 0"}},
+                                    "kpis": [{"name": "d", "event": "e", "duration": ["start", "end"]}]}))
+    window.state.load(path)
+    assert window.state.data["kpis"][0]["over"] == "event" and window.state.dirty
 
 
 def test_preview_and_run(qtbot, window, mf4_dir, tmp_path):
@@ -1928,7 +1986,8 @@ def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
     page = window.kpi_page
     page.new_kpi()
     form = page.kpi_form
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
+    form.reducer.setCurrentIndex(form.reducer.findData("which"))
     form.which.set_items({"PB": "egoSpeed > 5"})
     table = form.which.table
     assert [table.horizontalHeaderItem(c).text() for c in range(4)] == ["Label", "Signal", "Operator", "Value"]

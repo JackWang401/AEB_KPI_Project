@@ -118,6 +118,8 @@ def kpi_unit(kdef: KpiDef, units: Mapping[str, str]) -> str:
         inferred = "s"
     elif kdef.form == "which":
         return ""  # a text result
+    elif kdef.form == "reduce" and kdef.reduce == "duration":
+        inferred = "s"
     elif kdef.form == "reduce" and kdef.reduce:
         try:
             spec = toolbox.get("reducer", kdef.reduce)
@@ -275,6 +277,11 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         if mcycle:
             err(f"{where}.moments", f"moments refer to each other in a loop: {', '.join(mcycle)}")
         ce.moment_order = [m for m in morder if m in ce.moments and m not in mcycle]
+        for rname, pair in edef.ranges.items():
+            for m in pair:
+                if m not in BUILTIN_MOMENTS and m not in edef.moments:
+                    err(f"{where}.ranges.{rname}", f"range '{rname}' uses unknown moment '{m}'; use one of "
+                                                   f"{', '.join(list(BUILTIN_MOMENTS) + list(edef.moments))}")
         events[ename] = ce
 
     # ---------------- kpis
@@ -295,6 +302,13 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             err(where, f"unknown event '{kdef.event}'; events: {', '.join(events) or 'none'}")
             continue
         valid_moments = set(BUILTIN_MOMENTS) | set(ev.defn.moments)
+        if kdef.over is not None:  # a named range: reduce between its two moments
+            pair = ev.defn.range_pair(kdef.over)
+            if pair is None:
+                err(f"{where}.over", f"unknown range '{kdef.over}' in event '{kdef.event}'; "
+                                     f"use one of {', '.join(ev.defn.range_names())}")
+            else:
+                kdef = kdef.model_copy(update={"between": pair})
 
         def check_moment(m, key):
             if m not in valid_moments:
@@ -319,6 +333,9 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             except ExprError as exc:
                 err(f"{where}.formula", f"{exc} (a formula may use KPIs listed earlier for event "
                                         f"'{kdef.event}': {', '.join(sorted(earlier)) or 'none'})")
+        elif kdef.reduce == "duration":  # the length of the range, in s
+            for m in kdef.between or ():
+                check_moment(m, "between")
         else:
             try:
                 ck.reducer = toolbox.get("reducer", kdef.reduce)

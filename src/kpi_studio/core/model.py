@@ -13,6 +13,8 @@ _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _QNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 
 BUILTIN_MOMENTS = ("start", "end", "window_start", "window_end")
+# named ranges every event has: the event itself and its window
+BUILTIN_RANGES = {"event": ("start", "end"), "window": ("window_start", "window_end")}
 TIME = "time"  # built-in signal: the timebase in seconds
 MOMENT_RANGE_KEYS = ("after", "before", "within", "between")
 
@@ -180,6 +182,28 @@ class EventDef(_Strict):
     merge_gap: float = Field(0.0, ge=0)
     window: Window = Field(default_factory=Window)
     moments: dict[str, Any] = Field(default_factory=dict)
+    # named ranges: {name: [from moment, to moment]}; KPIs reduce over them with 'over: <name>'
+    ranges: dict[str, tuple[str, str]] = Field(default_factory=dict)
+
+    @field_validator("ranges", mode="before")
+    @classmethod
+    def _range_pairs(cls, v):
+        if not v:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("'ranges' maps a name to [from moment, to moment]")
+        out = {}
+        for name, pair in v.items():
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise ValueError(f"range '{name}' needs two moment names, e.g. {name}: [start, end]")
+            out[str(name)] = (str(pair[0]), str(pair[1]))
+        return out
+
+    def range_names(self) -> list[str]:
+        return list(BUILTIN_RANGES) + list(self.ranges)
+
+    def range_pair(self, name: str) -> Optional[tuple[str, str]]:
+        return self.ranges.get(name) or BUILTIN_RANGES.get(name)
 
     @model_validator(mode="after")
     def _start_or_preset(self):
@@ -197,6 +221,10 @@ class EventDef(_Strict):
             _check_name(name, "moment")
             if name in BUILTIN_MOMENTS:
                 raise ValueError(f"moment name '{name}' is built in and cannot be redefined")
+        for name in self.ranges:
+            _check_name(name, "range")
+            if name in BUILTIN_RANGES:
+                raise ValueError(f"range name '{name}' is built in and cannot be redefined")
         return self
 
 
@@ -216,6 +244,7 @@ class KpiDef(_Strict):
     reduce: Optional[str] = None
     of: Optional[str] = None
     between: Optional[tuple[str, str]] = None
+    over: Optional[str] = None  # a named range of the event (instead of 'between')
     args: dict[str, Any] = Field(default_factory=dict)
     # formula form: expression over KPIs listed earlier for the same event
     formula: Optional[str] = None
@@ -227,7 +256,7 @@ class KpiDef(_Strict):
     def _one_form(self):
         if self.use:
             others = [k for k in ("name", "event", "value", "at", "duration", "reduce", "of", "between", "formula",
-                                  "which")
+                                  "which", "over")
                       if getattr(self, k) is not None]
             if others:
                 raise ValueError(f"'use' entries only accept 'as'; remove {others}")
@@ -256,8 +285,12 @@ class KpiDef(_Strict):
             raise ValueError(f"KPI '{self.name}': 'value' needs 'at' (a moment name)")
         if form != "value" and self.at:
             raise ValueError(f"KPI '{self.name}': 'at' is only used with 'value'")
-        if form == "reduce" and not self.of:
+        if form == "reduce" and not self.of and self.reduce != "duration":
             raise ValueError(f"KPI '{self.name}': 'reduce' needs 'of' (an expression)")
+        if self.between and self.over:
+            raise ValueError(f"KPI '{self.name}': use 'over' (a range) or 'between' (two moments), not both")
+        if form not in ("reduce", "which") and self.over:
+            raise ValueError(f"KPI '{self.name}': 'over' is only used with 'reduce' and 'which'")
         if form != "reduce" and (self.of or self.args):
             raise ValueError(f"KPI '{self.name}': 'of' and 'args' are only used with 'reduce'")
         if form not in ("reduce", "which") and self.between:

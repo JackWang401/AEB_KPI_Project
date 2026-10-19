@@ -237,6 +237,43 @@ def test_which_kpi_names_the_conditions_met():
     assert list(table["braking_type"]) == ["FB", "PB", "PB + FB"]
 
 
+def test_kpis_over_named_ranges():
+    from src.kpi_studio.core.align import SignalFrame
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p",
+        "signals": {"on": {"channels": ["on"]}, "v": {"channels": ["v"]}},
+        "events": {"e": {"start": "on > 0", "end": "on < 1", "window": {"pre": 1.0, "post": 1.0},
+                         "moments": {"slow": {"first": "v < 3", "after": "start"}},
+                         "ranges": {"braking": ["start", "slow"]}}},
+        "kpis": [{"name": "vmax", "event": "e", "reduce": "max", "of": "v", "over": "braking"},
+                 {"name": "len", "event": "e", "reduce": "duration", "over": "braking"},
+                 {"name": "evlen", "event": "e", "reduce": "duration", "over": "event"},
+                 {"name": "moving", "event": "e", "reduce": "all", "of": "v > 0", "over": "window"}]}, "t")
+    cp = compile_profile(prof)
+    assert [k.unit for k in cp.kpis][1:3] == ["s", "s"]
+    t = np.arange(0, 10, 1.0)
+    on = np.array([0, 0, 1, 1, 1, 1, 0, 0, 0, 0], float)
+    v = np.array([9, 9, 8, 6, 2, 1, 0, 0, 0, 0], float)
+    out = evaluate_frame(cp, SignalFrame(time=t, values={"on": on, "v": v}), "f")
+    assert {r.kpi: r.value for r in out.results} == {"vmax": 8.0, "len": 2.0, "evlen": 4.0, "moving": 0.0}
+
+
+def test_unknown_range_is_an_error():
+    from src.kpi_studio.core.validate import compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    prof = parse_profile({
+        "name": "p", "signals": {"v": {"channels": ["v"]}},
+        "events": {"e": {"start": "v > 0", "ranges": {"r": ["start", "nowhere"]}}},
+        "kpis": [{"name": "k", "event": "e", "reduce": "max", "of": "v", "over": "nope"}]}, "t")
+    with pytest.raises(Exception) as exc:
+        compile_profile(prof)
+    assert "unknown range 'nope'" in str(exc.value) and "unknown moment 'nowhere'" in str(exc.value)
+
+
 @pytest.mark.parametrize("unit, speed, metres", [("km/h", 36.0, 40.0), ("m/s", 10.0, 40.0), ("mph", 10.0, 17.8816),
                                                 ("", 10.0, 40.0)])
 def test_distance_converts_speed_from_its_unit(unit, speed, metres):

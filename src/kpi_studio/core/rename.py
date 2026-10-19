@@ -13,7 +13,8 @@ import tokenize
 # fields whose values are not signal expressions
 _SKIP_KEYS = {"name", "use", "as", "event", "description", "unit", "title", "at", "duration", "between",
               "after", "before", "offset", "reduce", "x", "y", "type", "color_by", "group_by", "enum",
-              "channels", "imports", "label", "merge"}
+              "channels", "imports", "label", "merge",
+              "over", "ranges"}
 
 
 def rename_in_expression(text: str, old: str, new: str) -> str:
@@ -101,6 +102,10 @@ def rename_moment(data: dict, event: str, old: str, new: str) -> int:
                 m[key] = swap(m[key])
         if isinstance(m.get("between"), list):
             m["between"] = [swap(v) for v in m["between"]]
+    ranges = ev.get("ranges") or {}
+    for rname, pair in list(ranges.items()):
+        if isinstance(pair, (list, tuple)):
+            ranges[rname] = [swap(v) for v in pair]
     for k in data.get("kpis") or []:
         if k.get("event") != event:
             continue
@@ -127,3 +132,63 @@ def rename_kpi(data: dict, event: str, old: str, new: str) -> int:
                 p[key] = new
                 counter[0] += 1
     return counter[0]
+
+
+def rename_range(data: dict, event: str, old: str, new: str) -> int:
+    """Point the KPIs of `event` at range `new` instead of `old`."""
+    n = 0
+    for k in data.get("kpis") or []:
+        if k.get("event") == event and k.get("over") == old:
+            k["over"] = new
+            n += 1
+    return n
+
+
+BUILTIN_RANGE_PAIRS = {("start", "end"): "event", ("window_start", "window_end"): "window"}
+
+
+def use_named_ranges(data: dict) -> int:
+    """Turn KPIs over two moments ('between: [a, b]', 'duration: [a, b]') into KPIs over a named range of
+    their event ('over: <range>'; a duration becomes 'reduce: duration'), adding the ranges they need.
+    Reduce and which KPIs without a range get the range they used by default. Returns KPIs changed."""
+    events = data.get("events") or {}
+    changed = 0
+    for k in data.get("kpis") or []:
+        if not isinstance(k, dict) or k.get("use") or k.get("over") is not None:
+            continue
+        ev = events.get(k.get("event"))
+        if not isinstance(ev, dict):
+            continue
+        if isinstance(k.get("duration"), (list, tuple)) and len(k["duration"]) == 2:
+            pair = tuple(str(m) for m in k.pop("duration"))
+            k.pop("value", None)
+            k["reduce"] = "duration"
+        elif k.get("reduce") is not None or k.get("which") is not None:
+            b = k.pop("between", None)
+            if isinstance(b, (list, tuple)) and len(b) == 2:
+                pair = tuple(str(m) for m in b)
+            else:
+                pair = ("window_start", "window_end") if k.get("reduce") is not None else ("start", "end")
+        else:
+            continue
+        k["over"] = _range_for(ev, pair)
+        changed += 1
+    return changed
+
+
+def _range_for(ev: dict, pair: tuple) -> str:
+    """The name of the event's range from pair[0] to pair[1], added when there is none."""
+    if pair in BUILTIN_RANGE_PAIRS:
+        return BUILTIN_RANGE_PAIRS[pair]
+    ranges = ev.get("ranges")
+    if not isinstance(ranges, dict):
+        ranges = ev["ranges"] = {}
+    for name, p in ranges.items():
+        if isinstance(p, (list, tuple)) and tuple(p) == pair:
+            return name
+    base = f"{pair[0]}_to_{pair[1]}"
+    name, i = base, 2
+    while name in ranges or name in ("event", "window"):
+        name, i = f"{base}{i}", i + 1
+    ranges[name] = list(pair)
+    return name

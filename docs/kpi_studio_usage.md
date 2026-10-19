@@ -35,11 +35,15 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    such as `lowpass(longActAccel, 10)`, which can also be typed directly.
 3. **Events & KPIs** – define an event (a start/end condition or a preset such
    as `target_decel_window`), its moments (e.g. `decel_onset`, `argmin`,
-   `crossing`), then KPIs (value at a moment, duration, a reducer over a range (e.g. `distance`: speed
-   integrated between two moments, in m, converted from the speed signal's own unit),
-   a formula, or *which conditions are met*: a text result such as `PB + FB` naming the
-   conditions met between two moments, e.g. which braking functions were active in the window; each condition is a signal, operator and
-   value, with an enum signal's values to pick, or *expression* to type a longer one). Every window in a file is found, each one a separate occurrence. The rule
+   `crossing`), its *Ranges* (named spans from one moment to another, e.g. `braking`: `aeb_braking` to
+   `veh_stopped`; `event` = start to end and `window` = window_start to window_end are built in), then KPIs of
+   three kinds: *At a moment* (an expression's value at a moment), *Over a range* (a range, a reducer and an
+   expression, e.g. `distance` of `ego_speed_kph` over `braking`, in m, converted from the speed signal's own
+   unit; `all` / `any` of a condition; `duration` = the range's length; *which conditions are met* = a text
+   result such as `PB + FB`, each condition a signal, operator and value, or *expression* to type a longer
+   one) and *Formula* of earlier KPIs. In the yaml a range KPI reads `over: braking` and the event lists
+   `ranges: {braking: [aeb_braking, veh_stopped]}`; an older profile's `between: [a, b]` and
+   `duration: [a, b]` KPIs are moved onto named ranges when it is opened (save to keep it). Every window in a file is found, each one a separate occurrence. The rule
    before *Start when* / *End when* picks which time the condition is met: *first* (the default),
    or *last* (start at the last time it becomes true before the end; end at the last time it is met
    before the next start). *Edit condition* writes conditions for you, including value changes:
