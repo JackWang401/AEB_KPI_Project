@@ -277,7 +277,13 @@ class EventForm(QWidget):
         hint.setWordWrap(True)
         hint.setObjectName("hint")
         bl.addWidget(hint)
-        lay.addWidget(box, 2)
+        # Moments and Ranges share a splitter: drag the divider between them to give either more height
+        self.tables_split = QSplitter(Qt.Vertical)
+        self.tables_split.setChildrenCollapsible(False)
+        self.tables_split.setHandleWidth(10)
+        self.tables_split.setMinimumHeight(380)
+        self.tables_split.addWidget(box)
+        lay.addWidget(self.tables_split, 1)
 
         # named ranges: from one moment to another; KPIs reduce over them
         rbox = QGroupBox()
@@ -300,7 +306,11 @@ class EventForm(QWidget):
         for col in range(3):
             rh.setSectionResizeMode(col, QHeaderView.Stretch)
         rl.addWidget(self.ranges)
-        lay.addWidget(rbox, 1)
+        self.tables_split.addWidget(rbox)
+        self.tables_split.setStretchFactor(0, 2)
+        self.tables_split.setStretchFactor(1, 1)
+        for b in (box, rbox):
+            b.setMinimumHeight(120)
 
         self.name_edit.editingFinished.connect(self.rename)
         self.desc.editingFinished.connect(lambda: self.set("description", self.desc.text()))

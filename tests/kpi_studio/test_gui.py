@@ -117,6 +117,21 @@ def test_kpis_over_named_ranges(qtbot, window, mf4_dir):
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
 
 
+def test_moments_and_ranges_heights_are_adjustable(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.resize(1500, 1000)
+    window.show()
+    window.open_panel("Events & KPIs")
+    window.kpi_page.select_event("aeb")
+    ef = window.kpi_page.event_form
+    sp = ef.tables_split
+    assert sp.widget(0).isAncestorOf(ef.moments) and sp.widget(1).isAncestorOf(ef.ranges)
+    qtbot.wait(50)
+    a, b = sp.sizes()
+    sp.setSizes([a - 100, b + 100])
+    assert sp.sizes()[1] > b
+
+
 def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
     import yaml
 
