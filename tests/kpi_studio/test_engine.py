@@ -237,38 +237,6 @@ def test_which_kpi_names_the_conditions_met():
     assert list(table["braking_type"]) == ["FB", "PB", "PB + FB"]
 
 
-def test_happens_kpi_tells_whether_a_moment_is_found():
-    from src.kpi_studio.core.align import SignalFrame
-    from src.kpi_studio.core.validate import compile_profile
-    from src.kpi_studio.io.profile_store import parse_profile
-
-    prof = parse_profile({
-        "name": "p",
-        "signals": {"on": {"channels": ["on"]}, "v": {"channels": ["v"]}},
-        "events": {"e": {"start": "on > 0", "end": "on < 1",
-                         "moments": {"stop_failed": {"first": "v > 0 and falling(on > 0)", "after": "start"}}}},
-        "kpis": [{"name": "failed", "event": "e", "happens": "stop_failed"},
-                 {"name": "success", "event": "e", "happens": "stop_failed", "when": "not_found"}]}, "t")
-    cp = compile_profile(prof)
-    assert [k.unit for k in cp.kpis] == ["", ""]
-    t = np.arange(0, 12, 1.0)
-    on = np.array([0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0], float)
-    v = np.array([5, 5, 2, 0, 0, 5, 5, 3, 3, 3, 0, 0], float)  # 2nd occurrence still moving at release
-    out = evaluate_frame(cp, SignalFrame(time=t, values={"on": on, "v": v}), "f")
-    assert [(r.kpi, r.value, r.status) for r in out.results] == [
-        ("failed", 0.0, "ok"), ("success", 1.0, "ok"), ("failed", 1.0, "ok"), ("success", 0.0, "ok")]
-
-
-def test_happens_kpi_checks_its_fields():
-    from src.kpi_studio.core.model import KpiDef
-
-    assert KpiDef(name="k", event="e", happens="m").form == "happens"
-    with pytest.raises(ValueError, match="'when' must be"):
-        KpiDef(name="k", event="e", happens="m", when="sometimes")
-    with pytest.raises(ValueError, match="only used with 'happens'"):
-        KpiDef(name="k", event="e", value="x", at="start", when="found")
-
-
 @pytest.mark.parametrize("unit, speed, metres", [("km/h", 36.0, 40.0), ("m/s", 10.0, 40.0), ("mph", 10.0, 17.8816),
                                                 ("", 10.0, 40.0)])
 def test_distance_converts_speed_from_its_unit(unit, speed, metres):

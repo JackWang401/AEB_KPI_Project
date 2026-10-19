@@ -55,7 +55,7 @@ from src.kpi_studio.gui.widgets.flow_layout import FlowLayout
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORMS = [("value", "Value at a moment"), ("duration", "Time between two moments"),
          ("reduce", "Reduce over a range"), ("formula", "Formula of earlier KPIs"),
-         ("which", "Which conditions are met (text)"), ("happens", "Moment happens (yes/no)")]
+         ("which", "Which conditions are met (text)")]
 
 
 class WhichTable(QWidget):
@@ -612,11 +612,6 @@ class KpiForm(QWidget):
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
-        self.when = QComboBox()  # happens form: the result is 1 when the moment is found / not found
-        self.when.addItem("1 when the moment is found, else 0", "found")
-        self.when.addItem("1 when the moment is not found, else 0", "not_found")
-        self.when.setToolTip("Define the condition as a moment of the event (e.g. 'first' of a failure "
-                             "condition), then pick it here. 'Not found' gives 1 when it never happens.")
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed only for formulas
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "Only a formula needs a unit typed in.")
@@ -629,7 +624,7 @@ class KpiForm(QWidget):
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
                          ("Reducer", self.reducer), ("Expression", self.expr), ("Formula", self.formula),
                          ("Conditions", self.which),
-                         ("At moment", self.at), ("Result", self.when), ("From", rng), ("Options", self.args), ("Unit", self.unit),
+                         ("At moment", self.at), ("From", rng), ("Options", self.args), ("Unit", self.unit),
                          ("Description", self.desc)):
             lab = QLabel(label)
             lay.addRow(lab, w)
@@ -645,7 +640,7 @@ class KpiForm(QWidget):
         self.formula.editingFinished.connect(self.save)
         for w in (self.at, self.m1, self.m2):  # a valid choice clears the "missing moment" mark
             w.currentTextChanged.connect(lambda _t, w=w: self._set_moment(w, w.currentText()))
-        for w in (self.at, self.m1, self.m2, self.reducer, self.when):
+        for w in (self.at, self.m1, self.m2, self.reducer):
             w.currentTextChanged.connect(lambda *_: self.save())
         for w in (self.args, self.unit, self.desc):
             w.editingFinished.connect(self.save)
@@ -692,7 +687,7 @@ class KpiForm(QWidget):
         self.event.blockSignals(False)
         self._fill_moments(k.get("event", ""))
         form = ("value" if "value" in k else "duration" if "duration" in k else "formula" if "formula" in k
-                else "which" if "which" in k else "happens" if "happens" in k else "reduce")
+                else "which" if "which" in k else "reduce")
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(k.get("value") or k.get("of") or "")
         self.formula.setText(k.get("formula", ""))
@@ -702,10 +697,9 @@ class KpiForm(QWidget):
             rng = k.get("between") or ["start", "end"]
         else:
             rng = k.get("duration") or ["start", "end"]
-        for combo, value in ((self.at, k.get("at") or k.get("happens") or "start"), (self.m1, rng[0]), (self.m2, rng[1])):
+        for combo, value in ((self.at, k.get("at", "start")), (self.m1, rng[0]), (self.m2, rng[1])):
             self._set_moment(combo, value)
         self.which.set_items(k.get("which") or {})
-        self.when.setCurrentIndex(1 if k.get("when") == "not_found" else 0)
         self.reducer.setCurrentText(k.get("reduce", "max"))
         self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)
@@ -721,9 +715,8 @@ class KpiForm(QWidget):
             "reduce": {"Reducer", "Expression", "From", "Options"},
             "formula": {"Formula"},
             "which": {"Conditions", "From"},
-            "happens": {"At moment", "Result"},
         }[form]
-        for label in ("Reducer", "Expression", "Formula", "Conditions", "At moment", "Result", "From", "Options"):
+        for label in ("Reducer", "Expression", "Formula", "Conditions", "At moment", "From", "Options"):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
             if hasattr(w, "setVisible"):
@@ -734,7 +727,6 @@ class KpiForm(QWidget):
                     if wid:
                         wid.setVisible(label in visible)
         self.rows["From"][0].setText("Between" if form in ("reduce", "which") else "From")
-        self.rows["At moment"][0].setText("Moment" if form == "happens" else "At moment")
 
     def form_changed(self):
         form = self.form.currentData()
@@ -768,10 +760,6 @@ class KpiForm(QWidget):
                     k["args"] = args
             except Exception:  # noqa: BLE001
                 pass
-        elif form == "happens":
-            k["happens"] = self.at.currentText()
-            if self.when.currentData() == "not_found":
-                k["when"] = "not_found"
         elif form == "which":
             k["which"] = self.which.items()
             if (self.m1.currentText(), self.m2.currentText()) != ("start", "end"):

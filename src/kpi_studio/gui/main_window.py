@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
             self.open_panel("Events & KPIs")
             self.kpi_page.kpis.setCurrentRow(row)
             form = self.kpi_page.kpi_form
-            target = {"at": form.at, "happens": form.at, "when": form.when, "duration": form.m1, "between": form.m1, "value": form.expr, "of": form.expr,
+            target = {"at": form.at, "duration": form.m1, "between": form.m1, "value": form.expr, "of": form.expr,
                       "formula": form.formula, "reduce": form.reducer, "event": form.event}.get(field)
             if target is not None and target.isVisible():
                 target.setFocus()

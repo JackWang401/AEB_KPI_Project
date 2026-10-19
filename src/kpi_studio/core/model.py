@@ -222,15 +222,12 @@ class KpiDef(_Strict):
     # which form: {label: condition}; the result names the conditions met anywhere in the range,
     # e.g. "PB + FB" (labels joined in this order), or "none"
     which: Optional[dict[str, str]] = None
-    # happens form: 1 when the moment is found (when: found) or not found (when: not_found), else 0
-    happens: Optional[str] = None
-    when: Optional[str] = None
 
     @model_validator(mode="after")
     def _one_form(self):
         if self.use:
             others = [k for k in ("name", "event", "value", "at", "duration", "reduce", "of", "between", "formula",
-                                  "which", "happens", "when")
+                                  "which")
                       if getattr(self, k) is not None]
             if others:
                 raise ValueError(f"'use' entries only accept 'as'; remove {others}")
@@ -248,12 +245,11 @@ class KpiDef(_Strict):
             ("reduce", self.reduce is not None),
             ("formula", self.formula is not None),
             ("which", self.which is not None),
-            ("happens", self.happens is not None),
         ) if present]
         if len(forms) != 1:
             raise ValueError(
                 f"KPI '{self.name}' needs exactly one of 'value' (+ 'at'), 'duration', 'reduce' (+ 'of') "
-                f"'formula', 'which' or 'happens'"
+                f"'formula' or 'which'"
             )
         form = forms[0]
         if form == "value" and not self.at:
@@ -269,12 +265,6 @@ class KpiDef(_Strict):
         if form == "which" and (not self.which or not all(str(k).strip() and str(v).strip()
                                                           for k, v in self.which.items())):
             raise ValueError(f"KPI '{self.name}': 'which' needs at least one label with a condition")
-        if form == "happens" and not str(self.happens).strip():
-            raise ValueError(f"KPI '{self.name}': 'happens' needs a moment name")
-        if form != "happens" and self.when is not None:
-            raise ValueError(f"KPI '{self.name}': 'when' is only used with 'happens'")
-        if self.when is not None and self.when not in ("found", "not_found"):
-            raise ValueError(f"KPI '{self.name}': 'when' must be 'found' or 'not_found'")
         return self
 
     @property
@@ -287,8 +277,6 @@ class KpiDef(_Strict):
             return "formula"
         if self.which is not None:
             return "which"
-        if self.happens is not None:
-            return "happens"
         return "reduce"
 
 

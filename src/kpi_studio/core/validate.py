@@ -118,8 +118,6 @@ def kpi_unit(kdef: KpiDef, units: Mapping[str, str]) -> str:
         inferred = "s"
     elif kdef.form == "which":
         return ""  # a text result
-    elif kdef.form == "happens":
-        return ""  # 1 / 0
     elif kdef.form == "reduce" and kdef.reduce:
         try:
             spec = toolbox.get("reducer", kdef.reduce)
@@ -310,8 +308,6 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         elif kdef.form == "duration":
             for m in kdef.duration:
                 check_moment(m, "duration")
-        elif kdef.form == "happens":
-            check_moment(kdef.happens, "happens")
         elif kdef.form == "which":
             ck.which = [(label, cexpr(f"{where}.which.{label}", cond)) for label, cond in kdef.which.items()]
             for m in kdef.between or ():

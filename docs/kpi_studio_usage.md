@@ -39,10 +39,7 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    integrated between two moments, in m, converted from the speed signal's own unit),
    a formula, or *which conditions are met*: a text result such as `PB + FB` naming the
    conditions met between two moments, e.g. which braking functions were active in the window; each condition is a signal, operator and
-   value, with an enum signal's values to pick, or *expression* to type a longer one), or *moment happens
-   (yes/no)*: 1 when a moment of the event is found (or, with *1 when the moment is not found*, when it never
-   happens), else 0. Put a pass/fail condition in the event's Moments as a `first` moment (e.g. `stop_failed`:
-   `ego_speed_kph > 0 and falling(fb_state == ACTIVE)`, after `start`) and pick it here. Every window in a file is found, each one a separate occurrence. The rule
+   value, with an enum signal's values to pick, or *expression* to type a longer one). Every window in a file is found, each one a separate occurrence. The rule
    before *Start when* / *End when* picks which time the condition is met: *first* (the default),
    or *last* (start at the last time it becomes true before the end; end at the last time it is met
    before the next start). *Edit condition* writes conditions for you, including value changes:
