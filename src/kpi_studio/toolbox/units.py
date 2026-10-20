@@ -31,6 +31,7 @@ _UNITS: dict[str, tuple[str, float]] = {
     "mbar": ("pressure", 1e2),
     "bar": ("pressure", 1e5),
     "%": ("ratio", 1.0),
+    "%/s": ("ratio_rate", 1.0),
     "1/m": ("curvature", 1.0),
     "nm": ("torque", 1.0),
 }

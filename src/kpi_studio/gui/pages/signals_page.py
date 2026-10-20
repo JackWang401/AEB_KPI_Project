@@ -108,7 +108,7 @@ class KindDelegate(QStyledItemDelegate):
 
 
 UNIT_CHOICES = ["m/s", "km/h", "mph", "deg/s", "deg", "rad", "rad/s", "m/s^2", "m/s^3", "m", "cm", "km", "s", "ms",
-                "g"]
+                "g", "%", "%/s"]
 NO_UNIT = "(no unit)"
 
 
