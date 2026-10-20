@@ -267,13 +267,28 @@ class ExprEdit(QLineEdit):
         self.picker.picked.connect(self.insert_name)
         self.picker.popup(self.mapToGlobal(self.rect().bottomLeft()))
 
+    KEYWORDS = {"and", "or", "not", "in", "True", "False", "true", "false"}
+
+    def name_at_cursor(self) -> Optional[tuple[int, int]]:
+        """(start, end) of the signal / value name the cursor is in or right next to, if any."""
+        text, pos = self.text(), self.cursorPosition()
+        for m in re.finditer(r"[A-Za-z_]\w*", text):
+            if m.start() <= pos <= m.end() and m.group() not in self.KEYWORDS \
+                    and not text[m.end():].lstrip().startswith("("):  # a function name stays
+                return m.start(), m.end()
+        return None
+
     def insert_name(self, name: str):
-        """Insert `name` at the cursor (replacing a selection), with spaces around it as needed."""
+        """Put `name` in the field: it replaces a selection, else the name the cursor is in or next to
+        (picking another signal swaps it), else it is inserted at the cursor with spaces as needed."""
         text, pos = self.text(), self.cursorPosition()
         if self.hasSelectedText():
             start = self.selectionStart()
             text = text[:start] + text[start + len(self.selectedText()):]
             pos = start
+        elif (span := self.name_at_cursor()) is not None:
+            text = text[:span[0]] + text[span[1]:]
+            pos = span[0]
         before, after = text[:pos], text[pos:]
         lead = " " if before and not before.endswith((" ", "(", ",")) else ""
         trail = " " if after and not after.startswith((" ", ")", ",")) else ""

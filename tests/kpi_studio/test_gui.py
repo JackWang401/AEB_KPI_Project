@@ -1617,6 +1617,20 @@ def test_expression_picker_offers_the_values_of_enum_signals_in_the_text(qtbot):
     assert sections["Values of fb_state"] == ["OFF", "READY"]
     e.insert_name("READY")
     assert e.text() == "gear == D and fb_state == READY"
+    e.insert_name("OFF")  # picking again swaps the value next to the cursor
+    assert e.text() == "gear == D and fb_state == OFF"
+    e.setText("gap_dist")
+    e.setCursorPosition(len(e.text()))
+    e.insert_name("speed")  # a picked signal replaces the one in the field
+    assert e.text() == "speed"
+    e.setText("speed > 0 and ")
+    e.setCursorPosition(len(e.text()))
+    e.insert_name("gear")  # after a keyword and a space: added
+    assert e.text() == "speed > 0 and gear"
+    e.setText("abs(speed) > 1")
+    e.setCursorPosition(len("abs"))
+    e.insert_name("gear")  # a function name is not swapped
+    assert e.text().startswith("abs ") and "gear" in e.text()
 
 
 def test_condition_builder_groups_rows_with_brackets(qtbot):
