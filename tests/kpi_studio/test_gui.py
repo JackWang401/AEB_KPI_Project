@@ -132,6 +132,32 @@ def test_moments_and_ranges_heights_are_adjustable(qtbot, window, mf4_dir):
     assert sp.sizes()[1] > b
 
 
+def test_resize_places_show_the_resize_cursor_and_tip(qtbot, window, mf4_dir):
+    from PySide6.QtWidgets import QSplitter
+
+    from src.kpi_studio.gui.widgets import resize_cursor
+    from src.kpi_studio.gui.widgets.side_bar import ResizeGrip
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1400, 900)
+    window.show()
+    window.open_panel("Events & KPIs")
+    qtbot.wait(50)
+    splitters = window.findChildren(QSplitter)
+    assert len(splitters) >= 3
+    for sp in splitters:
+        for i in range(1, sp.count()):
+            h = sp.handle(i)
+            if h.isVisible():
+                assert h.cursor().shape() == Qt.BitmapCursor and h.toolTip() == "Drag to resize"
+                horizontal = sp.orientation() == Qt.Horizontal
+                assert h.cursor().pixmap().toImage() == resize_cursor.cursor(horizontal).pixmap().toImage()
+    grips = window.findChildren(ResizeGrip)
+    assert grips and all(g.cursor().shape() == Qt.BitmapCursor and g.toolTip() == "Drag to resize" for g in grips)
+    # table column borders keep Qt's own cursor
+    assert window.kpi_page.event_form.moments.horizontalHeader().cursor().shape() != Qt.BitmapCursor
+
+
 def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
     import yaml
 
@@ -1870,7 +1896,7 @@ def test_drag_the_border_to_widen_the_value_list(qtbot, window, mf4_dir):
     assert viewer.on_side_border(ev)
     assert not viewer.on_side_border(SimpleNamespace(x=x1 - 80, y=y))
     viewer._on_motion(ev)
-    assert viewer.canvas.cursor().shape() == Qt.SplitHCursor
+    assert viewer.canvas.cursor().shape() == Qt.BitmapCursor and viewer.canvas.toolTip() == "Drag to resize"
     before = viewer.side_px
     viewer._on_press(ev)
     viewer._on_motion(SimpleNamespace(x=x1 - 150 * viewer.canvas.devicePixelRatioF(), y=y, button=1,

@@ -45,6 +45,7 @@ from src.kpi_studio.core.align import build_frame
 from src.kpi_studio.core.engine import FileEvaluator
 from src.kpi_studio.core.model import signal_units
 from src.kpi_studio.core.results import FileOutcome, Status
+from src.kpi_studio.gui.widgets import resize_cursor
 from src.kpi_studio.gui.widgets.common import make_canvas
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import read_signals
@@ -353,6 +354,7 @@ class SignalViewer(QWidget):
         self._dragging = None
         self.side_px = MARGIN_PX["right"]  # width of the signal / value list right of the plots (drag its border)
         self._side_drag = False
+        self._on_border = False  # the pointer is on the side panel border (resize cursor shown)
         self._zoom = None  # right-drag zoom in progress: (axes, x0, y0, px0, py0, rectangle)
         self.host: dict[str, str] = {}       # signal -> signal whose subplot it is drawn in (drag and drop)
         self.common: dict[str, str] = {}     # signal -> name of the common axis it shares (right-click)
@@ -1650,9 +1652,13 @@ class SignalViewer(QWidget):
             self.set_side_width((self.fig.bbox.width - event.x) / ratio)
             return
         if self.on_side_border(event):
-            self.canvas.setCursor(Qt.SplitHCursor)
-        elif self.canvas.cursor().shape() == Qt.SplitHCursor:
+            if not self._on_border:
+                self._on_border = True
+                resize_cursor.apply(self.canvas)
+        elif self._on_border:
+            self._on_border = False
             self.canvas.unsetCursor()
+            self.canvas.setToolTip("")
         if self._dragging is not None and event.xdata is not None and event.inaxes in self._axes:
             self.set_cursor(self._dragging, event.xdata)
 

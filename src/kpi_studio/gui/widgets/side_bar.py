@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.kpi_studio.gui.widgets import resize_cursor
+
 STRIP_WIDTH = 30
 
 
@@ -73,8 +75,7 @@ class ResizeGrip(QWidget):
     def __init__(self, bar: "SideBar", index: int, parent: QWidget):
         super().__init__(parent)
         self.bar, self.index = bar, index
-        self.setCursor(Qt.SizeHorCursor)
-        self.setToolTip("Drag to resize")
+        resize_cursor.apply(self)
         self._start = None
 
     def mousePressEvent(self, e):
