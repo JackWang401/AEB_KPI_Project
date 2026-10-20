@@ -230,7 +230,7 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             discrete.add(n)
 
     # ---------------- events
-    moment_tools = set(toolbox.names("moment"))
+    moment_tools = set(toolbox.names("moment", include_hidden=True))  # older profiles may use hidden ones
     events: dict[str, CompiledEvent] = {}
     for ename, edef in profile.events.items():
         ce = CompiledEvent(name=ename, defn=edef)

@@ -118,6 +118,8 @@ class ToolSpec:
     origin: str = "builtin"
     input_names: tuple = field(default=())
     input_unit: str = ""  # the unit the input is converted to before the call, e.g. "m/s" (reducers)
+    # not offered in the toolbox (domain-specific helpers kept so older profiles still run)
+    hidden: bool = False
 
     @property
     def summary(self) -> str:
@@ -185,6 +187,7 @@ def tool(
     input_names: tuple = (),
     origin: str = "builtin",
     input_unit: str = "",
+    hidden: bool = False,
 ):
     """Register a toolbox function."""
     if kind not in KINDS:
@@ -204,6 +207,7 @@ def tool(
             origin=origin,
             input_names=tuple(input_names),
             input_unit=input_unit,
+            hidden=hidden,
         )
         register(spec)
         return func
@@ -234,13 +238,15 @@ def find_expression_tool(name: str) -> Optional[ToolSpec]:
     return _REGISTRY["signal"].get(name) or _REGISTRY["condition"].get(name)
 
 
-def tools(kind: Optional[str] = None) -> list[ToolSpec]:
+def tools(kind: Optional[str] = None, include_hidden: bool = False) -> list[ToolSpec]:
+    """The tools offered (of one kind); `include_hidden` adds the ones kept only for older profiles."""
     kinds = [kind] if kind else list(KINDS)
     out = []
     for k in kinds:
-        out.extend(sorted(_REGISTRY[k].values(), key=lambda s: (s.category, s.name)))
+        out.extend(sorted((s for s in _REGISTRY[k].values() if include_hidden or not s.hidden),
+                          key=lambda s: (s.category, s.name)))
     return out
 
 
-def names(kind: str) -> list[str]:
-    return sorted(_REGISTRY[kind])
+def names(kind: str, include_hidden: bool = False) -> list[str]:
+    return sorted(n for n, s in _REGISTRY[kind].items() if include_hidden or not s.hidden)

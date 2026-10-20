@@ -475,6 +475,7 @@ class EventForm(QWidget):
     def load_moments(self):
         moments = self.ev.get("moments", {}) or {}
         tools = toolbox.names("moment")
+        known = toolbox.names("moment", include_hidden=True)  # an older profile may use one no longer offered
         self.moments.blockSignals(True)
         self.moments.setRowCount(len(moments))
         for r, (mname, raw) in enumerate(moments.items()):
@@ -482,14 +483,15 @@ class EventForm(QWidget):
             if "offset" in raw:
                 rule, target = "offset", raw.pop("offset")
             else:
-                rule = next((k for k in raw if k in tools), tools[0])
+                rule = next((k for k in raw if k in known), tools[0])
                 target = raw.pop(rule, "")
             name_item = QTableWidgetItem(mname)
             name_item.setData(Qt.UserRole, mname)
             self.moments.setItem(r, 0, name_item)
             combo = QComboBox()
-            combo.addItems(tools + ["offset"])
-            for i, t in enumerate(tools + ["offset"]):
+            rules = tools + ([rule] if rule not in tools and rule != "offset" else []) + ["offset"]
+            combo.addItems(rules)
+            for i, t in enumerate(rules):
                 combo.setItemData(i, self.rule_help(t), Qt.ToolTipRole)
             combo.setCurrentText(rule)
             combo.setToolTip(self.rule_help(rule))

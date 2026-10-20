@@ -29,7 +29,7 @@ def _call(spec, t, x):
     return spec.func(ctx, *([x] * n_in), **params)
 
 
-ALL = [s for s in toolbox.tools()]
+ALL = [s for s in toolbox.tools(include_hidden=True)]  # hidden ones still run older profiles
 
 
 @pytest.mark.parametrize("spec", ALL, ids=lambda s: f"{s.kind}:{s.name}")
@@ -81,3 +81,15 @@ def test_user_tools_are_loaded_and_marked(tmp_path):
         "    return x * 2\n")
     loaded = toolbox.load_user_tools(tmp_path)
     assert loaded and toolbox.get("signal", "double_it").origin == "user"
+
+
+def test_domain_specific_tools_are_not_offered_but_still_run():
+    from src.kpi_studio.core.expr import compile_expr
+
+    hidden = {"decel_onset", "jerk_end", "vehicle_stop", "jerk", "to_kph", "to_mps", "to_g", "rel_speed", "ttc",
+              "distance_travelled"}
+    offered = {s.name for s in toolbox.tools()}
+    assert not hidden & offered
+    assert hidden <= {s.name for s in toolbox.tools(include_hidden=True)}
+    assert "Braking" not in {s.category for s in toolbox.tools("moment")}
+    compile_expr("ttc(d, v) + jerk(a)", names={"d", "v", "a"})  # an older profile's expressions still compile

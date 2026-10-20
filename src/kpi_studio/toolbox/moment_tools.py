@@ -112,7 +112,7 @@ def first_nonzero(ctx, x, tol):
     return _t(ctx, idx[0]) if idx.size else None
 
 
-@tool("moment", "Braking", input_names=("jerk",), params=(
+@tool("moment", "Braking", hidden=True, input_names=("jerk",), params=(
     Param("threshold", float, example=-20.0, doc="negative jerk threshold (m/s^3)"),
 ))
 def decel_onset(ctx, jerk, threshold):
@@ -121,7 +121,7 @@ def decel_onset(ctx, jerk, threshold):
     return _t(ctx, detect_decel_onset(j, threshold))
 
 
-@tool("moment", "Braking", input_names=("jerk",), params=(
+@tool("moment", "Braking", hidden=True, input_names=("jerk",), params=(
     Param("threshold", float, example=20.0, doc="positive jerk threshold (m/s^3)"),
 ))
 def jerk_end(ctx, jerk, threshold):
@@ -130,7 +130,7 @@ def jerk_end(ctx, jerk, threshold):
     return _t(ctx, detect_brake_jerk_end(j, threshold, -1))
 
 
-@tool("moment", "Braking", input_names=("speed",), params=(
+@tool("moment", "Braking", hidden=True, input_names=("speed",), params=(
     Param("threshold", float, 0.01, min=0.0, doc="speed at or below this counts as stopped"),
     Param("hold", float, 0.0, min=0.0, doc="must stay stopped this long (s)"),
 ))

@@ -118,7 +118,7 @@ def derivative(ctx, x):
     return np.gradient(x, ctx.time)
 
 
-@tool("signal", "Calculus", unit="m/s^3", input_names=("accel",))
+@tool("signal", "Calculus", hidden=True, unit="m/s^3", input_names=("accel",))
 def jerk(ctx, accel):
     """Jerk = derivative of acceleration, as used by the current latency/brake-jerk KPIs."""
     return derivative(ctx, accel)
@@ -226,13 +226,13 @@ def hypot(ctx, x, y):
 
 
 # --------------------------------------------------------------------------- units
-@tool("signal", "Units", unit="km/h", input_names=("speed_mps",))
+@tool("signal", "Units", hidden=True, unit="km/h", input_names=("speed_mps",))
 def to_kph(ctx, speed_mps):
     """m/s -> km/h."""
     return _f(speed_mps) * 3.6
 
 
-@tool("signal", "Units", unit="m/s", input_names=("speed_kph",))
+@tool("signal", "Units", hidden=True, unit="m/s", input_names=("speed_kph",))
 def to_mps(ctx, speed_kph):
     """km/h -> m/s."""
     return _f(speed_kph) / 3.6
@@ -250,7 +250,7 @@ def to_rad(ctx, x):
     return np.radians(_f(x))
 
 
-@tool("signal", "Units", unit="g")
+@tool("signal", "Units", hidden=True, unit="g")
 def to_g(ctx, x):
     """m/s^2 -> g."""
     return _f(x) / 9.80665
@@ -266,13 +266,13 @@ def convert(ctx, x, from_unit, to_unit):
 
 
 # --------------------------------------------------------------------------- kinematics
-@tool("signal", "Kinematics", inputs=2, unit="m/s", input_names=("ego_speed", "obj_speed"))
+@tool("signal", "Kinematics", hidden=True, inputs=2, unit="m/s", input_names=("ego_speed", "obj_speed"))
 def rel_speed(ctx, ego_speed, obj_speed):
     """Closing speed ego - object (positive = approaching), same unit as inputs."""
     return _f(ego_speed) - _f(obj_speed)
 
 
-@tool("signal", "Kinematics", inputs=2, unit="s", input_names=("distance", "closing_speed"), params=(
+@tool("signal", "Kinematics", hidden=True, inputs=2, unit="s", input_names=("distance", "closing_speed"), params=(
     Param("min_closing", float, 0.1, min=0.0, doc="below this closing speed TTC is NaN"),
     Param("max_ttc", float, 20.0, min=0.0, doc="values above are clipped to NaN"),
 ))
@@ -287,7 +287,7 @@ def ttc(ctx, distance, closing_speed, min_closing, max_ttc):
     return out
 
 
-@tool("signal", "Kinematics", unit="m", input_names=("speed_mps",))
+@tool("signal", "Kinematics", hidden=True, unit="m", input_names=("speed_mps",))
 def distance_travelled(ctx, speed_mps):
     """Cumulative distance from speed (m/s), trapezoidal integration."""
     return integral(ctx, speed_mps)

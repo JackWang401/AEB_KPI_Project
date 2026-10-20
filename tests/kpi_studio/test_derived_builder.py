@@ -13,7 +13,7 @@ M = {m.key: m for m in methods()}
     ("subtract", ["a", "b"], {}, "a - b"),
     ("lowpass", ["a"], {"cutoff_hz": "10", "order": "4"}, "lowpass(a, 10)"),
     ("lowpass", ["a"], {"cutoff_hz": "10", "order": "2"}, "lowpass(a, 10, 2)"),
-    ("ttc", ["d", "v"], {"min_closing": "0.1", "max_ttc": "10"}, "ttc(d, v, max_ttc=10)"),
+    ("clip", ["a"], {"lo": "-1", "hi": "1"}, "clip(a, -1, 1)"),
     ("convert", ["p"], {"from_unit": "bar", "to_unit": "kpa"}, 'convert(p, "bar", "kpa")'),
 ])
 def test_build_and_parse_round_trip(key, sigs, args, expr):
