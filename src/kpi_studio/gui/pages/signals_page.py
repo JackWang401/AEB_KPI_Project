@@ -107,6 +107,40 @@ class KindDelegate(QStyledItemDelegate):
         model.setData(index, editor.currentText())
 
 
+UNIT_CHOICES = ["m/s", "km/h", "mph", "deg/s", "deg", "rad", "rad/s", "m/s^2", "m/s^3", "m", "cm", "km", "s", "ms",
+                "g"]
+NO_UNIT = "(no unit)"
+
+
+class UnitDelegate(KindDelegate):
+    """The Unit column: a drop-down list of common units, opened with one click; another unit can be typed."""
+
+    def sizeHint(self, option, index):
+        hint = QStyledItemDelegate.sizeHint(self, option, index)
+        width = max(option.fontMetrics.horizontalAdvance(u) for u in UNIT_CHOICES) + 12 + self.ARROW
+        return QSize(max(hint.width(), width), hint.height())
+
+    def createEditor(self, parent, option, index):
+        box = QComboBox(parent)
+        box.setEditable(True)  # a unit not in the list (e.g. %, bar) can still be typed
+        box.setInsertPolicy(QComboBox.NoInsert)
+        box.addItems([NO_UNIT] + UNIT_CHOICES)
+        box.setMaxVisibleItems(len(UNIT_CHOICES) + 2)
+        box.activated.connect(lambda _i, b=box: (self.commitData.emit(b), self.closeEditor.emit(b)))
+        QTimer.singleShot(0, box.showPopup)
+        return box
+
+    def setEditorData(self, editor, index):
+        text = str(index.data() or "")
+        if text and editor.findText(text) < 0:
+            editor.insertItem(1, text)  # its own unit stays one click away
+        editor.setCurrentText(text or NO_UNIT)
+
+    def setModelData(self, editor, model, index):
+        text = editor.currentText().strip()
+        model.setData(index, "" if text == NO_UNIT else text)
+
+
 def _num(v) -> str:
     v = float(v)
     return str(int(v)) if v.is_integer() else repr(v)
@@ -231,8 +265,9 @@ class SignalsPage(QWidget):
         self.sig_table.setHorizontalHeaderLabels(self.SIG_COLS)
         self.sig_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         compact_table(self.sig_table, 2)
+        self.sig_table.setItemDelegateForColumn(2, UnitDelegate(self.sig_table))
         self.sig_table.setItemDelegateForColumn(3, KindDelegate(self.sig_table))
-        self.sig_table.clicked.connect(lambda ix: ix.column() == 3 and ix.flags() & Qt.ItemIsEditable
+        self.sig_table.clicked.connect(lambda ix: ix.column() in (2, 3) and ix.flags() & Qt.ItemIsEditable
                                        and self.sig_table.edit(ix))
         sl.addWidget(self.sig_table, 1)
         vsplit.addWidget(sig_box)
@@ -259,6 +294,8 @@ class SignalsPage(QWidget):
         self.der_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.der_table.setColumnWidth(2, 80)
         compact_table(self.der_table, 1)
+        self.der_table.setItemDelegateForColumn(2, UnitDelegate(self.der_table))
+        self.der_table.clicked.connect(lambda ix: ix.column() == 2 and self.der_table.edit(ix))
         dl.addWidget(self.der_table, 1)
         vsplit.addWidget(der_box)
 

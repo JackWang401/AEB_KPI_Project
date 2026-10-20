@@ -194,6 +194,33 @@ def test_no_event_presets_in_the_tool(qtbot, window, mf4_dir):
     assert ef.mode.isVisibleTo(ef) and ef.mode.currentIndex() == 1
 
 
+def test_unit_column_is_a_drop_down(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.pages.signals_page import NO_UNIT, UNIT_CHOICES, UnitDelegate
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    table = page.sig_table
+    assert isinstance(table.itemDelegateForColumn(2), UnitDelegate)
+    assert isinstance(page.der_table.itemDelegateForColumn(2), UnitDelegate)
+    name = table.item(0, 0).text()
+    ix = table.model().index(0, 2)
+    delegate = table.itemDelegateForColumn(2)
+    box = delegate.createEditor(table.viewport(), None, ix)
+    box.showPopup = lambda: None
+    assert [box.itemText(i) for i in range(box.count())] == [NO_UNIT] + UNIT_CHOICES
+    delegate.setEditorData(box, ix)
+    box.setCurrentText("km/h")
+    delegate.setModelData(box, table.model(), ix)
+    assert window.state.data["signals"][name]["unit"] == "km/h"
+    box.setCurrentText(NO_UNIT)
+    delegate.setModelData(box, table.model(), ix)
+    assert window.state.data["signals"][name].get("unit") is None
+    box.setCurrentText("bar")  # a unit not in the list can be typed
+    delegate.setModelData(box, table.model(), ix)
+    assert window.state.data["signals"][name]["unit"] == "bar"
+    box.deleteLater()
+
+
 def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
     import yaml
 
