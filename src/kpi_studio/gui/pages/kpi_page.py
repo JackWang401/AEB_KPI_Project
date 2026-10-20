@@ -220,7 +220,9 @@ class EventForm(QWidget):
         self.pre, self.post = _spin(), _spin()
         form.addRow("Name", self.name_edit)
         form.addRow("Description", self.desc)
-        form.addRow("Trigger", self.mode)
+        # presets are kept only for profiles that already use one: a new event is a start / end condition
+        self.mode_label = QLabel("Trigger")
+        form.addRow(self.mode_label, self.mode)
         self.start_label, self.end_label = QLabel("Start when"), QLabel("End when")
         form.addRow(self.start_label, srow)
         form.addRow(self.end_label, erow)
@@ -403,6 +405,8 @@ class EventForm(QWidget):
         self.post.setValue(float(w.get("post", 0) or 0))
         self.load_moments()
         self.load_ranges()
+        for w in (self.mode_label, self.mode):
+            w.setVisible(bool(preset))
         self._show_mode()
         self._loading = False
 

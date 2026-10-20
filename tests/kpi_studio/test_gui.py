@@ -181,6 +181,19 @@ def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
     assert form.unit.isReadOnly() and form.unit.text() != "km/h"
 
 
+def test_no_event_presets_in_the_tool(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    pal = page.palette
+    tops = [pal.tree.topLevelItem(i).text(0) for i in range(pal.tree.topLevelItemCount())]
+    assert not any("preset" in t.lower() for t in tops), tops
+    page.new_event()
+    ef = page.event_form
+    assert not ef.mode.isVisibleTo(ef) and ef.start.isVisibleTo(ef)  # a new event is a condition
+    page.select_event("aeb")  # the example still runs on its preset, which stays editable
+    assert ef.mode.isVisibleTo(ef) and ef.mode.currentIndex() == 1
+
+
 def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
     import yaml
 

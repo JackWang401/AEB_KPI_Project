@@ -345,7 +345,7 @@ class ToolPalette(QWidget):
 
     insert_requested = Signal(str)
 
-    def __init__(self, kinds=("signal", "condition", "moment", "reducer", "event"), parent=None,
+    def __init__(self, kinds=("signal", "condition", "moment", "reducer"), parent=None,
                  names_fn: Optional[Callable[[], list[str]]] = None):
         super().__init__(parent)
         self.kinds = kinds
