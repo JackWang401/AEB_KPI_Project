@@ -724,9 +724,9 @@ class KpiForm(QWidget):
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
-        self.unit = QLineEdit()  # shows the unit taken from the signal; typed only for formulas
+        self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
-                             "Only a formula needs a unit typed in.")
+                             "When the signal has no unit, and for a formula, type one here.")
         self.desc = QLineEdit()
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
@@ -867,6 +867,9 @@ class KpiForm(QWidget):
         if form == "formula":
             if self.unit.text().strip():
                 k["unit"] = self.unit.text().strip()
+        elif not self.unit.isReadOnly():  # the signal has no unit: the one typed in
+            if self.unit.text().strip():
+                k["unit"] = self.unit.text().strip()
         elif self.k.get("unit"):
             k["unit"] = self.k["unit"]  # kept as a fallback when the signal has no unit
         if self.desc.text().strip():
@@ -878,21 +881,31 @@ class KpiForm(QWidget):
         self.update_unit(k)
 
     def update_unit(self, k: dict):
-        """Show the unit the KPI gets from its signal; editable only for formulas."""
+        """Show the unit the KPI gets from its signal; typed in for formulas and when the signal has none."""
         formula = k.get("formula") is not None
-        self.unit.setReadOnly(not formula)
-        self.unit.setStyleSheet("" if formula else "QLineEdit { background: transparent; border: none; }")
         if formula:
-            self.unit.setText(k.get("unit", "") or "")
-            self.unit.setPlaceholderText("unit of the formula (optional)")
+            self._unit_editable(True, k.get("unit", "") or "", "unit of the formula (optional)")
+            return
+        if k.get("which") is not None:
+            self._unit_editable(False, "", "none: the result is text")
             return
         units = signal_units(self.state.resolved) if self.state.resolved is not None else {}
         try:
-            unit = kpi_unit(KpiDef.model_validate({kk: v for kk, v in k.items() if v is not None}), units)
+            inferred = kpi_unit(KpiDef.model_validate({kk: v for kk, v in k.items()
+                                                       if v is not None and kk != "unit"}), units)
         except Exception:  # noqa: BLE001 - incomplete KPI
-            unit = ""
-        self.unit.setText(unit)
-        self.unit.setPlaceholderText("from the signal (it has no unit)")
+            inferred = ""
+        if inferred:
+            self._unit_editable(False, inferred, "")
+        else:
+            self._unit_editable(True, k.get("unit", "") or "", "the signal has no unit: type one (optional)")
+
+    def _unit_editable(self, editable: bool, text: str, placeholder: str):
+        self.unit.setReadOnly(not editable)
+        self.unit.setStyleSheet("" if editable else "QLineEdit { background: transparent; border: none; }")
+        if not self.unit.hasFocus():
+            self.unit.setText(text)
+        self.unit.setPlaceholderText(placeholder)
 
     def rename(self):
         new = self.name_edit.text().strip()

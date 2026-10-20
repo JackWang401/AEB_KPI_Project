@@ -158,6 +158,29 @@ def test_resize_places_show_the_resize_cursor_and_tip(qtbot, window, mf4_dir):
     assert window.kpi_page.event_form.moments.horizontalHeader().cursor().shape() != Qt.BitmapCursor
 
 
+def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    window.state.validate_now()
+    page = window.kpi_page
+    page.new_kpi()
+    form = page.kpi_form
+    form.event.setCurrentText("aeb")
+    form.expr.setText("egoSpeedKph")  # no unit in the test profile
+    form.expr.editingFinished.emit()
+    assert not form.unit.isReadOnly() and form.unit.text() == ""
+    form.unit.setText("km/h")
+    form.unit.editingFinished.emit()
+    assert window.state.data["kpis"][-1]["unit"] == "km/h"
+    window.state.validate_now()
+    name = window.state.data["kpis"][-1]["name"]
+    assert next(k.unit for k in window.state.compiled.kpis if k.defn.name == name) == "km/h"
+    form.load(len(window.state.data["kpis"]) - 1)
+    assert form.unit.text() == "km/h" and not form.unit.isReadOnly()
+    form.expr.setText("longActAccel")  # has a unit: shown, not typed
+    form.expr.editingFinished.emit()
+    assert form.unit.isReadOnly() and form.unit.text() != "km/h"
+
+
 def test_moment_pairs_become_named_ranges(tmp_path, qtbot, window):
     import yaml
 
