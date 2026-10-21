@@ -151,3 +151,22 @@ def test_runs_collect_in_one_excel_replacing_the_same_file(mf4_dir, tmp_path):
     res = RunService(PROFILE, [a], root).run()  # no version typed this time: the earlier one stays
     summary = pd.read_excel(res.excel, sheet_name="Summary")
     assert set(summary[summary["File"] == a]["SW version"]) == {"v2"}
+
+
+def test_yes_no_kpis_are_true_false_in_the_summary(mf4_dir, tmp_path):
+    folder, _ = mf4_dir
+    text = PROFILE.read_text().replace(
+        "  # a custom KPI on top of the library event\n",
+        "  - { name: fast, event: aeb_core.aeb, value: egoSpeedKph > 50, at: start }\n"
+        "  - { name: braked, event: aeb_core.aeb, reduce: any, of: longActAccelFlt < -2, over: event }\n"
+        "  - { name: slow_fail, event: aeb_core.aeb, formula: fast == 0 and braked == 1 }\n")
+    profile = PROFILE.parent / "zz_bool_test.kpi.yaml"
+    try:
+        profile.write_text(text)
+        res = RunService(profile, [str(folder / "a.mf4"), str(folder / "b.mf4")], tmp_path / "out").run()
+    finally:
+        profile.unlink()
+    summary = pd.read_excel(res.excel, sheet_name="Summary")
+    assert summary["fast"].tolist() == [False, False, True]  # 40, 40, 60 km/h
+    assert summary["braked"].dtype == bool and summary["slow_fail"].tolist() == [True, True, False]
+    assert summary["vehSpd [km/h]"].dtype == float  # numbers stay numbers

@@ -28,8 +28,10 @@ def kpi_header(name: str, unit: str) -> str:
 
 
 def summary_table(outcomes: list, kpi_order: list[str], units: dict[str, str],
-                  event: Optional[str] = None) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
-    """One row per occurrence, one column per KPI. Returns (frame, failed cell positions)."""
+                  event: Optional[str] = None, bools: frozenset = frozenset()
+                  ) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
+    """One row per occurrence, one column per KPI; `bools` KPIs (yes / no) show TRUE / FALSE.
+    Returns (frame, failed cell positions)."""
     occ = to_frame([o for out in outcomes for o in out.occurrences])
     res = to_frame([r for out in outcomes for r in out.results])
     base_cols = ["File", "Event", "Occurrence", "Start [s]", "End [s]"]
@@ -52,6 +54,8 @@ def summary_table(outcomes: list, kpi_order: list[str], units: dict[str, str],
         col = []
         for i, row in rows.iterrows():
             value, status = lookup.get((row["File"], row["Event"], row["Occurrence"], k), (None, None))
+            if k in bools and isinstance(value, (int, float)) and pd.notna(value):
+                value = bool(round(value))
             col.append(value)
             if status is not None and status != Status.OK:
                 failed.append((i, len(base_cols) + j))
@@ -149,7 +153,8 @@ def read_previous(path: Optional[Path]) -> dict:
 
 def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], units: dict[str, str],
                    events: list[str], run_info: list[tuple[str, str]], profile_text: str,
-                   previous: Optional[dict] = None, versions: Optional[dict] = None) -> Path:
+                   previous: Optional[dict] = None, versions: Optional[dict] = None,
+                   bools: frozenset = frozenset()) -> Path:
     """`previous`: sheets of the earlier workbook (read_previous). Its rows of files this run did not
     process are kept; rows of the same file (exact path) are replaced by this run's."""
     path = Path(path)
@@ -173,7 +178,7 @@ def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], un
             details = _merge(previous.get("Details"), _with_version(details, "file", versions), "file", replaced,
                              ["file", "event", "occurrence"])
 
-            summary, _ = summary_table(outcomes, kpi_order, units)
+            summary, _ = summary_table(outcomes, kpi_order, units, bools=bools)
             summary = _merge(previous.get("Summary"), _with_version(summary, "File", versions), "File", replaced,
                              ["File", "Event", "Occurrence"])
             name = _sheet_name("Summary", used)

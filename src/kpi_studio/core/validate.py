@@ -64,6 +64,13 @@ class CompiledKpi:
     scale: float = 1.0  # reduce: converts `of` to the unit the reducer takes (e.g. km/h -> m/s for distance)
 
     @property
+    def is_bool(self) -> bool:
+        """A yes / no KPI (a condition, a formula of conditions, any / all): reported as true / false."""
+        if self.defn.form in ("value", "formula"):
+            return self.value is not None and self.value.is_bool
+        return self.reducer is not None and self.reducer.unit == "bool"
+
+    @property
     def name(self) -> str:
         return self.defn.name
 
