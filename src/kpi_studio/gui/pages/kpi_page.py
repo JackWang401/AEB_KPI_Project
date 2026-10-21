@@ -827,6 +827,7 @@ class KpiForm(QWidget):
         for w in (self.args, self.unit, self.desc):
             w.editingFinished.connect(self.save)
         self.expr.focused.connect(page.set_target)
+        self._show_form("value")  # until a KPI is loaded: no hidden form's rows widen the panel
 
     @property
     def k(self) -> dict:
@@ -1079,8 +1080,8 @@ class KpiPage(QWidget):
         # size the scroll area to the shown form only (a stacked widget otherwise takes its largest page)
         def fit_current(_i):
             for w in (self.empty, self.event_form, self.kpi_form, self.lib_note):
-                w.setSizePolicy(QSizePolicy.Preferred,
-                                QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored)
+                p = QSizePolicy.Preferred if w is self.stack.currentWidget() else QSizePolicy.Ignored
+                w.setSizePolicy(p, p)  # a hidden form's wide rows (e.g. a formula's) don't widen it either
             self.stack.adjustSize()
         self.stack.currentChanged.connect(fit_current)
         # in a narrow panel the fields get narrower; buttons beside them (Edit condition) stay in view

@@ -2494,3 +2494,29 @@ def test_formula_is_built_from_rows_of_earlier_kpis(qtbot, window, mf4_dir):
     assert f.typed.isChecked() and f.line.text() == "spd / gap" and f.text() == "spd / gap"
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
+
+
+def test_a_formula_kpi_does_not_widen_the_events_form(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QPoint
+
+    _load(qtbot, window, mf4_dir)
+    window.resize(1100, 800)
+    window.show()
+    bar = window.side_bar
+    i = bar.titles.index("Events & KPIs")
+    bar.set_width(i, 900)
+    bar.open(i, sticky=True)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 0.5"}
+    state.data["kpis"] += [{"name": "a", "event": "served", "value": "egoSpeed", "at": "start"},
+                           {"name": "f", "event": "served", "formula": "a > 1 or a < 0"}]
+    state.edited(structure=True)
+    kp = window.kpi_page
+    kp.kpis.setCurrentRow(len(state.data["kpis"]) - 1)  # the formula's rows are shown
+    qtbot.wait(50)
+    kp.events.setCurrentRow(list(state.data["events"]).index("served"))
+    qtbot.wait(100)
+    view = kp.form_scroll.viewport()
+    for b in kp.event_form.build_buttons:
+        assert b.mapTo(view, QPoint(b.width(), 0)).x() <= view.width()
+    assert kp.form_scroll.horizontalScrollBar().maximum() == 0
