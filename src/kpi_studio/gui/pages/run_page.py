@@ -299,6 +299,9 @@ class RunPage(QWidget):
             self.colour_count.setValue(needed)
         for k in range(self.MAX_COLOUR - 1):
             self.plots.setColumnHidden(self.MORE_COLOUR + k, k + 2 > self.colour_count.value())
+        timeseries = any(p.get("type") == "timeseries" for p in plots)
+        for col in (5, 6):  # Event and Signals only matter for timeseries plots
+            self.plots.setColumnHidden(col, not timeseries)
         self._loading = False
 
     def set_colour_count(self, n: int):

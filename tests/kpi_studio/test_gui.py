@@ -2591,3 +2591,15 @@ def test_colour_by_columns_in_the_plot_table(qtbot, window, mf4_dir):
     window.state.data["plots"][1]["also_color_by"] = ["file"]
     window.state.validate_now()
     assert any("scatter plots only" in str(i) for i in window.state.issues)
+
+
+def test_timeseries_columns_show_only_for_timeseries_plots(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.run_page
+    kpis = window.state.kpi_names()
+    window.state.data["plots"] = [{"type": "scatter", "x": kpis[0], "y": kpis[1]}]
+    window.state.edited(structure=True)
+    page.refresh_plots()
+    assert page.plots.isColumnHidden(5) and page.plots.isColumnHidden(6)
+    page.plots.cellWidget(0, 0).setCurrentText("timeseries")
+    qtbot.waitUntil(lambda: not page.plots.isColumnHidden(5) and not page.plots.isColumnHidden(6))
