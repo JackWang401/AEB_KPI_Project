@@ -770,16 +770,28 @@ class SignalsPage(QWidget):
             elif new != name:
                 QTimer.singleShot(0, self.refresh_derived)  # put the old name back
         elif item.column() == 3:
-            kind = item.text().strip()
-            if kind == self.state.derived_kind(name, inferred=True):
-                kind = ""  # the same as the expression gives: keep following it
-            if self._set_der_field(name, "kind", kind):
+            kind, auto = item.text().strip(), self.state.derived_kind(name, inferred=True)
+            if kind == auto:
+                kind = ""  # the same as its inputs give: keep following them
+            elif kind != self._der_fields((self.state.data.get("derived") or {}).get(name))["kind"] \
+                    and not self.confirm_kind(name, kind, auto):
+                kind = None  # keep it as it was
+            if kind is not None and self._set_der_field(name, "kind", kind):
                 self.state.edited()
             QTimer.singleShot(0, self.refresh_derived)
         elif item.column() in (2, 4):
             key = "unit" if item.column() == 2 else "description"
             if self._set_der_field(name, key, item.text().strip()):
                 self.state.edited()
+
+    def confirm_kind(self, name: str, kind: str, auto: str) -> bool:
+        """Ask before a derived signal gets another Kind than its inputs give it."""
+        source = self.state.kind_source(name)
+        answer = QMessageBox.question(
+            self, "Change Kind?",
+            f"'{name}' is {auto}" + (f", from its input{'s' if ',' in source else ''} {source}" if source else "")
+            + f".\n\nChange it to {kind} anyway?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
 
     def _units(self) -> dict:
         units = {n: (d.get("unit") or "") for n, d in (self.state.data.get("signals", {}) or {}).items()}

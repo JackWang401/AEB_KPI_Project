@@ -698,13 +698,26 @@ def test_derived_kind_column_follows_the_expression_until_set(qtbot, window, mf4
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
     window.state.data.setdefault("derived", {}).update({"vKph": "egoSpeed * 3.6", "fast": "egoSpeed > 20"})
+    window.state.data["signals"]["egoSpeed"]["kind"] = "continuous"
     window.state.edited(structure=True)
     window.state.validate_now()
+    assert window.state.derived_kind("vKph") == "continuous"
+    window.state.data["signals"]["egoSpeed"]["kind"] = "discrete"  # the input's Kind is passed on
+    assert window.state.derived_kind("vKph") == "discrete" and window.state.kind_source("vKph") == "egoSpeed"
+    window.state.data["signals"]["egoSpeed"]["kind"] = "continuous"
     assert page.DER_COLS[3] == "Kind" and isinstance(page.der_table.itemDelegateForColumn(3), DerivedKindDelegate)
     rows = {page.der_table.item(r, 0).text(): r for r in range(page.der_table.rowCount())}
     assert page.der_table.item(rows["vKph"], 3).text() == "continuous"
     assert page.der_table.item(rows["fast"], 3).text() == "boolean"  # a condition
     assert window.viewer.kind("fast") == "boolean"
+    asked = []
+    page.confirm_kind = lambda name, kind, auto: asked.append((name, kind, auto)) or False  # "No"
+    page.der_table.item(rows["vKph"], 3).setText("discrete")
+    assert asked == [("vKph", "discrete", "continuous")] and window.state.data["derived"]["vKph"] == "egoSpeed * 3.6"
+    qtbot.wait(10)
+    rows = {page.der_table.item(r, 0).text(): r for r in range(page.der_table.rowCount())}
+    assert page.der_table.item(rows["vKph"], 3).text() == "continuous"  # put back
+    page.confirm_kind = lambda name, kind, auto: True  # "Yes"
     page.der_table.item(rows["vKph"], 3).setText("discrete")
     assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "kind": "discrete"}
     window.state.validate_now()

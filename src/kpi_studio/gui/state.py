@@ -214,9 +214,10 @@ class AppState(QObject):
                 names.append(n)
         return sorted(names, key=str.lower)
 
-    def derived_kind(self, name: str, *, inferred: bool = False) -> str:
-        """A derived signal's Kind: the one set in the table, else what its expression gives (a condition
-        is boolean, a held signal's value discrete, anything else continuous). inferred=True: always the latter."""
+    def derived_kind(self, name: str, *, inferred: bool = False, _seen: frozenset = frozenset()) -> str:
+        """A derived signal's Kind: the one set in the table, else the one it gets from its inputs: a
+        condition is boolean, one input signal passes on its Kind (an enum's values become discrete),
+        several inputs give continuous unless all are held. inferred=True: always the latter."""
         from src.kpi_studio.core.expr import compile_expr
 
         value = (self.data.get("derived") or {}).get(name)
@@ -230,7 +231,36 @@ class AppState(QObject):
             c = compile_expr(expr, names=set(self.signal_names()) | {"time"}, enums=self.enum_map(), discrete=held)
         except Exception:
             return "continuous"
-        return "boolean" if c.is_bool else "discrete" if c.hold else "continuous"
+        if c.is_bool:
+            return "boolean"
+        kinds = {self.input_kind(d, _seen | {name}) for d in c.deps if d != "time"}
+        if len(kinds) == 1:
+            kind = kinds.pop()
+            return "discrete" if kind in ("enum", "boolean") else kind  # not a condition: no longer 0/1
+        return "discrete" if c.hold else "continuous"
+
+    def input_kind(self, name: str, seen: frozenset = frozenset()) -> str:
+        """Kind of a signal or derived signal an expression reads."""
+        sig = (self.data.get("signals") or {}).get(name)
+        if isinstance(sig, dict):
+            return sig.get("kind") or "continuous"
+        if self.resolved is not None and name in self.resolved.signals:
+            return self.resolved.signals[name].kind
+        if name in seen:
+            return "continuous"
+        return self.derived_kind(name, _seen=seen)
+
+    def kind_source(self, name: str) -> str:
+        """Which inputs a derived signal's inferred Kind comes from, e.g. 'egoSpeed', for messages."""
+        from src.kpi_studio.core.expr import compile_expr
+
+        value = (self.data.get("derived") or {}).get(name)
+        expr = value.get("expr", "") if isinstance(value, dict) else str(value or "")
+        try:
+            deps = compile_expr(expr, names=set(self.signal_names()) | {"time"}, enums=self.enum_map()).deps
+        except Exception:
+            return ""
+        return ", ".join(sorted(d for d in deps if d != "time"))
 
     def unit_map(self) -> dict:
         """signal / derived name -> its Unit ('' when none), from the live data."""
