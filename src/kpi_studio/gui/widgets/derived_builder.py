@@ -12,7 +12,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -525,6 +527,21 @@ class DerivedBuilder(QDialog):
     def _from_unit(self) -> str:
         return self._arg_texts().get("from_unit", "")
 
+    def fit_height(self):
+        """As tall as the rows, help text and result need at the current width: nothing is cut off."""
+        lay = self.layout()
+        lay.activate()
+        need = lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+        screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        need = min(max(need, lay.totalMinimumSize().height()), int(screen.height() * 0.9))
+        if need != self.height():
+            self.resize(self.width(), need)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if e.oldSize().width() != e.size().width():  # wrapped text takes more or fewer lines
+            QTimer.singleShot(0, self.fit_height)
+
     def update_result(self, *_):
         if self.current_method().unit == "to" or self.current_method().converts_to:
             self._suggest_unit()
@@ -535,6 +552,8 @@ class DerivedBuilder(QDialog):
             self.result.setText(f"<span style='color:#c43c3b'>{msg}</span>")
         else:
             self.result.setText(f"Expression:  <b>{self.name.text().strip()} = {self.expression()}</b>")
+        QTimer.singleShot(0, self.fit_height)
+        QTimer.singleShot(60, self.fit_height)  # again once deleted rows are gone
 
     def values(self) -> dict:
         return {"name": self.name.text().strip(), "expr": self.expression(),

@@ -137,3 +137,21 @@ def test_dialog_condition_rows_with_enum_values_and_xor(qtbot):
     assert again.current_method().key == "condition"
     assert again.arg_widgets["condition"].links[1][0].currentText() == "xor"
     assert again.values()["expr"] == expr
+
+
+def test_dialog_height_follows_the_condition_rows(qtbot):
+    dlg = DerivedBuilder(["a", "b"], {}, taken=set(), name="x", expr="a == 1 or b == 2")
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.wait(150)
+    cb, start = dlg.arg_widgets["condition"], dlg.height()
+    cb.add_row()
+    cb.add_row()
+    qtbot.wait(150)
+    assert dlg.height() > start
+    lay = dlg.layout()
+    assert dlg.height() >= lay.totalHeightForWidth(dlg.width())  # nothing cut off
+    cb.delete_row(3)
+    cb.delete_row(2)
+    qtbot.wait(150)
+    assert dlg.height() == start  # and it shrinks back
