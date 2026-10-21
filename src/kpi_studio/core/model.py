@@ -255,6 +255,8 @@ class KpiDef(_Strict):
     # which form: {label: condition}; the result names the conditions met anywhere in the range,
     # e.g. "PB + FB" (labels joined in this order), or "none"
     which: Optional[dict[str, str]] = None
+    # a yes / no KPI: its occurrences' rows are highlighted in the Excel summary where it is true
+    highlight: bool = False
 
     @model_validator(mode="after")
     def _one_form(self):

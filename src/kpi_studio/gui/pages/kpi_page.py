@@ -800,13 +800,16 @@ class KpiForm(QWidget):
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "When the signal has no unit, and for a formula, type one here.")
+        self.highlight = QCheckBox("Highlight its row in the Excel summary when true")
+        self.highlight.setToolTip("For a yes / no KPI (a condition, a formula of conditions, any / all): every "
+                                  "occurrence where it is true gets its row highlighted, e.g. failed runs")
         self.desc = QLineEdit()
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
                          ("Range", self.range), ("Reducer", self.reducer), ("Expression", self.expr),
                          ("Formula", self.formula), ("Conditions", self.which),
                          ("At moment", self.at), ("Options", self.args), ("Unit", self.unit),
-                         ("Description", self.desc)):
+                         ("Highlight", self.highlight), ("Description", self.desc)):
             lab = QLabel(label)
             lay.addRow(lab, w)
             self.rows[label] = (lab, w)
@@ -826,6 +829,7 @@ class KpiForm(QWidget):
             w.currentTextChanged.connect(lambda *_: self.save())
         for w in (self.args, self.unit, self.desc):
             w.editingFinished.connect(self.save)
+        self.highlight.toggled.connect(lambda *_: self.save())
         self.expr.focused.connect(page.set_target)
         self._show_form("value")  # until a KPI is loaded: no hidden form's rows widen the panel
 
@@ -890,6 +894,7 @@ class KpiForm(QWidget):
         self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
+        self.highlight.setChecked(bool(k.get("highlight")))
         self._show_form(form)
         self._loading = False
         self.show_status()
@@ -901,7 +906,9 @@ class KpiForm(QWidget):
                                               else {"Expression", "Options"})
         else:
             visible = {"value": {"Expression", "At moment"}, "formula": {"Formula"}}[form]
-        for label in ("Range", "Reducer", "Expression", "Formula", "Conditions", "At moment", "Options"):
+        if not (form == "range" and reducer in ("which", "duration")):
+            visible.add("Highlight")  # a number KPI can't be true; the check says so
+        for label in ("Range", "Reducer", "Expression", "Formula", "Conditions", "At moment", "Options", "Highlight"):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
             w.setVisible(label in visible)
@@ -954,6 +961,8 @@ class KpiForm(QWidget):
             k["unit"] = self.k["unit"]  # kept as a fallback when the signal has no unit
         if self.desc.text().strip():
             k["description"] = self.desc.text().strip()
+        if self.highlight.isChecked() and self.highlight.isVisibleTo(self):
+            k["highlight"] = True
         if k != self.k:
             self.state.data["kpis"][self.index] = k
             self.state.edited()

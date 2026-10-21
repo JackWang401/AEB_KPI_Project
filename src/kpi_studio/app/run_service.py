@@ -346,7 +346,8 @@ class RunService:
         excel = write_workbook(out_dir / "kpi_results.xlsx", outcomes, kpi_order=kpi_order, units=units,
                                events=list(self.cp.events), run_info=run_info, profile_text=profile_text,
                                previous=previous, versions=rec_versions,
-                               bools=frozenset(k.defn.name for k in self.cp.kpis if k.is_bool))
+                               bools=frozenset(k.defn.name for k in self.cp.kpis if k.is_bool),
+                               highlight=frozenset(k.defn.name for k in self.cp.kpis if k.is_bool and k.defn.highlight))
         details = read_previous(excel).get("Details")  # every file's KPIs, for the KPI plots
         self.progress("plots", 0, 1, "Rendering plots")
         figures: list = []

@@ -375,6 +375,8 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
                                         f"give the signal a unit on the Signals page to have it converted")
             for m in kdef.between or ():
                 check_moment(m, "between")
+        if kdef.highlight and not ck.is_bool and (ck.value is not None or ck.reducer is not None):
+            warn(f"{where}.highlight", "only a yes / no KPI (a condition, any / all) can highlight its rows")
         kpis.append(ck)
         seen_by_event.setdefault(kdef.event, set()).add(kdef.name)
 

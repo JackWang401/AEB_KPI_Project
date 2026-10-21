@@ -2520,3 +2520,23 @@ def test_a_formula_kpi_does_not_widen_the_events_form(qtbot, window, mf4_dir):
     for b in kp.event_form.build_buttons:
         assert b.mapTo(view, QPoint(b.width(), 0)).x() <= view.width()
     assert kp.form_scroll.horizontalScrollBar().maximum() == 0
+
+
+def test_highlight_checkbox_saves_on_yes_no_kpis(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1"}
+    state.data["kpis"] += [{"name": "spd", "event": "served", "value": "egoSpeed", "at": "start"},
+                           {"name": "fail", "event": "served", "formula": "spd > 1"}]
+    state.edited(structure=True)
+    form = window.kpi_page.kpi_form
+    form.load(len(state.data["kpis"]) - 1)
+    assert form.highlight.isVisibleTo(form) and not form.highlight.isChecked()
+    form.highlight.setChecked(True)
+    assert state.data["kpis"][-1]["highlight"] is True
+    state.validate_now()
+    assert state.compiled is not None and not [i for i in state.issues if "highlight" in str(i)]
+    form.load(len(state.data["kpis"]) - 2)  # a number KPI: a warning when ticked
+    form.highlight.setChecked(True)
+    state.validate_now()
+    assert any("highlight" in str(i) for i in state.issues)

@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -14,6 +15,7 @@ from openpyxl.utils import get_column_letter
 from src.kpi_studio.core.results import Status, to_frame
 
 FAIL_FILL = PatternFill("solid", start_color="FDE2E1", end_color="FDE2E1")
+HIGHLIGHT_FILL = PatternFill("solid", start_color="FFD8A8", end_color="FFD8A8")  # rows a yes / no KPI flags
 HEADER_FONT = Font(bold=True)
 HEADER_ALIGN = Alignment(horizontal="center", vertical="center")
 CELL_ALIGN = Alignment(horizontal="left")
@@ -66,11 +68,21 @@ def summary_table(outcomes: list, kpi_order: list[str], units: dict[str, str],
 NUMBER_FORMAT = "0.000"
 
 
-def _style(ws, failed: list[tuple[int, int]] = ()):
+def _highlighted_rows(df: pd.DataFrame, highlight: frozenset) -> list[int]:
+    """Rows where any of the `highlight` KPIs is true."""
+    cols = [c for c in df.columns if str(c).split(" [")[0] in highlight]
+    return [i for i in range(len(df))
+            if any(isinstance(v, (bool, np.bool_)) and v for v in (df[c].iloc[i] for c in cols))]
+
+
+def _style(ws, failed: list[tuple[int, int]] = (), rows: list[int] = ()):
     ws.freeze_panes = "A2"
     for cell in ws[1]:
         cell.font = HEADER_FONT
         cell.alignment = HEADER_ALIGN
+    for r in rows:
+        for cell in ws[r + 2]:
+            cell.fill = HIGHLIGHT_FILL
     for r, c in failed:
         ws.cell(row=r + 2, column=c + 1).fill = FAIL_FILL
     for row in ws.iter_rows(min_row=2):
@@ -154,7 +166,7 @@ def read_previous(path: Optional[Path]) -> dict:
 def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], units: dict[str, str],
                    events: list[str], run_info: list[tuple[str, str]], profile_text: str,
                    previous: Optional[dict] = None, versions: Optional[dict] = None,
-                   bools: frozenset = frozenset()) -> Path:
+                   bools: frozenset = frozenset(), highlight: frozenset = frozenset()) -> Path:
     """`previous`: sheets of the earlier workbook (read_previous). Its rows of files this run did not
     process are kept; rows of the same file (exact path) are replaced by this run's."""
     path = Path(path)
@@ -183,7 +195,7 @@ def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], un
                              ["File", "Event", "Occurrence"])
             name = _sheet_name("Summary", used)
             summary.to_excel(xw, sheet_name=name, index=False)
-            _style(xw.sheets[name], _failed_cells(summary, details))
+            _style(xw.sheets[name], _failed_cells(summary, details), _highlighted_rows(summary, highlight))
 
             all_events = list(dict.fromkeys(list(events) + [str(e) for e in summary.get("Event", [])]))
             if len(all_events) > 1:
@@ -195,7 +207,7 @@ def write_workbook(path: str | Path, outcomes: list, *, kpi_order: list[str], un
                     df = df[fixed + kcols]
                     name = _sheet_name(ev, used)
                     df.to_excel(xw, sheet_name=name, index=False)
-                    _style(xw.sheets[name], _failed_cells(df, details))
+                    _style(xw.sheets[name], _failed_cells(df, details), _highlighted_rows(df, highlight))
 
             name = _sheet_name("Details", used)
             details.to_excel(xw, sheet_name=name, index=False)

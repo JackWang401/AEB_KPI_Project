@@ -159,7 +159,7 @@ def test_yes_no_kpis_are_true_false_in_the_summary(mf4_dir, tmp_path):
         "  # a custom KPI on top of the library event\n",
         "  - { name: fast, event: aeb_core.aeb, value: egoSpeedKph > 50, at: start }\n"
         "  - { name: braked, event: aeb_core.aeb, reduce: any, of: longActAccelFlt < -2, over: event }\n"
-        "  - { name: slow_fail, event: aeb_core.aeb, formula: fast == 0 and braked == 1 }\n")
+        "  - { name: slow_fail, event: aeb_core.aeb, formula: fast == 0 and braked == 1, highlight: true }\n")
     profile = PROFILE.parent / "zz_bool_test.kpi.yaml"
     try:
         profile.write_text(text)
@@ -170,3 +170,8 @@ def test_yes_no_kpis_are_true_false_in_the_summary(mf4_dir, tmp_path):
     assert summary["fast"].tolist() == [False, False, True]  # 40, 40, 60 km/h
     assert summary["braked"].dtype == bool and summary["slow_fail"].tolist() == [True, True, False]
     assert summary["vehSpd [km/h]"].dtype == float  # numbers stay numbers
+    from openpyxl import load_workbook
+
+    ws = load_workbook(res.excel)["Summary"]
+    fills = [{c.fill.start_color.rgb for c in row} for row in ws.iter_rows(min_row=2)]
+    assert [any(str(f).endswith("FFD8A8") for f in row) for row in fills] == [True, True, False]
