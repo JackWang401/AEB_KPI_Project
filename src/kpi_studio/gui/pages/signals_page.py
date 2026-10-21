@@ -39,6 +39,7 @@ from src.kpi_studio.gui.widgets.common import ExprEdit, HighlightDelegate, match
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import KIND_TIPS, KINDS, SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
+from src.kpi_studio.toolbox.units import COMMON_UNITS
 from src.kpi_studio.toolbox.units import plain as plain_unit
 from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
@@ -109,8 +110,7 @@ class KindDelegate(QStyledItemDelegate):
         model.setData(index, editor.currentText())
 
 
-UNIT_CHOICES = ["m/s", "km/h", "mph", "deg/s", "deg", "rad", "rad/s", "m/s^2", "m/s^3", "m", "cm", "km", "s", "ms",
-                "g", "%", "%/s"]
+UNIT_CHOICES = COMMON_UNITS
 NO_UNIT = "(no unit)"
 
 
@@ -721,7 +721,7 @@ class SignalsPage(QWidget):
             item.setData(Qt.UserRole, name)
             item.setToolTip(f["description"])
             self.der_table.setItem(r, 0, item)
-            edit = ExprEdit(self._names_except(name), enums_fn=self.state.enum_map,
+            edit = ExprEdit(self._names_except(name), enums_fn=self.state.enum_map, units_fn=self._units,
                             build_fn=lambda _e, n=name: self.edit_derived(n),
                             build_label="Build with a method… (signal, method, arguments)")
             edit.setText(f["expr"])

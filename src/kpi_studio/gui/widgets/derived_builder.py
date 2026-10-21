@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.toolbox.registry import Param
+from src.kpi_studio.toolbox.units import COMMON_UNITS, convert_to, normalize_unit
+from src.kpi_studio.toolbox.units import plain as plain_unit
+from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -41,6 +44,7 @@ class Method:
     params: list = field(default_factory=list)    # [Param]
     unit: str = "same"       # "same" = unit of the input signal, "" = unknown, else a unit
     variadic: bool = False
+    converts_to: str = ""    # to_<unit>() methods: the unit they convert to
 
     @property
     def is_tool(self) -> bool:
@@ -78,7 +82,8 @@ def methods() -> list[Method]:
         if unit.startswith("x") or unit == "to":
             unit = "" if unit != "to" else "to"
         out.append(Method(spec.name, f"{spec.name}  –  {spec.summary}", spec.category, spec.doc.strip(),
-                          inputs=inputs, params=list(spec.params), unit=unit, variadic=variadic))
+                          inputs=inputs, params=list(spec.params), unit=unit, variadic=variadic,
+                          converts_to=spec.converts_to))
     return out
 
 
@@ -122,6 +127,14 @@ def build_expression(m: Method, signals: list[str], args: dict[str, str]) -> str
         lit = _literal(p, text)
         parts.append(lit if positional else f"{p.name}={lit}")
     return f"{m.key}({', '.join(parts)})"
+
+
+def _converts(target: str, unit: str) -> bool:
+    try:
+        convert_to(target, unit)
+        return True
+    except ValueError:
+        return False
 
 
 def _same(p: Param, text: str, value) -> bool:
@@ -312,6 +325,14 @@ class DerivedBuilder(QDialog):
             self.input_combos.append(combo)
             self.args_form.addRow(f"{label} (signal)", combo)
         for p in m.params:
+            if m.converts_to and p.name == "from_unit":
+                w = QComboBox()
+                w.setEditable(True)
+                w.currentTextChanged.connect(self.update_result)
+                self.args_form.addRow("from unit", w)
+                self.arg_widgets[p.name] = w
+                self._sync_from_unit()
+                continue
             if p.choices:
                 w = QComboBox()
                 w.addItems([str(c) for c in p.choices])
@@ -346,7 +367,7 @@ class DerivedBuilder(QDialog):
         if isinstance(w, QLineEdit):
             w.setText(text)
         elif isinstance(w, QComboBox):
-            w.setCurrentText(text)
+            w.setCurrentText(pretty_unit(text) if key == "from_unit" else text)
         elif isinstance(w, QCheckBox):
             w.setChecked(text in ("True", "true", "1"))
 
@@ -356,12 +377,33 @@ class DerivedBuilder(QDialog):
             if isinstance(w, QLineEdit):
                 out[k] = w.text().strip()
             elif isinstance(w, QComboBox):
-                out[k] = w.currentText()
+                out[k] = plain_unit(w.currentText().strip()) if k == "from_unit" else w.currentText()
             else:
                 out[k] = "True" if w.isChecked() else "False"
         return out
 
+    def _sync_from_unit(self):
+        """A to_<unit>() method converts from the signal's Unit; with none, the user picks it here."""
+        w = self.arg_widgets.get("from_unit")
+        m = self.current_method()
+        if not isinstance(w, QComboBox) or not m.converts_to:
+            return
+        sig = self.signal.currentText().strip()
+        unit = self.units.get(sig, "")
+        choices = [u for u in COMMON_UNITS if _converts(m.converts_to, u)]
+        w.blockSignals(True)
+        w.clear()
+        w.addItems([pretty_unit(u) for u in choices])
+        w.setCurrentText(pretty_unit(unit))
+        w.blockSignals(False)
+        if unit:
+            w.setToolTip(f"From the Unit column of {sig}")
+        else:
+            w.lineEdit().setPlaceholderText(f"{sig or 'the signal'} has no unit: pick the unit it is in")
+            w.setToolTip("The signal has no unit in the Unit column; pick the unit its values are in")
+
     def _signal_changed(self, *_):
+        self._sync_from_unit()
         self._suggest_unit()
         self.update_result()
 
@@ -369,7 +411,12 @@ class DerivedBuilder(QDialog):
         if self._unit_touched:
             return
         m = self.current_method()
-        if m.unit == "same":
+        if m.converts_to:
+            try:
+                u = convert_to(m.converts_to, self._from_unit())[1]
+            except ValueError:
+                u = m.converts_to
+        elif m.unit == "same":
             u = self.units.get(self.signal.currentText().strip(), "")
         elif m.unit == "to":
             w = self.arg_widgets.get("to_unit")
@@ -394,6 +441,13 @@ class DerivedBuilder(QDialog):
                 return f"'{s}' is not a signal of this profile."
             if s == name:
                 return "A derived signal cannot use itself."
+        if m.converts_to:
+            if not self._from_unit():
+                return f"'{sigs[0]}' has no unit in the Unit column. Pick the unit it is in under 'from unit'."
+            try:
+                convert_to(m.converts_to, self._from_unit())
+            except ValueError as exc:
+                return str(exc)[0].upper() + str(exc)[1:] + "."
         for p in m.params:
             text = self._arg_texts().get(p.name, "")
             if text == "":
@@ -410,10 +464,17 @@ class DerivedBuilder(QDialog):
         if self.problem():
             return ""
         sigs = [self.signal.currentText().strip()] + [c.currentText().strip() for c in self.input_combos]
-        return build_expression(self.current_method(), sigs, self._arg_texts())
+        args = self._arg_texts()
+        if self.current_method().converts_to and \
+                normalize_unit(args.get("from_unit")) == normalize_unit(self.units.get(sigs[0], "")):
+            args["from_unit"] = ""  # read from the Unit column when the profile runs
+        return build_expression(self.current_method(), sigs, args)
+
+    def _from_unit(self) -> str:
+        return self._arg_texts().get("from_unit", "")
 
     def update_result(self, *_):
-        if self.current_method().unit == "to":
+        if self.current_method().unit == "to" or self.current_method().converts_to:
             self._suggest_unit()
         msg = self.problem()
         ok = self.buttons.button(QDialogButtonBox.Ok)

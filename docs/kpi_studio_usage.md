@@ -33,6 +33,10 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    filters, derivative, unit conversion, …) and fill in the arguments it asks
    for, plus an optional unit and description. The result is an expression
    such as `lowpass(longActAccel, 10)`, which can also be typed directly.
+   The *Units* methods (`to_mps`, `to_kph`, `to_mph`, `to_deg_s`, `to_deg`, `to_rad`, `to_rad_s`,
+   `to_mps2`, `to_mps3`, `to_m`, `to_cm`, `to_km`, `to_s`, `to_ms`, `to_g`) convert from the unit in
+   the signal's Unit column; when that is empty the builder asks for it and writes it into the call,
+   e.g. `to_kph(raw, "mph")`. `convert(x, "bar", "kpa")` covers any other pair.
 3. **Events & KPIs** – define an event (a start/end condition; an older profile's
    event preset, and its domain-specific tools such as `vehicle_stop` or `ttc`, still run), its moments (e.g. `first`, `argmin`,
    `crossing`), its *Ranges* (named spans from one moment to another, e.g. `braking`: `aeb_braking` to

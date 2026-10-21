@@ -60,3 +60,24 @@ def test_every_method_builds_a_valid_expression(m):
     parsed = parse_expression(expr, methods())
     assert parsed is not None, expr
     assert build_expression(parsed[0], parsed[1], {**args, **parsed[2]}) == expr  # same (or equivalent) method
+
+
+def test_dialog_converter_reads_unit_column_and_asks_when_empty(qtbot):
+    dlg = DerivedBuilder(["speed", "raw", "yaw"], {"speed": "m/s", "raw": "", "yaw": "rad/s"},
+                         taken={"speed", "raw", "yaw"})
+    qtbot.addWidget(dlg)
+    dlg.name.setText("speedKph")
+    dlg.signal.setCurrentText("speed")
+    dlg.set_method("to_kph")
+    assert dlg.arg_widgets["from_unit"].currentText() == "m/s"
+    assert dlg.values()["expr"] == "to_kph(speed)" and dlg.unit.text() == "km/h"
+    dlg.signal.setCurrentText("raw")  # no unit: the user is asked for it
+    assert dlg.arg_widgets["from_unit"].currentText() == ""
+    assert "has no unit" in dlg.problem() and dlg.expression() == ""
+    dlg.arg_widgets["from_unit"].setCurrentText("mph")
+    assert dlg.values()["expr"] == 'to_kph(raw, "mph")'
+    dlg.arg_widgets["from_unit"].setCurrentText("deg")
+    assert "Cannot convert deg to km/h" in dlg.problem()
+    dlg.signal.setCurrentText("yaw")
+    dlg.set_method("to_deg")
+    assert dlg.values()["expr"] == "to_deg(yaw)" and dlg.unit.text() == "deg/s"

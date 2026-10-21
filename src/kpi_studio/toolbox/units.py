@@ -105,3 +105,38 @@ def plain(unit: str) -> str:
     import re
 
     return re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+", lambda m: "^" + "".join(_UNSUP[c] for c in m.group()), unit or "")
+
+
+# the units offered in drop-downs, in the order shown
+COMMON_UNITS = ["m/s", "km/h", "mph", "deg/s", "deg", "rad", "rad/s", "m/s^2", "m/s^3", "m", "cm", "km", "s", "ms",
+                "g", "%", "%/s"]
+
+# the to_<unit>() toolbox methods: name -> the unit they convert to
+CONVERTERS = {
+    "to_mps": "m/s", "to_kph": "km/h", "to_mph": "mph",
+    "to_deg_s": "deg/s", "to_deg": "deg", "to_rad": "rad", "to_rad_s": "rad/s",
+    "to_mps2": "m/s^2", "to_mps3": "m/s^3",
+    "to_m": "m", "to_cm": "cm", "to_km": "km",
+    "to_s": "s", "to_ms": "ms",
+    "to_g": "g",
+}
+
+
+def same_dimension(unit: Optional[str]) -> list[str]:
+    """The common units that `unit` converts to (all of them when it is unknown)."""
+    u = normalize_unit(unit)
+    if u not in _UNITS:
+        return list(COMMON_UNITS)
+    return [c for c in COMMON_UNITS if conversion_factor(u, c) is not None]
+
+
+def convert_to(target: str, from_unit: Optional[str]) -> tuple[float, str]:
+    """(factor, resulting unit) for converting `from_unit` to `target`. An angle target also takes the
+    matching rate (to_deg on rad/s gives deg/s). ValueError when it cannot be converted."""
+    if not normalize_unit(from_unit):
+        raise ValueError(f"the unit to convert from is not known; give it, e.g. to {target} from 'm/s'")
+    for result in (target, target + "/s"):
+        factor = conversion_factor(from_unit, result)
+        if factor is not None and normalize_unit(result) in _UNITS:
+            return factor, result
+    raise ValueError(f"cannot convert {pretty(str(from_unit))} to {pretty(target)}")

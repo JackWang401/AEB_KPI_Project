@@ -214,6 +214,17 @@ class AppState(QObject):
                 names.append(n)
         return sorted(names, key=str.lower)
 
+    def unit_map(self) -> dict:
+        """signal / derived name -> its Unit ('' when none), from the live data."""
+        from src.kpi_studio.core.model import signal_units
+
+        units = signal_units(self.resolved) if self.resolved is not None else {}
+        for name, sdef in (self.data.get("signals") or {}).items():
+            units[name] = str((sdef or {}).get("unit") or "") if isinstance(sdef, dict) else ""
+        for name, ddef in (self.data.get("derived") or {}).items():
+            units[name] = str(ddef.get("unit") or "") if isinstance(ddef, dict) else units.get(name, "")
+        return units
+
     def enum_map(self) -> dict:
         """signal name -> {MEMBER: value} for signals that declare an enum."""
         tables = profile_store.load_enum_tables()

@@ -345,3 +345,30 @@ def test_reduce_over_an_empty_range_says_why(a_on, b_on, says):
             "ma": np.array(a_on, float), "mb": np.array(b_on, float)}
     r = evaluate_frame(cp, SignalFrame(time=t, values=vals), "f").results[0]
     assert r.value is None and says in r.message, r.message
+
+
+def test_unit_converters_read_the_unit_column():
+    import numpy as np
+
+    from src.kpi_studio import toolbox
+    from src.kpi_studio.core.expr import Env, ExprError, compile_expr
+    from src.kpi_studio.toolbox.units import CONVERTERS
+
+    offered = {s.name for s in toolbox.tools("signal") if s.category == "Units"}
+    assert set(CONVERTERS) <= offered
+    units = {"v": "km/h", "a": "g", "r": "rad/s", "n": ""}
+    t = np.array([0.0, 1.0])
+
+    def run(src):
+        c = compile_expr(src, names=set(units), units=units)
+        return c.fn(Env(time=t, values={k: np.array([36.0, 72.0]) for k in units}))
+
+    assert np.allclose(run("to_mps(v)"), [10, 20])
+    assert np.allclose(run("to_mps2(a)"), [36 * 9.80665, 72 * 9.80665])
+    assert np.allclose(run("to_deg(r)"), np.degrees([36, 72]))  # a rate stays a rate: deg/s
+    assert np.allclose(run('to_cm(n, "m")'), [3600, 7200])  # no unit: given in the call
+    with pytest.raises(ExprError, match="has no unit"):
+        run("to_cm(n)")
+    with pytest.raises(ExprError, match="cannot convert"):
+        run("to_km(v)")
+    assert np.allclose(run("to_kph(n)"), [36 * 3.6, 72 * 3.6])  # older profiles: m/s assumed

@@ -226,34 +226,27 @@ def hypot(ctx, x, y):
 
 
 # --------------------------------------------------------------------------- units
-@tool("signal", "Units", hidden=True, unit="km/h", input_names=("speed_mps",))
-def to_kph(ctx, speed_mps):
-    """m/s -> km/h."""
-    return _f(speed_mps) * 3.6
+# the unit assumed when an older profile converts a signal that has no unit
+_LEGACY_FROM = {"to_kph": "m/s", "to_mps": "km/h", "to_g": "m/s^2", "to_deg": "rad", "to_rad": "deg"}
 
 
-@tool("signal", "Units", hidden=True, unit="m/s", input_names=("speed_kph",))
-def to_mps(ctx, speed_kph):
-    """km/h -> m/s."""
-    return _f(speed_kph) / 3.6
+def _converter(name: str, target: str):
+    def func(ctx, x, from_unit=""):
+        factor, _ = _units.convert_to(target, from_unit or _LEGACY_FROM.get(name))
+        return _f(x) * factor
+
+    func.__name__ = name
+    func.__doc__ = (f"Convert x to {_units.pretty(target)}.\nThe unit x is in comes from its Unit column; when it has "
+                    f"none, give it: {name}(x, \"unit\").")
+    if target in ("deg", "rad"):
+        func.__doc__ += f" A rate converts to {target}/s."
+    tool("signal", "Units", unit=target, converts_to=target, params=(
+        Param("from_unit", str, "", doc="unit x is in; empty = its Unit column"),
+    ))(func)
 
 
-@tool("signal", "Units", unit="deg")
-def to_deg(ctx, x):
-    """rad -> deg (also rad/s -> deg/s)."""
-    return np.degrees(_f(x))
-
-
-@tool("signal", "Units", unit="rad")
-def to_rad(ctx, x):
-    """deg -> rad (also deg/s -> rad/s)."""
-    return np.radians(_f(x))
-
-
-@tool("signal", "Units", hidden=True, unit="g")
-def to_g(ctx, x):
-    """m/s^2 -> g."""
-    return _f(x) / 9.80665
+for _name, _target in _units.CONVERTERS.items():
+    _converter(_name, _target)
 
 
 @tool("signal", "Units", unit="to", params=(

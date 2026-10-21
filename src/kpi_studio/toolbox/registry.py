@@ -120,6 +120,8 @@ class ToolSpec:
     input_unit: str = ""  # the unit the input is converted to before the call, e.g. "m/s" (reducers)
     # not offered in the toolbox (domain-specific helpers kept so older profiles still run)
     hidden: bool = False
+    # to_<unit>() methods: the unit they convert to (the unit converted from is the input's Unit)
+    converts_to: str = ""
 
     @property
     def summary(self) -> str:
@@ -133,6 +135,8 @@ class ToolSpec:
             args = list(self.input_names or [f"x{i + 1}" if self.inputs > 1 else "x" for i in range(self.inputs)])
         for p in self.params:
             args.append(p.name if p.required else f"{p.name}={p.default!r}")
+        if self.converts_to:
+            return f"{self.name}({args[0]})"
         return f"{self.name}({', '.join(args)})"
 
     def bind_params(self, positional: list, keywords: dict) -> dict:
@@ -188,6 +192,7 @@ def tool(
     origin: str = "builtin",
     input_unit: str = "",
     hidden: bool = False,
+    converts_to: str = "",
 ):
     """Register a toolbox function."""
     if kind not in KINDS:
@@ -208,6 +213,7 @@ def tool(
             input_names=tuple(input_names),
             input_unit=input_unit,
             hidden=hidden,
+            converts_to=converts_to,
         )
         register(spec)
         return func

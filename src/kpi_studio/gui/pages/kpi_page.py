@@ -501,7 +501,7 @@ class EventForm(QWidget):
             combo.currentTextChanged.connect(lambda t, row=r: self.fill_rule_options(row, t))
             combo.currentTextChanged.connect(lambda *_, row=r: self.save_moment(row))
             self.moments.setCellWidget(r, 1, combo)
-            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map,
+            expr = ExprEdit(self.state.signal_names, enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
                             extras_fn=lambda m=mname: {"Moments": self.moment_names(exclude=m)},
                             build_fn=lambda e, row=r: self.build_moment_row(row))
             expr.setPlaceholderText("▾ pick a signal, or type a condition")
@@ -716,7 +716,7 @@ class KpiForm(QWidget):
         for key, label in FORMS:
             self.form.addItem(label, key)
         self.expr = ExprEdit(self.state.signal_names, placeholder="expression, e.g. egoSpeedKph",
-                             enums_fn=self.state.enum_map)
+                             enums_fn=self.state.enum_map, units_fn=self.state.unit_map)
         self.formula = QLineEdit()
         self.formula.setPlaceholderText("e.g. pedalPosMax - pedalPosAtStart")
         self.at = QComboBox()

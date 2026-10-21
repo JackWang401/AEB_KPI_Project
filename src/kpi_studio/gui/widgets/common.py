@@ -223,9 +223,11 @@ class ExprEdit(QLineEdit):
                  enums_fn: Optional[Callable[[], dict]] = None,
                  extras_fn: Optional[Callable[[], dict]] = None,
                  build_fn: Optional[Callable[["ExprEdit"], None]] = None,
-                 build_label: str = "Edit condition"):
+                 build_label: str = "Edit condition",
+                 units_fn: Optional[Callable[[], dict]] = None):
         super().__init__(parent)
         self.build_fn = build_fn
+        self.units_fn = units_fn  # signal -> Unit, so to_<unit>() calls are checked against it
         self.build_label = build_label
         self.names_fn = names_fn
         self.enums_fn = enums_fn or (lambda: {})
@@ -307,7 +309,8 @@ class ExprEdit(QLineEdit):
             self.error = None if self.allow_empty else "required"
         else:
             try:
-                compile_expr(text, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn())
+                compile_expr(text, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn(),
+                             units=self.units_fn() if self.units_fn else None)
                 self.error = None
             except ExprError as exc:
                 self.error = str(exc)

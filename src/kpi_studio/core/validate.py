@@ -10,7 +10,7 @@ from src.kpi_studio.core.expr import Compiled, ExprError, compile_expr
 from src.kpi_studio.core.model import (BUILTIN_MOMENTS, TIME, EventDef, KpiDef, MomentRule, Profile, parse_moment,
                                        signal_units)
 from src.kpi_studio.toolbox.registry import ToolError, ToolSpec
-from src.kpi_studio.toolbox.units import conversion_factor
+from src.kpi_studio.toolbox.units import conversion_factor, convert_to
 
 
 @dataclass(frozen=True)
@@ -99,6 +99,14 @@ def expr_unit(source: Optional[str], units: Mapping[str, str]) -> Optional[str]:
                 return None
             if spec.unit == "same":
                 return unit(n.args[0])
+            if spec.converts_to:
+                given = next((k.value for k in n.keywords if k.arg == "from_unit"),
+                             n.args[1] if len(n.args) > 1 else None)
+                src = given.value if isinstance(given, ast.Constant) and isinstance(given.value, str) else None
+                try:
+                    return convert_to(spec.converts_to, src or unit(n.args[0]))[1]
+                except ValueError:
+                    return spec.converts_to
             if spec.unit == "to":
                 arg = next((k.value for k in n.keywords if k.arg == "to_unit"), n.args[2] if len(n.args) > 2 else None)
                 return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
@@ -207,10 +215,11 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         if name == TIME:
             err(f"signals.{name}", f"'{TIME}' is built in (the timebase in seconds); choose another name")
     names = set(profile.signals) | set(profile.derived) | {TIME}
+    units = signal_units(profile)
 
     def cexpr(where, source) -> Optional[Compiled]:
         try:
-            return compile_expr(source, names=names, enums=enums, discrete=discrete)
+            return compile_expr(source, names=names, enums=enums, discrete=discrete, units=units)
         except ExprError as exc:
             err(where, str(exc))
             return None

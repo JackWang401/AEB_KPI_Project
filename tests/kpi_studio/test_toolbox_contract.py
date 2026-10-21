@@ -25,6 +25,8 @@ def _inputs(n):
 def _call(spec, t, x):
     ctx = ToolContext(t)
     params = {p.name: p.example_value() for p in spec.params}
+    if spec.converts_to:
+        params["from_unit"] = spec.converts_to  # to_<unit>() reads it from the Unit column in a profile
     n_in = 2 if spec.inputs == -1 else spec.inputs
     return spec.func(ctx, *([x] * n_in), **params)
 
@@ -86,7 +88,7 @@ def test_user_tools_are_loaded_and_marked(tmp_path):
 def test_domain_specific_tools_are_not_offered_but_still_run():
     from src.kpi_studio.core.expr import compile_expr
 
-    hidden = {"decel_onset", "jerk_end", "vehicle_stop", "jerk", "to_kph", "to_mps", "to_g", "rel_speed", "ttc",
+    hidden = {"decel_onset", "jerk_end", "vehicle_stop", "jerk", "rel_speed", "ttc",
               "distance_travelled"}
     offered = {s.name for s in toolbox.tools()}
     assert not hidden & offered

@@ -127,13 +127,18 @@ def resolve_enum_member(token: str, table: Mapping[str, Any], signal: str) -> fl
     raise ExprError(f"'{token}' is not a value of signal '{signal}'; options: {options}")
 
 
+# to_<unit>() methods older profiles call on signals without a unit (they assume the old fixed unit)
+_LEGACY_CONVERTERS = {"to_kph", "to_mps", "to_g", "to_deg", "to_rad"}
+
+
 class _Compiler:
     def __init__(self, source: str, names: set[str], enums: Mapping[str, Mapping[str, Any]],
-                 discrete: set[str]):
+                 discrete: set[str], units: Optional[Mapping[str, str]] = None):
         self.source = source
         self.names = names
         self.enums = enums
         self.discrete = discrete
+        self.units = units
         self.deps: set[str] = set()
 
     # ---- helpers
@@ -287,6 +292,26 @@ class _Compiler:
             return -node.operand.value
         self.fail(node, "tool options must be plain numbers, text or True/False")
 
+    def _from_unit(self, node, spec, params: dict) -> dict:
+        """A to_<unit>() call converts from its input's Unit unless the unit is given."""
+        from src.kpi_studio.core.validate import expr_unit
+        from src.kpi_studio.toolbox.units import convert_to, pretty
+
+        from_unit = params.get("from_unit") or ""
+        arg = ast.get_source_segment(self.source, node.args[0]) or ast.unparse(node.args[0])
+        if not from_unit and self.units is not None:
+            from_unit = expr_unit(arg, self.units) or ""
+            if not from_unit and spec.name not in _LEGACY_CONVERTERS:
+                self.fail(node, f"{spec.name}: '{arg}' has no unit; set it in the Unit column or give it, "
+                                f"e.g. {spec.name}({arg}, \"m/s\")")
+        if from_unit:
+            try:
+                convert_to(spec.converts_to, from_unit)
+            except ValueError:
+                self.fail(node, f"{spec.name}: cannot convert '{arg}' ({pretty(from_unit)}) to "
+                                f"{pretty(spec.converts_to)}")
+        return {**params, "from_unit": from_unit} if from_unit else params
+
     def c_Call(self, node):
         if not isinstance(node.func, ast.Name):
             self.fail(node, "only toolbox functions can be called, e.g. lowpass(x, 10)")
@@ -310,6 +335,8 @@ class _Compiler:
             self.fail(node, str(exc))
         if any(kw.arg is None for kw in node.keywords):
             self.fail(node, "**kwargs is not allowed")
+        if spec.converts_to:
+            params = self._from_unit(node, spec, params)
 
         def run(env, spec=spec, input_fns=input_fns, params=params):
             ctx = env.ctx
@@ -325,9 +352,11 @@ def compile_expr(
     names: set[str],
     enums: Optional[Mapping[str, Mapping[str, Any]]] = None,
     discrete: Optional[set[str]] = None,
+    units: Optional[Mapping[str, str]] = None,
 ) -> Compiled:
     """Compile `source`. `names` are the signal names it may use; `enums` maps a
-    signal name to its {MEMBER: value} table; `discrete` lists held signals."""
+    signal name to its {MEMBER: value} table; `discrete` lists held signals; `units` maps a signal
+    name to its Unit, which to_<unit>() methods convert from (without it they are checked at run time)."""
     if source is None or not str(source).strip():
         raise ExprError("empty expression")
     text = str(source).strip()
@@ -335,6 +364,6 @@ def compile_expr(
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
         raise ExprError(f"syntax error at column {exc.offset}: {exc.msg} in: {text}") from None
-    comp = _Compiler(text, set(names), enums or {}, set(discrete or ()))
+    comp = _Compiler(text, set(names), enums or {}, set(discrete or ()), units)
     fn, is_bool, hold = comp.compile(tree)
     return Compiled(source=text, deps=frozenset(comp.deps), fn=fn, is_bool=is_bool, hold=hold)
