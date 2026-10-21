@@ -772,10 +772,10 @@ class ConditionBuilder(QDialog):
         width = max(opening.sizeHint().width(), closing.sizeHint().width())
         opening.setFixedWidth(width)  # the bracket boxes line up as one width
         closing.setFixedWidth(width)
-        policy = join.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)  # the first row has no join, but lines up with the others
-        join.setSizePolicy(policy)
-        join.setVisible(bool(self.rows))
+        join.setVisible(bool(self.rows))  # the first row has no join (see _align_first_row)
+        op.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        op.setMinimumContentsLength(6)  # long operators fit in the list; the value gets the room
+        val.setMinimumWidth(120)
         row = QHBoxLayout()
         for w in (join, opening, sig, op, val, closing):
             row.addWidget(w, 1 if w is val else 0)
@@ -903,7 +903,21 @@ class ConditionBuilder(QDialog):
             return f"{depth} bracket{'s' if depth > 1 else ''} not closed"
         return None
 
+    def _align_first_row(self):
+        """The first row has no join: alone it starts at the left edge, under the help text; with more rows
+        its join's room is kept so the columns line up."""
+        if not self.links:
+            return
+        join = self.links[0][0]
+        join.setVisible(False)
+        policy = join.sizePolicy()
+        policy.setRetainSizeWhenHidden(len(self.rows) > 1)
+        join.setSizePolicy(policy)
+        for other, *_ in self.links[1:]:
+            other.setVisible(True)
+
     def update_preview(self, *_):
+        self._align_first_row()
         problem = self.bracket_problem()
         if problem:
             self.preview.setText(f"Condition: <span style='color:#e34948'>{problem}</span>")
