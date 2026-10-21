@@ -311,8 +311,9 @@ class EventForm(QWidget):
             rh.setSectionResizeMode(col, QHeaderView.Stretch)
         rl.addWidget(self.ranges)
         self.tables_split.addWidget(rbox)
-        self.tables_split.setStretchFactor(0, 2)
+        self.tables_split.setStretchFactor(0, 1)  # Moments and Ranges start at the same height
         self.tables_split.setStretchFactor(1, 1)
+        self.tables_split.setSizes([1000, 1000])
         for b in (box, rbox):
             b.setMinimumHeight(120)
 

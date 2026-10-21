@@ -128,6 +128,7 @@ def test_moments_and_ranges_heights_are_adjustable(qtbot, window, mf4_dir):
     assert sp.widget(0).isAncestorOf(ef.moments) and sp.widget(1).isAncestorOf(ef.ranges)
     qtbot.wait(50)
     a, b = sp.sizes()
+    assert abs(a - b) <= 2  # they start at the same height
     sp.setSizes([a - 100, b + 100])
     assert sp.sizes()[1] > b
 
