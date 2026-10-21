@@ -519,15 +519,21 @@ def parse_condition_rows(text: str) -> Optional[list[dict]]:
                 return None
             inner[0]["nots"] = 1
             return inner
-        if isinstance(node, ast.BoolOp):
+        if isinstance(node, (ast.BoolOp, ast.BinOp)):
+            if isinstance(node, ast.BinOp):
+                if not isinstance(node.op, ast.BitXor):
+                    return None
+                children, join = [node.left, node.right], "xor"
+            else:
+                children, join = node.values, "and" if isinstance(node.op, ast.And) else "or"
             out = []
-            join = "and" if isinstance(node.op, ast.And) else "or"
-            for child in node.values:
+            for child in children:
                 part = rows_of(child)
                 if part is None:
                     return None
-                if len(part) > 1 and isinstance(child, ast.BoolOp) and leaf(child) is None:
-                    part = bracket(part)  # (a or b) and c
+                if len(part) > 1 and isinstance(child, (ast.BoolOp, ast.BinOp)) and leaf(child) is None \
+                        and not (join == "xor" and child is children[0] and isinstance(child, ast.BinOp)):
+                    part = bracket(part)  # (a or b) and c; a ^ b ^ c needs none
                 if out:
                     part[0]["join"] = join
                 out += part
@@ -662,11 +668,18 @@ class ConditionBuilder(QDialog):
              "changes from → to": "from, to   e.g. 0, 3"}
 
     MULTI = ("in", "changes from → to")  # operators that take several values
+    JOINS = ["and", "or", "xor"]
+    changed = Signal()
     OPENS = ["", "(", "((", "not", "not (", "not (("]
     CLOSES = ["", ")", "))"]
 
-    def __init__(self, names: list[str], parent=None, initial: str = "", enums: Optional[dict] = None):
+    def __init__(self, names: list[str], parent=None, initial: str = "", enums: Optional[dict] = None,
+                 *, embedded: bool = False):
+        """embedded=True: the rows and the resulting condition only, to sit inside another dialog."""
         super().__init__(parent)
+        self.embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.Widget)
         self.setWindowTitle("Edit condition")
         self.names = names
         self.enums = enums or {}  # signal -> {TEXT: value}: their texts can be picked as values
@@ -676,12 +689,15 @@ class ConditionBuilder(QDialog):
         info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL. "
                       "'changes to / from' are true only at the sample where the signal switches to or away "
                       "from the value; 'changes from → to' takes two values, e.g. 0, 3.\n"
-                      "Join each row to the one above with and / or, and group rows with the brackets before "
-                      "and after them (or negate them with not), e.g. (a and b) or not (c). Without brackets, "
-                      "and is applied before or.\n"
+                      "Join each row to the one above with and / or / xor (exactly one of the two is true), and "
+                      "group rows with the brackets before and after them (or negate them with not), e.g. "
+                      "(a and b) or not (c). Without brackets, xor is applied first, then and, then or.\n"
                       "Right-click a row's operator, or the space around the rows, to add or delete rows.")
         info.setWordWrap(True)
         lay.addWidget(info)
+        if embedded:
+            lay.setContentsMargins(0, 0, 0, 0)
+            info.setStyleSheet("color:#5f5e5a")
         top = QHBoxLayout()  # + / − in the top right corner
         top.addStretch(1)
         for b in plus_minus(add=self.add_row, remove=lambda: self.delete_row(len(self.rows) - 1),
@@ -693,11 +709,13 @@ class ConditionBuilder(QDialog):
         self.preview = QLabel()
         self.preview.setWordWrap(True)
         lay.addWidget(self.preview)
+        self.preview.setVisible(not embedded)  # the dialog it sits in shows the result
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self.ok_button = buttons.button(QDialogButtonBox.Ok)
         lay.addWidget(buttons)
+        buttons.setVisible(not embedded)
         self.links: list[tuple] = []  # per row: (join with the row above, opening, closing brackets)
         self.resize(760, 10)
         self.add_row()
@@ -731,6 +749,7 @@ class ConditionBuilder(QDialog):
         sig = QComboBox()
         sig.setEditable(True)
         sig.addItems(sorted(self.names, key=str.lower))  # alphabetical, whatever the profile order
+        sig.setMinimumWidth(160)
         op = QComboBox()
         op.addItems(self.OPS)
         val = QLineEdit()
@@ -744,7 +763,7 @@ class ConditionBuilder(QDialog):
         sig.currentTextChanged.connect(lambda _t, s=sig, o=op, v=val: self._update_value_field(s, o, v))
         self._update_value_field(sig, op, val)
         join, opening, closing = QComboBox(), QComboBox(), QComboBox()
-        join.addItems(["and", "or"])
+        join.addItems(self.JOINS)
         join.setToolTip("How this row joins the row above")
         opening.addItems(self.OPENS)
         opening.setToolTip("Open brackets before this row (not: negate it)")
@@ -852,16 +871,23 @@ class ConditionBuilder(QDialog):
         return f"{s} {o} {v}"
 
     def expression(self) -> str:
-        """The condition the rows make; brackets of rows without a signal or value are left out."""
+        """The condition the rows make; brackets of rows without a signal or value are left out. With an
+        xor (`^`, which binds tighter than comparisons) every row gets its own brackets."""
         parts = []
+        filled = [(s, o, v, j) for (s, o, v), (j, _a, _b) in zip(self.rows, self.links)
+                  if s.currentText().strip() and v.text().strip()]
+        xor = any(j.currentText() == "xor" for _s, _o, _v, j in filled[1:])
         for (sig, op, val), (join, opening, closing) in zip(self.rows, self.links):
             s, o, v = sig.currentText().strip(), op.currentText(), val.text().strip()
             e = self.row_expression(s, o, v) if s and v else ""
             if not e:
                 continue
+            if xor and not (e.startswith("(") and e.endswith(")")):
+                e = f"({e})"
             lead = opening.currentText()
             piece = (lead + (" " if lead.endswith("not") else "") + e + closing.currentText())
-            parts.append(piece if not parts else f"{join.currentText()} {piece}")
+            word = "^" if join.currentText() == "xor" else join.currentText()
+            parts.append(piece if not parts else f"{word} {piece}")
         return " ".join(parts)
 
     def bracket_problem(self) -> Optional[str]:
@@ -884,7 +910,9 @@ class ConditionBuilder(QDialog):
         else:
             self.preview.setText(f"Condition: <b>{self.expression() or '—'}</b>")
         self.ok_button.setEnabled(problem is None)
-        QTimer.singleShot(0, self.fit_height)
+        self.changed.emit()
+        if not self.embedded:
+            QTimer.singleShot(0, self.fit_height)
 
     def fit_height(self):
         """Wide enough for the values typed or picked, and tall enough for the text, rows and condition

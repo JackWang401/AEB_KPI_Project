@@ -190,6 +190,9 @@ class _Compiler:
         self.fail(node, "unsupported unary operator")
 
     def c_BinOp(self, node):
+        if isinstance(node.op, ast.BitXor):  # `a ^ b`: true when exactly one of the two is true
+            lf, rf = self.compile(node.left)[0], self.compile(node.right)[0]
+            return (lambda env: np.logical_xor(as_bool(lf(env)), as_bool(rf(env)))), True, True
         op = _BINOPS.get(type(node.op))
         if op is None:
             self.fail(node, "unsupported operator")

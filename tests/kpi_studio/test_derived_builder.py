@@ -49,7 +49,8 @@ def test_dialog_prefills_from_existing_expression(qtbot):
     assert dlg.values()["expr"] == "v * 3.6"
 
 
-@pytest.mark.parametrize("m", [m for m in methods() if m.key != "expression"], ids=lambda m: m.key)
+@pytest.mark.parametrize("m", [m for m in methods() if m.key not in ("expression", "condition")],
+                         ids=lambda m: m.key)
 def test_every_method_builds_a_valid_expression(m):
     from src.kpi_studio.core.expr import compile_expr
 
@@ -100,5 +101,39 @@ def test_dialog_expression_method_takes_a_condition(qtbot):
     again = DerivedBuilder(["fb", "pb"], {}, name="braking", expr="fb == ACTIVE or pb == ACTIVE",
                            enums_fn=lambda: enums)
     qtbot.addWidget(again)
-    assert again.current_method().key == "expression"
+    assert again.current_method().key == "condition"  # a condition that fits rows reopens as rows
     assert again.values()["expr"] == "fb == ACTIVE or pb == ACTIVE"
+    typed = DerivedBuilder(["fb", "gap"], {}, name="x", expr="gap * 2 + fb", enums_fn=lambda: enums)
+    qtbot.addWidget(typed)
+    assert typed.current_method().key == "expression"
+
+
+def test_dialog_condition_rows_with_enum_values_and_xor(qtbot):
+    import numpy as np
+
+    from src.kpi_studio.core.expr import Env, compile_expr
+
+    enums = {"fb": {"ACTIVE": 2, "OFF": 0}, "pb": {"ACTIVE": 2, "OFF": 0}}
+    dlg = DerivedBuilder(["fb", "pb", "gap"], {}, taken={"fb", "pb", "gap"}, enums_fn=lambda: enums)
+    qtbot.addWidget(dlg)
+    dlg.name.setText("one_braking")
+    dlg.set_method("condition")
+    cb = dlg.arg_widgets["condition"]
+    assert "Fill in a row" in dlg.problem()
+    cb.add_row()
+    for (sig, op, val), name in zip(cb.rows, ("fb", "pb")):
+        sig.setCurrentText(name)
+        op.setCurrentText("==")
+        assert val.pick_action.isVisible() or not dlg.isVisible()  # enum values can be picked
+        cb.pick_value(val, "==", "ACTIVE")
+    cb.links[1][0].setCurrentText("xor")
+    expr = dlg.values()["expr"]
+    assert expr == "(fb == ACTIVE) ^ (pb == ACTIVE)"
+    c = compile_expr(expr, names={"fb", "pb"}, enums=enums)
+    out = c.fn(Env(time=np.arange(4.0), values={"fb": np.array([2, 2, 0, 0]), "pb": np.array([2, 0, 2, 0])}))
+    assert list(out) == [False, True, True, False]
+    again = DerivedBuilder(["fb", "pb"], {}, name="one_braking", expr=expr, enums_fn=lambda: enums)
+    qtbot.addWidget(again)
+    assert again.current_method().key == "condition"
+    assert again.arg_widgets["condition"].links[1][0].currentText() == "xor"
+    assert again.values()["expr"] == expr

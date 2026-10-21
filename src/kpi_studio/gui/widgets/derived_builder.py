@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.kpi_studio import toolbox
+from src.kpi_studio.core.expr import ExprError, compile_expr
+from src.kpi_studio.gui.widgets.common import ConditionBuilder, parse_condition_rows
 from src.kpi_studio.toolbox.registry import Param
 from src.kpi_studio.toolbox.units import COMMON_UNITS, convert_to, normalize_unit
 from src.kpi_studio.toolbox.units import plain as plain_unit
@@ -52,9 +54,11 @@ class Method:
 
 
 ARITHMETIC = {
-    "expression": Method("expression", "Expression  (type a condition or formula)", "Expression",
-                         "Any expression of signals. A condition gives 1 when true and 0 when false, e.g. "
-                         "fb_state == ACTIVE or pb_state == ACTIVE.", unit=""),
+    "condition": Method("condition", "Condition  (signal, operator, value rows)", "Condition",
+                        "True (1) while the condition holds, else 0.", unit=""),
+    "expression": Method("expression", "Type an expression  (any formula of signals)", "Condition",
+                         "Any expression of signals, e.g. gap_dist < 0.3 and braking, or v * 3.6 + 1.",
+                         unit=""),
     "scale": Method("scale", "Scale  (x · factor)", "Arithmetic", "Multiply the signal by a number, e.g. 3.6.",
                     params=[Param("factor", float, example=1.0, doc="multiply by")], unit=""),
     "offset": Method("offset", "Offset  (x + offset)", "Arithmetic", "Add a constant (use a negative number to subtract).",
@@ -105,8 +109,8 @@ def _literal(p: Param, text: str) -> str:
 
 def build_expression(m: Method, signals: list[str], args: dict[str, str]) -> str:
     """Expression text for method `m` applied to `signals` (first = main input) with param texts `args`."""
-    if m.key == "expression":
-        return args.get("expression", "").strip()
+    if m.key in ("expression", "condition"):
+        return args.get(m.key, "").strip()
     x = signals[0]
     if m.key == "scale":
         return f"{x} * {_num(args['factor'])}"
@@ -294,6 +298,9 @@ class DerivedBuilder(QDialog):
                 combo.setCurrentText(s)
             for k, v in args.items():
                 self._set_arg(k, v)
+        elif expr and parse_condition_rows(expr):
+            self.set_method("condition")
+            self.arg_widgets["condition"].load_expression(expr)
         elif expr:
             self.set_method("expression")
             self.arg_widgets["expression"].setText(expr)
@@ -329,7 +336,13 @@ class DerivedBuilder(QDialog):
             self.args_form.removeRow(0)
         self.arg_widgets.clear()
         self.input_combos = []
-        self.form.setRowVisible(self.signal, m.key != "expression")
+        self.form.setRowVisible(self.signal, m.key not in ("expression", "condition"))
+        if m.key == "condition":
+            w = ConditionBuilder(self.signal_names, self, enums=self.enums_fn(), embedded=True)
+            w.changed.connect(self.update_result)
+            self.args_form.addRow(w)
+            self.arg_widgets["condition"] = w
+            self.resize(max(self.width(), 1000), self.height())
         if m.key == "expression":
             from src.kpi_studio.gui.widgets.common import ExprEdit
 
@@ -373,7 +386,7 @@ class DerivedBuilder(QDialog):
                 w.setToolTip(p.doc)
             self.args_form.addRow(label, w)
             self.arg_widgets[p.name] = w
-        self.args_box.setVisible(bool(m.inputs or m.params or m.key == "expression"))
+        self.args_box.setVisible(bool(m.inputs or m.params or m.key in ("expression", "condition")))
         self._suggest_unit()
         self.update_result()
         first = next(iter(self.arg_widgets.values()), None)
@@ -451,6 +464,18 @@ class DerivedBuilder(QDialog):
             return "Give the derived signal a name (letters, digits, _; not starting with a digit)."
         if name in self.taken:
             return f"'{name}' is already used by another signal."
+        if m.key == "condition":
+            w = self.arg_widgets.get("condition")
+            if w is None or not w.expression():
+                return "Fill in a row: signal, operator and value."
+            if w.bracket_problem():
+                return "Brackets: " + w.bracket_problem() + "."
+            try:
+                compile_expr(w.expression(), names=set(self.signal_names) | {"time"}, enums=self.enums_fn(),
+                             units=self.units)
+            except ExprError as exc:
+                return str(exc)
+            return ""
         if m.key == "expression":
             w = self.arg_widgets.get("expression")
             if w is None or not w.text().strip():
@@ -488,6 +513,8 @@ class DerivedBuilder(QDialog):
             return ""
         if self.current_method().key == "expression":
             return self.arg_widgets["expression"].text().strip()
+        if self.current_method().key == "condition":
+            return self.arg_widgets["condition"].expression()
         sigs = [self.signal.currentText().strip()] + [c.currentText().strip() for c in self.input_combos]
         args = self._arg_texts()
         if self.current_method().converts_to and \
