@@ -774,7 +774,7 @@ class SignalsPage(QWidget):
         f = self._der_fields(derived.get(name)) if name else {"expr": "", "unit": "", "description": ""}
         dlg = DerivedBuilder(self.state.signal_names(), self._units(), self, name=name, expr=f["expr"],
                              unit=f["unit"], description=f["description"],
-                             taken=set(self.state.signal_names()) | set(derived))
+                             taken=set(self.state.signal_names()) | set(derived), enums_fn=self.state.enum_map)
         return dlg.values() if dlg.exec() == DerivedBuilder.Accepted else None
 
     def add_derived(self):

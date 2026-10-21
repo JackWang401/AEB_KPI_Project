@@ -49,7 +49,7 @@ def test_dialog_prefills_from_existing_expression(qtbot):
     assert dlg.values()["expr"] == "v * 3.6"
 
 
-@pytest.mark.parametrize("m", methods(), ids=lambda m: m.key)
+@pytest.mark.parametrize("m", [m for m in methods() if m.key != "expression"], ids=lambda m: m.key)
 def test_every_method_builds_a_valid_expression(m):
     from src.kpi_studio.core.expr import compile_expr
 
@@ -81,3 +81,24 @@ def test_dialog_converter_reads_unit_column_and_asks_when_empty(qtbot):
     dlg.signal.setCurrentText("yaw")
     dlg.set_method("to_deg")
     assert dlg.values()["expr"] == "to_deg(yaw)" and dlg.unit.text() == "deg/s"
+
+
+def test_dialog_expression_method_takes_a_condition(qtbot):
+    enums = {"fb": {"ACTIVE": 2, "OFF": 0}, "pb": {"ACTIVE": 2, "OFF": 0}}
+    dlg = DerivedBuilder(["fb", "pb", "gap"], {}, taken={"fb", "pb", "gap"}, enums_fn=lambda: enums)
+    qtbot.addWidget(dlg)
+    dlg.name.setText("braking")
+    dlg.set_method("expression")
+    assert dlg.form.isRowVisible(dlg.signal) is False  # no single signal to process
+    assert "Type the expression" in dlg.problem()
+    dlg.arg_widgets["expression"].setText("fb == ACTIVE or pb == BOGUS")
+    assert dlg.problem() and dlg.expression() == ""
+    dlg.arg_widgets["expression"].setText("fb == ACTIVE or pb == ACTIVE")
+    assert dlg.values()["expr"] == "fb == ACTIVE or pb == ACTIVE"
+    dlg.set_method("scale")
+    assert dlg.form.isRowVisible(dlg.signal)
+    again = DerivedBuilder(["fb", "pb"], {}, name="braking", expr="fb == ACTIVE or pb == ACTIVE",
+                           enums_fn=lambda: enums)
+    qtbot.addWidget(again)
+    assert again.current_method().key == "expression"
+    assert again.values()["expr"] == "fb == ACTIVE or pb == ACTIVE"

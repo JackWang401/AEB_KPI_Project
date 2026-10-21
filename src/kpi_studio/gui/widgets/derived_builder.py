@@ -52,6 +52,9 @@ class Method:
 
 
 ARITHMETIC = {
+    "expression": Method("expression", "Expression  (type a condition or formula)", "Expression",
+                         "Any expression of signals. A condition gives 1 when true and 0 when false, e.g. "
+                         "fb_state == ACTIVE or pb_state == ACTIVE.", unit=""),
     "scale": Method("scale", "Scale  (x · factor)", "Arithmetic", "Multiply the signal by a number, e.g. 3.6.",
                     params=[Param("factor", float, example=1.0, doc="multiply by")], unit=""),
     "offset": Method("offset", "Offset  (x + offset)", "Arithmetic", "Add a constant (use a negative number to subtract).",
@@ -102,6 +105,8 @@ def _literal(p: Param, text: str) -> str:
 
 def build_expression(m: Method, signals: list[str], args: dict[str, str]) -> str:
     """Expression text for method `m` applied to `signals` (first = main input) with param texts `args`."""
+    if m.key == "expression":
+        return args.get("expression", "").strip()
     x = signals[0]
     if m.key == "scale":
         return f"{x} * {_num(args['factor'])}"
@@ -212,12 +217,14 @@ class DerivedBuilder(QDialog):
     """Name, input signal, method, the method's arguments, unit and description of a derived signal."""
 
     def __init__(self, signal_names: list[str], units: dict[str, str], parent=None, *, name: str = "",
-                 expr: str = "", unit: str = "", description: str = "", taken: set = frozenset()):
+                 expr: str = "", unit: str = "", description: str = "", taken: set = frozenset(),
+                 enums_fn=None):
         super().__init__(parent)
         self.setWindowTitle("Derived signal")
         self.setMinimumWidth(560)
         self.signal_names = [n for n in signal_names if n != name]
         self.units = units
+        self.enums_fn = enums_fn or (lambda: {})
         self.taken = set(taken) - {name}
         self.methods = methods()
         self.arg_widgets: dict[str, QWidget] = {}
@@ -232,6 +239,7 @@ class DerivedBuilder(QDialog):
         form.addRow("Name", self.name)
         self.signal = self._signal_combo()
         form.addRow("Signal to process", self.signal)
+        self.form = form
         self.method = QComboBox()
         self.method.setMaxVisibleItems(25)
         last = None
@@ -286,10 +294,11 @@ class DerivedBuilder(QDialog):
                 combo.setCurrentText(s)
             for k, v in args.items():
                 self._set_arg(k, v)
+        elif expr:
+            self.set_method("expression")
+            self.arg_widgets["expression"].setText(expr)
         else:
             self.set_method("scale")
-            if expr:
-                self.doc.setText(f"Current expression: {expr}\n(it was typed by hand; OK replaces it)")
         self.update_result()
 
     # ------------------------------------------------------------------ widgets
@@ -320,6 +329,15 @@ class DerivedBuilder(QDialog):
             self.args_form.removeRow(0)
         self.arg_widgets.clear()
         self.input_combos = []
+        self.form.setRowVisible(self.signal, m.key != "expression")
+        if m.key == "expression":
+            from src.kpi_studio.gui.widgets.common import ExprEdit
+
+            w = ExprEdit(lambda: self.signal_names, enums_fn=self.enums_fn, units_fn=lambda: self.units,
+                         allow_empty=False, placeholder="e.g. fb_state == ACTIVE or pb_state == ACTIVE")
+            w.textChanged.connect(self.update_result)
+            self.args_form.addRow("expression", w)
+            self.arg_widgets["expression"] = w
         for label in m.inputs:
             combo = self._signal_combo()
             self.input_combos.append(combo)
@@ -355,7 +373,7 @@ class DerivedBuilder(QDialog):
                 w.setToolTip(p.doc)
             self.args_form.addRow(label, w)
             self.arg_widgets[p.name] = w
-        self.args_box.setVisible(bool(m.inputs or m.params))
+        self.args_box.setVisible(bool(m.inputs or m.params or m.key == "expression"))
         self._suggest_unit()
         self.update_result()
         first = next(iter(self.arg_widgets.values()), None)
@@ -433,6 +451,11 @@ class DerivedBuilder(QDialog):
             return "Give the derived signal a name (letters, digits, _; not starting with a digit)."
         if name in self.taken:
             return f"'{name}' is already used by another signal."
+        if m.key == "expression":
+            w = self.arg_widgets.get("expression")
+            if w is None or not w.text().strip():
+                return "Type the expression, e.g. a condition such as fb_state == ACTIVE."
+            return "" if w.check() else w.error
         sigs = [self.signal.currentText().strip()] + [c.currentText().strip() for c in self.input_combos]
         for s in sigs:
             if not s:
@@ -463,6 +486,8 @@ class DerivedBuilder(QDialog):
     def expression(self) -> str:
         if self.problem():
             return ""
+        if self.current_method().key == "expression":
+            return self.arg_widgets["expression"].text().strip()
         sigs = [self.signal.currentText().strip()] + [c.currentText().strip() for c in self.input_combos]
         args = self._arg_texts()
         if self.current_method().converts_to and \
