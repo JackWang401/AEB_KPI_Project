@@ -49,6 +49,7 @@ from src.kpi_studio.gui.widgets import resize_cursor
 from src.kpi_studio.gui.widgets.common import make_canvas
 from src.kpi_studio.io import profile_store
 from src.kpi_studio.io.mf4 import read_signals
+from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 NO_EVENT = "(signals only)"
 SIGNAL_MIME = "application/x-kpi-studio-signals"
@@ -879,7 +880,7 @@ class SignalViewer(QWidget):
             d = defs.get(it.text())
             tip = ""
             if d is not None:
-                tip = "\n".join(x for x in (f"[{d.unit}]" if d.unit else "", d.description) if x)
+                tip = "\n".join(x for x in (f"[{pretty_unit(d.unit)}]" if d.unit else "", d.description) if x)
             if self.common.get(it.text()):
                 tip = "\n".join(x for x in (tip, f"Common axis: {self.common[it.text()]}") if x)
             it.setToolTip(tip)
@@ -1432,7 +1433,7 @@ class SignalViewer(QWidget):
         for k in results:
             ok = k.status == Status.OK
             value = "—" if k.value is None else (k.text or f"{k.value:.3f}")
-            text = f"{k.kpi} = {value}" + (f" {k.unit}" if k.unit and k.value is not None else "")
+            text = f"{k.kpi} = {value}" + (f" {pretty_unit(k.unit)}" if k.unit and k.value is not None else "")
             if not ok:
                 why = k.message or k.status
                 text += f"  ({why[:28] + '…' if len(why) > 29 else why})"
@@ -1793,7 +1794,7 @@ class SignalViewer(QWidget):
                     zip(self._series.get(ax, []), self._legend.get(ax, []))):
                 self._artists.append(ax.text(1, 1, "━━" if ls == "-" else "╍╍", transform=at(0.06, row),
                                              fontsize=8, va="top", ha="left", color=color, clip_on=False))
-                self._artists.append(ax.text(1, 1, label + (f" [{unit}]" if unit else ""), transform=at(0.28, row),
+                self._artists.append(ax.text(1, 1, label + (f" [{pretty_unit(unit)}]" if unit else ""), transform=at(0.28, row),
                                              fontsize=8, va="top", ha="left", color="#1f1f1e", clip_on=False,
                                              fontweight="semibold"))
                 row += 1

@@ -207,7 +207,14 @@ def test_unit_column_is_a_drop_down(qtbot, window, mf4_dir):
     delegate = table.itemDelegateForColumn(2)
     box = delegate.createEditor(table.viewport(), None, ix)
     box.showPopup = lambda: None
-    assert [box.itemText(i) for i in range(box.count())] == [NO_UNIT] + UNIT_CHOICES
+    items = [box.itemText(i) for i in range(box.count())]
+    assert items[0] == NO_UNIT and len(items) == len(UNIT_CHOICES) + 1
+    assert "m/s²" in items and "m/s³" in items and "m/s^2" not in items  # powers shown as superscripts
+    delegate.setEditorData(box, ix)
+    box.setCurrentText("m/s²")
+    delegate.setModelData(box, table.model(), ix)
+    assert window.state.data["signals"][name]["unit"] == "m/s^2"  # stored plain
+    assert delegate.displayText("m/s^2", None) == "m/s²"
     delegate.setEditorData(box, ix)
     box.setCurrentText("km/h")
     delegate.setModelData(box, table.model(), ix)

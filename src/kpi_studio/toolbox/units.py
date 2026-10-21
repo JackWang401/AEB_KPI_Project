@@ -87,3 +87,21 @@ def convert(values: np.ndarray, from_unit: str, to_unit: str) -> np.ndarray:
 
 def known_units() -> list[str]:
     return sorted(_UNITS)
+
+
+_SUP = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+_UNSUP = {v: k for k, v in zip("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")}
+
+
+def pretty(unit: str) -> str:
+    """A unit as shown to people: powers as superscripts, e.g. m/s^2 -> m/s²."""
+    import re
+
+    return re.sub(r"\^(-?\d+)", lambda m: m.group(1).translate(_SUP), unit or "")
+
+
+def plain(unit: str) -> str:
+    """The stored form of a unit typed or picked with superscripts, e.g. m/s² -> m/s^2."""
+    import re
+
+    return re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+", lambda m: "^" + "".join(_UNSUP[c] for c in m.group()), unit or "")

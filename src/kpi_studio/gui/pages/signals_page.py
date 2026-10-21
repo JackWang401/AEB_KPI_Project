@@ -39,6 +39,8 @@ from src.kpi_studio.gui.widgets.common import ExprEdit, HighlightDelegate, match
 from src.kpi_studio.gui.widgets.derived_builder import DerivedBuilder
 from src.kpi_studio.gui.widgets.signal_viewer import KIND_TIPS, KINDS, SignalViewer
 from src.kpi_studio.io.mf4 import ChannelInfo, match_channel
+from src.kpi_studio.toolbox.units import plain as plain_unit
+from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 LIB_COLOR = QColor("#6b6b66")
 
@@ -124,21 +126,24 @@ class UnitDelegate(KindDelegate):
         box = QComboBox(parent)
         box.setEditable(True)  # a unit not in the list (e.g. %, bar) can still be typed
         box.setInsertPolicy(QComboBox.NoInsert)
-        box.addItems([NO_UNIT] + UNIT_CHOICES)
+        box.addItems([NO_UNIT] + [pretty_unit(u) for u in UNIT_CHOICES])
         box.setMaxVisibleItems(len(UNIT_CHOICES) + 2)
         box.activated.connect(lambda _i, b=box: (self.commitData.emit(b), self.closeEditor.emit(b)))
         QTimer.singleShot(0, box.showPopup)
         return box
 
     def setEditorData(self, editor, index):
-        text = str(index.data() or "")
+        text = pretty_unit(str(index.data() or ""))
         if text and editor.findText(text) < 0:
             editor.insertItem(1, text)  # its own unit stays one click away
         editor.setCurrentText(text or NO_UNIT)
 
     def setModelData(self, editor, model, index):
         text = editor.currentText().strip()
-        model.setData(index, "" if text == NO_UNIT else text)
+        model.setData(index, "" if text == NO_UNIT else plain_unit(text))  # stored as m/s^2
+
+    def displayText(self, value, locale):
+        return pretty_unit(str(value or ""))
 
 
 def _num(v) -> str:
@@ -371,7 +376,7 @@ class SignalsPage(QWidget):
             if g is None:
                 g = groups[c.group_name] = QTreeWidgetItem([c.group_name, "", ""])
                 self.tree.addTopLevelItem(g)
-            item = QTreeWidgetItem([c.name, c.unit, f"{len(e['files'])}/{n_files}"])
+            item = QTreeWidgetItem([c.name, pretty_unit(c.unit), f"{len(e['files'])}/{n_files}"])
             item.setData(0, Qt.UserRole, key)
             if len(e["files"]) < n_files:
                 item.setForeground(2, QColor("#c27a00"))

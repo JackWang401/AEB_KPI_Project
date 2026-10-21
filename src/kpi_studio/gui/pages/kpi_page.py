@@ -52,6 +52,8 @@ from src.kpi_studio.gui.widgets.common import (
     parse_options,
 )
 from src.kpi_studio.gui.widgets.flow_layout import FlowLayout
+from src.kpi_studio.toolbox.units import plain as plain_unit
+from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORMS = [("value", "At a moment"), ("range", "Over a range"), ("formula", "Formula of earlier KPIs")]
@@ -872,10 +874,10 @@ class KpiForm(QWidget):
             k.update(formula=self.formula.text().strip())
         if form == "formula":
             if self.unit.text().strip():
-                k["unit"] = self.unit.text().strip()
+                k["unit"] = plain_unit(self.unit.text().strip())
         elif not self.unit.isReadOnly():  # the signal has no unit: the one typed in
             if self.unit.text().strip():
-                k["unit"] = self.unit.text().strip()
+                k["unit"] = plain_unit(self.unit.text().strip())
         elif self.k.get("unit"):
             k["unit"] = self.k["unit"]  # kept as a fallback when the signal has no unit
         if self.desc.text().strip():
@@ -910,7 +912,7 @@ class KpiForm(QWidget):
         self.unit.setReadOnly(not editable)
         self.unit.setStyleSheet("" if editable else "QLineEdit { background: transparent; border: none; }")
         if not self.unit.hasFocus():
-            self.unit.setText(text)
+            self.unit.setText(pretty_unit(text))
         self.unit.setPlaceholderText(placeholder)
 
     def rename(self):
