@@ -692,6 +692,29 @@ def test_main_window_shows_only_the_signal_viewer(window):
     assert not window.kpi_page.isVisible() and not window.run_page.isVisible()  # in side panels
 
 
+def test_derived_kind_column_follows_the_expression_until_set(qtbot, window, mf4_dir):
+    from src.kpi_studio.gui.pages.signals_page import DerivedKindDelegate
+
+    _load(qtbot, window, mf4_dir)
+    page = window.signals_page
+    window.state.data.setdefault("derived", {}).update({"vKph": "egoSpeed * 3.6", "fast": "egoSpeed > 20"})
+    window.state.edited(structure=True)
+    window.state.validate_now()
+    assert page.DER_COLS[3] == "Kind" and isinstance(page.der_table.itemDelegateForColumn(3), DerivedKindDelegate)
+    rows = {page.der_table.item(r, 0).text(): r for r in range(page.der_table.rowCount())}
+    assert page.der_table.item(rows["vKph"], 3).text() == "continuous"
+    assert page.der_table.item(rows["fast"], 3).text() == "boolean"  # a condition
+    assert window.viewer.kind("fast") == "boolean"
+    page.der_table.item(rows["vKph"], 3).setText("discrete")
+    assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "kind": "discrete"}
+    window.state.validate_now()
+    assert "vKph" in window.state.compiled.discrete and window.viewer.kind("vKph") == "discrete"
+    qtbot.wait(10)
+    rows = {page.der_table.item(r, 0).text(): r for r in range(page.der_table.rowCount())}
+    page.der_table.item(rows["vKph"], 3).setText("continuous")  # what the expression gives: not stored
+    assert window.state.data["derived"]["vKph"] == "egoSpeed * 3.6"
+
+
 def test_derived_unit_and_description_columns(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     page = window.signals_page
@@ -700,7 +723,7 @@ def test_derived_unit_and_description_columns(qtbot, window, mf4_dir):
     window.state.validate_now()
     row = next(r for r in range(page.der_table.rowCount()) if page.der_table.item(r, 0).text() == "vKph")
     page.der_table.item(row, 2).setText("km/h")
-    page.der_table.item(row, 3).setText("ego speed")
+    page.der_table.item(row, 4).setText("ego speed")
     assert window.state.data["derived"]["vKph"] == {"expr": "egoSpeed * 3.6", "unit": "km/h",
                                                     "description": "ego speed"}
     window.state.validate_now()

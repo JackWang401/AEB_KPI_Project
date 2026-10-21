@@ -71,10 +71,11 @@ class KindDelegate(QStyledItemDelegate):
     """The Kind column: a drop-down list, opened with one click."""
 
     ARROW = 18  # room kept right of the text for the arrow
+    kinds = KINDS
 
     def sizeHint(self, option, index):
         hint = super().sizeHint(option, index)
-        width = max(option.fontMetrics.horizontalAdvance(k) for k in KINDS) + 12 + self.ARROW
+        width = max(option.fontMetrics.horizontalAdvance(k) for k in self.kinds) + 12 + self.ARROW
         return QSize(max(hint.width(), width), hint.height())
 
     def paint(self, painter, option, index):
@@ -95,7 +96,7 @@ class KindDelegate(QStyledItemDelegate):
 
     def createEditor(self, parent, option, index):
         box = QComboBox(parent)
-        for i, k in enumerate(KINDS):
+        for i, k in enumerate(self.kinds):
             box.addItem(k)
             box.setItemData(i, KIND_TIPS[k], Qt.ToolTipRole)
         box.activated.connect(lambda _i, b=box: (self.commitData.emit(b), self.closeEditor.emit(b)))
@@ -104,10 +105,16 @@ class KindDelegate(QStyledItemDelegate):
 
     def setEditorData(self, editor, index):
         text = str(index.data() or "continuous")
-        editor.setCurrentIndex(KINDS.index(text) if text in KINDS else 0)
+        editor.setCurrentIndex(self.kinds.index(text) if text in self.kinds else 0)
 
     def setModelData(self, editor, model, index):
         model.setData(index, editor.currentText())
+
+
+class DerivedKindDelegate(KindDelegate):
+    """Kind of a derived signal (an enum needs a value table, which derived signals don't have)."""
+
+    kinds = ["continuous", "discrete", "boolean"]
 
 
 UNIT_CHOICES = COMMON_UNITS
@@ -192,7 +199,7 @@ def _identifier(name: str) -> str:
 
 
 class SignalsPage(QWidget):
-    DER_COLS = ["Name", "Expression", "Unit", "Description"]
+    DER_COLS = ["Name", "Expression", "Unit", "Kind", "Description"]
     SIG_COLS = ["Name", "Channel candidates (first match wins)", "Unit", "Kind", "Enum", "Required", "Found in"]
 
     def __init__(self, state: AppState, parent=None, viewer: SignalViewer | None = None):
@@ -296,11 +303,12 @@ class SignalsPage(QWidget):
         self.der_table = QTableWidget(0, len(self.DER_COLS))
         self.der_table.setHorizontalHeaderLabels(self.DER_COLS)
         self.der_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.der_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.der_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.der_table.setColumnWidth(2, 80)
         compact_table(self.der_table, 1)
         self.der_table.setItemDelegateForColumn(2, UnitDelegate(self.der_table))
-        self.der_table.clicked.connect(lambda ix: ix.column() == 2 and self.der_table.edit(ix))
+        self.der_table.setItemDelegateForColumn(3, DerivedKindDelegate(self.der_table))
+        self.der_table.clicked.connect(lambda ix: ix.column() in (2, 3) and self.der_table.edit(ix))
         dl.addWidget(self.der_table, 1)
         vsplit.addWidget(der_box)
 
@@ -694,11 +702,11 @@ class SignalsPage(QWidget):
     # ------------------------------------------------------------------ derived
     @staticmethod
     def _der_fields(value) -> dict:
-        """{expr, unit, description} from either YAML form (plain expression or mapping)."""
+        """{expr, unit, description, kind} from either YAML form (plain expression or mapping)."""
         if isinstance(value, dict):
             return {"expr": value.get("expr", "") or "", "unit": value.get("unit") or "",
-                    "description": value.get("description", "") or ""}
-        return {"expr": value or "", "unit": "", "description": ""}
+                    "description": value.get("description", "") or "", "kind": value.get("kind") or ""}
+        return {"expr": value or "", "unit": "", "description": "", "kind": ""}
 
     def _set_der_field(self, name, key, text):
         derived = self.state.data.setdefault("derived", {})
@@ -730,9 +738,15 @@ class SignalsPage(QWidget):
             unit = QTableWidgetItem(f["unit"])
             unit.setToolTip("Unit shown in the signal viewer and plots, e.g. km/h")
             self.der_table.setItem(r, 2, unit)
+            kind = QTableWidgetItem(self.state.derived_kind(name))
+            kind.setToolTip(KIND_TIPS.get(kind.text(), "") + ("" if f["kind"] else "\n(from the expression)")
+                            + "\n\nClick to change")
+            if not f["kind"]:
+                kind.setForeground(QColor("#8e8e93"))  # not set: what the expression gives
+            self.der_table.setItem(r, 3, kind)
             desc = QTableWidgetItem(f["description"])
             desc.setToolTip(f["description"] or "What this signal means (free text)")
-            self.der_table.setItem(r, 3, desc)
+            self.der_table.setItem(r, 4, desc)
         self._loading = False
 
     def _names_except(self, name):
@@ -755,7 +769,14 @@ class SignalsPage(QWidget):
                 self.state.edited(structure=True)
             elif new != name:
                 QTimer.singleShot(0, self.refresh_derived)  # put the old name back
-        elif item.column() in (2, 3):
+        elif item.column() == 3:
+            kind = item.text().strip()
+            if kind == self.state.derived_kind(name, inferred=True):
+                kind = ""  # the same as the expression gives: keep following it
+            if self._set_der_field(name, "kind", kind):
+                self.state.edited()
+            QTimer.singleShot(0, self.refresh_derived)
+        elif item.column() in (2, 4):
             key = "unit" if item.column() == 2 else "description"
             if self._set_der_field(name, key, item.text().strip()):
                 self.state.edited()
@@ -771,11 +792,11 @@ class SignalsPage(QWidget):
     def open_builder(self, name: str = "") -> Optional[dict]:
         """Run the derived-signal dialog; returns its values, or None when cancelled."""
         derived = self.state.data.get("derived", {}) or {}
-        f = self._der_fields(derived.get(name)) if name else {"expr": "", "unit": "", "description": ""}
+        f = self._der_fields(derived.get(name)) if name else {"expr": "", "unit": "", "description": "", "kind": ""}
         dlg = DerivedBuilder(self.state.signal_names(), self._units(), self, name=name, expr=f["expr"],
                              unit=f["unit"], description=f["description"],
                              taken=set(self.state.signal_names()) | set(derived), enums_fn=self.state.enum_map)
-        return dlg.values() if dlg.exec() == DerivedBuilder.Accepted else None
+        return {**dlg.values(), "kind": f["kind"]} if dlg.exec() == DerivedBuilder.Accepted else None
 
     def add_derived(self):
         v = self.open_builder()

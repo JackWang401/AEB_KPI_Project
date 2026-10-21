@@ -235,7 +235,8 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
         err("derived", f"derived signals depend on each other in a loop: {', '.join(cycle)}")
     derived = [(n, compiled_derived[n]) for n in order if n in compiled_derived and n not in cycle]
     for n, c in derived:
-        if c.hold:
+        kind = profile.derived[n].kind
+        if (c.hold if kind is None else kind != "continuous"):
             discrete.add(n)
 
     # ---------------- events

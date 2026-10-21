@@ -214,6 +214,24 @@ class AppState(QObject):
                 names.append(n)
         return sorted(names, key=str.lower)
 
+    def derived_kind(self, name: str, *, inferred: bool = False) -> str:
+        """A derived signal's Kind: the one set in the table, else what its expression gives (a condition
+        is boolean, a held signal's value discrete, anything else continuous). inferred=True: always the latter."""
+        from src.kpi_studio.core.expr import compile_expr
+
+        value = (self.data.get("derived") or {}).get(name)
+        if value is None and self.resolved is not None and name in self.resolved.derived:
+            value = self.resolved.derived[name].model_dump(exclude_none=True)
+        if isinstance(value, dict) and value.get("kind") and not inferred:
+            return value["kind"]
+        expr = value.get("expr", "") if isinstance(value, dict) else str(value or "")
+        held = {n for n, d in self.resolved.signals.items() if d.held} if self.resolved is not None else set()
+        try:
+            c = compile_expr(expr, names=set(self.signal_names()) | {"time"}, enums=self.enum_map(), discrete=held)
+        except Exception:
+            return "continuous"
+        return "boolean" if c.is_bool else "discrete" if c.hold else "continuous"
+
     def unit_map(self) -> dict:
         """signal / derived name -> its Unit ('' when none), from the live data."""
         from src.kpi_studio.core.model import signal_units

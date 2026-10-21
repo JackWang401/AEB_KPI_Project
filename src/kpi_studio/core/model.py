@@ -60,21 +60,25 @@ class DerivedDef(_Strict):
     expr: str = ""
     unit: Optional[str] = None
     description: str = ""
+    # None: from the expression (a condition is boolean, a held signal's value discrete, else continuous)
+    kind: Optional[Literal["continuous", "discrete", "boolean"]] = None
 
 
 def derived_to_yaml(d: "DerivedDef | str | dict"):
-    """The compact YAML form: a plain expression string unless a unit or description is set."""
+    """The compact YAML form: a plain expression string unless a unit, description or kind is set."""
     if isinstance(d, str):
         return d
     if isinstance(d, dict):
-        d = DerivedDef.model_validate({k: d[k] for k in ("expr", "unit", "description") if k in d})
-    if not d.unit and not d.description:
+        d = DerivedDef.model_validate({k: d[k] for k in ("expr", "unit", "description", "kind") if d.get(k)})
+    if not d.unit and not d.description and not d.kind:
         return d.expr
     out = {"expr": d.expr}
     if d.unit:
         out["unit"] = d.unit
     if d.description:
         out["description"] = d.description
+    if d.kind:
+        out["kind"] = d.kind
     return out
 
 

@@ -1556,7 +1556,10 @@ class SignalViewer(QWidget):
                 self.draw()  # a boolean moves to the bottom at once
 
     def kind(self, name: str) -> str:
-        """The signal's Kind (Selected signals); derived signals count as continuous."""
+        """The signal's Kind (Selected signals, or the Derived signals table)."""
+        if name in (self.state.data.get("derived") or {}) or (
+                self.state.resolved is not None and name in self.state.resolved.derived):
+            return self.state.derived_kind(name)
         d = (self.state.data.get("signals") or {}).get(name)
         if d is None and self.state.resolved is not None and name in self.state.resolved.signals:
             return self.state.resolved.signals[name].kind
