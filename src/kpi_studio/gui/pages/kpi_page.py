@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -46,6 +48,7 @@ from src.kpi_studio.gui.widgets.common import (
     PAGE_MARGINS,
     ConditionBuilder,
     ConditionRow,
+    parse_condition_rows,
     ExprEdit,
     ToolPalette,
     format_options,
@@ -701,6 +704,68 @@ class EventForm(QWidget):
 
 
 # ============================================================================ KPI form
+class FormulaField(QWidget):
+    """A formula of earlier KPIs, built from rows (KPI, operator, value, joined with and / or / xor, with
+    brackets), e.g. a pass / fail rule. Arithmetic such as  dist / time  is typed instead."""
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.names: list[str] = []
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.typed = QCheckBox("Type the formula instead (for arithmetic, e.g. braking_dist / braking_time)")
+        self.typed.toggled.connect(self._mode_changed)
+        self.line = QLineEdit()
+        self.line.setPlaceholderText("e.g. braking_dist / braking_time")
+        self.line.editingFinished.connect(self.changed.emit)
+        self.rows: Optional[ConditionBuilder] = None
+        self.rows_box = QVBoxLayout()
+        lay.addLayout(self.rows_box)
+        lay.addWidget(self.line)
+        lay.addWidget(self.typed)
+        self._make_rows("")
+        self._mode_changed(False)
+
+    def _make_rows(self, text: str):
+        if self.rows is not None:
+            self.rows.setParent(None)
+            self.rows.deleteLater()
+        self.rows = ConditionBuilder(self.names, self, embedded=True)
+        self.rows.findChild(QLabel).setText(
+            "Each row is  KPI  operator  value, e.g. speed_at_release > 0.5. Join rows with and / or / xor and "
+            "group them with brackets. The result is 1 when true, 0 when false.")
+        if text:
+            self.rows.load_expression(text)
+        self.rows.changed.connect(self.changed.emit)
+        self.rows_box.addWidget(self.rows)
+
+    def _mode_changed(self, typed: bool):
+        if typed and not self.line.text().strip():
+            self.line.setText(self.rows.expression())
+        self.rows.setVisible(not typed)
+        self.line.setVisible(typed)
+        if not typed and self.line.text().strip():
+            self._make_rows(self.line.text().strip())
+        self.changed.emit()
+
+    def set_formula(self, text: str, names: list[str]):
+        """Show `text` as rows when it fits them, else typed; `names` are the KPIs it may use."""
+        self.blockSignals(True)
+        self.names = list(names)
+        rows = not text.strip() or parse_condition_rows(text) is not None
+        self.line.setText(text)
+        self._make_rows(text if rows else "")
+        self.typed.setChecked(not rows)
+        self.rows.setVisible(rows)
+        self.line.setVisible(not rows)
+        self.blockSignals(False)
+
+    def text(self) -> str:
+        return self.line.text().strip() if self.typed.isChecked() else self.rows.expression()
+
+
 class KpiForm(QWidget):
     def __init__(self, page: "KpiPage"):
         super().__init__()
@@ -718,8 +783,7 @@ class KpiForm(QWidget):
             self.form.addItem(label, key)
         self.expr = ExprEdit(self.state.signal_names, placeholder="expression, e.g. egoSpeedKph",
                              enums_fn=self.state.enum_map, units_fn=self.state.unit_map)
-        self.formula = QLineEdit()
-        self.formula.setPlaceholderText("e.g. pedalPosMax - pedalPosAtStart")
+        self.formula = FormulaField()
         self.at = QComboBox()
         self.range = QComboBox()
         self.range.setProperty("kind", "range")
@@ -754,7 +818,7 @@ class KpiForm(QWidget):
         self.event.currentTextChanged.connect(self.event_changed)
         self.form.currentIndexChanged.connect(self.form_changed)
         self.expr.editingFinished.connect(self.save)
-        self.formula.editingFinished.connect(self.save)
+        self.formula.changed.connect(self.save)
         for w in (self.at, self.range):  # a valid choice clears the "missing" mark
             w.currentTextChanged.connect(lambda _t, w=w: self._set_moment(w, w.currentText()))
         self.reducer.currentIndexChanged.connect(lambda *_: self._show_form(self.form.currentData()))
@@ -767,6 +831,10 @@ class KpiForm(QWidget):
     @property
     def k(self) -> dict:
         return self.state.data["kpis"][self.index]
+
+    def earlier_kpis(self, index: int, event: str) -> list[str]:
+        """The KPIs a formula may use: those listed before it for the same event."""
+        return [k.get("name", "") for k in self.state.data["kpis"][:index] if k.get("event") == event and k.get("name")]
 
     def _fill_moments(self, event: str):
         for combo, items in ((self.at, self.state.moments_of(event)), (self.range, self.state.ranges_of(event))):
@@ -812,7 +880,7 @@ class KpiForm(QWidget):
         form = "value" if "value" in k else "formula" if "formula" in k else "range"
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(k.get("value") or k.get("of") or "")
-        self.formula.setText(k.get("formula", ""))
+        self.formula.set_formula(k.get("formula", ""), self.earlier_kpis(index, k.get("event", "")))
         self._set_moment(self.at, k.get("at", "start"))
         self._set_moment(self.range, k.get("over") or ("window" if k.get("reduce") else "event"))
         self.which.set_items(k.get("which") or {})
@@ -847,6 +915,8 @@ class KpiForm(QWidget):
     def event_changed(self, ev):
         self._fill_moments(ev)
         self.save()
+        if self.index is not None:
+            self.formula.set_formula(self.formula.text(), self.earlier_kpis(self.index, ev))
 
     def save(self):
         if self._loading or self.index is None:

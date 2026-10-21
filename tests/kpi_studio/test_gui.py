@@ -2470,3 +2470,27 @@ def test_software_version_column_in_files(qtbot, window, mf4_dir):
     assert page.table.item(0, col).text() == "SW 1.2.3"
     page.table.item(0, col).setText("")
     assert f not in window.state.versions
+
+
+def test_formula_is_built_from_rows_of_earlier_kpis(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state = window.state
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "moments": {"m1": {"first": "egoSpeed > 2"}}}
+    state.data["kpis"] += [{"name": "spd", "event": "served", "value": "egoSpeed", "at": "m1"},
+                           {"name": "gap", "event": "served", "value": "egoSpeed", "at": "start"},
+                           {"name": "fail", "event": "served", "formula": "spd > 0.5 or gap == 1"},
+                           {"name": "ratio", "event": "served", "formula": "spd / gap"}]
+    state.edited(structure=True)
+    form = window.kpi_page.kpi_form
+    n = len(state.data["kpis"])
+    form.load(n - 2)
+    f = form.formula
+    assert not f.typed.isChecked() and len(f.rows.rows) == 2
+    assert [f.rows.rows[0][0].itemText(i) for i in range(f.rows.rows[0][0].count())] == ["gap", "spd"]  # earlier KPIs
+    assert f.rows.links[1][0].currentText() == "or"
+    f.rows.links[1][0].setCurrentText("xor")
+    assert state.data["kpis"][n - 2]["formula"] == "(spd > 0.5) ^ (gap == 1)"
+    form.load(n - 1)  # arithmetic doesn't fit rows: typed
+    assert f.typed.isChecked() and f.line.text() == "spd / gap" and f.text() == "spd / gap"
+    state.validate_now()
+    assert state.compiled is not None, [str(i) for i in state.issues]
