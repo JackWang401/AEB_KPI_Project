@@ -44,7 +44,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    three kinds: *At a moment* (an expression's value at a moment), *Over a range* (a range, a reducer and an
    expression, e.g. `distance` of `ego_speed_kph` over `braking`, in m, converted from the speed signal's own
    unit; `all` / `any` of a condition; `change` = the value at the range's end minus the value at its
-   start (e.g. speed lost from `aeb_braking` to `veh_stopped`); `duration` = the range's length; *which conditions are met* = a text
+   start (e.g. speed lost from `aeb_braking` to `veh_stopped`; tick *absolute value* next to the reducer
+   for `abs(change(x))`, saved as `absolute: true`, while `abs(x)` as the expression is `change(abs(x))`); `duration` = the range's length; *which conditions are met* = a text
    result such as `PB + FB`, each condition a signal, operator and value, or *expression* to type a longer
    one) and *Formula* of earlier KPIs. In the yaml a range KPI reads `over: braking` and the event lists
    `ranges: {braking: [aeb_braking, veh_stopped]}`; an older profile's `between: [a, b]` and

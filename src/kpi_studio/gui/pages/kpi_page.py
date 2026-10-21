@@ -794,6 +794,14 @@ class KpiForm(QWidget):
             self.reducer.addItem(name, name)
         for key, label in SPECIAL_REDUCERS:
             self.reducer.addItem(label, key)
+        self.absolute = QCheckBox("absolute value")
+        self.absolute.setToolTip("Take abs() of the reduced result, e.g. abs(change(gap_dist)). "
+                                 "abs() in the Expression instead acts on every sample before reducing.")
+        reducer_row = QWidget()
+        rl = QHBoxLayout(reducer_row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(self.reducer, 1)
+        rl.addWidget(self.absolute)
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
@@ -806,7 +814,7 @@ class KpiForm(QWidget):
         self.desc = QLineEdit()
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
-                         ("Range", self.range), ("Reducer", self.reducer), ("Expression", self.expr),
+                         ("Range", self.range), ("Reducer", reducer_row), ("Expression", self.expr),
                          ("Formula", self.formula), ("Conditions", self.which),
                          ("At moment", self.at), ("Options", self.args), ("Unit", self.unit),
                          ("Highlight", self.highlight), ("Description", self.desc)):
@@ -830,6 +838,7 @@ class KpiForm(QWidget):
         for w in (self.args, self.unit, self.desc):
             w.editingFinished.connect(self.save)
         self.highlight.toggled.connect(lambda *_: self.save())
+        self.absolute.toggled.connect(lambda *_: self.save())
         self.expr.focused.connect(page.set_target)
         self._show_form("value")  # until a KPI is loaded: no hidden form's rows widen the panel
 
@@ -895,6 +904,7 @@ class KpiForm(QWidget):
         self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
         self.highlight.setChecked(bool(k.get("highlight")))
+        self.absolute.setChecked(bool(k.get("absolute")))
         self._show_form(form)
         self._loading = False
         self.show_status()
@@ -912,6 +922,7 @@ class KpiForm(QWidget):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
             w.setVisible(label in visible)
+        self.absolute.setVisible(reducer not in ("which", "duration"))
 
     def form_changed(self):
         form = self.form.currentData()
@@ -942,6 +953,8 @@ class KpiForm(QWidget):
                 k["reduce"] = "duration"
             else:
                 k.update(reduce=reducer, of=self.expr.text().strip())
+                if self.absolute.isChecked():
+                    k["absolute"] = True
                 try:
                     args = parse_options(self.args.text())
                     if args:

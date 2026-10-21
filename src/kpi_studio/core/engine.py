@@ -296,7 +296,7 @@ class FileEvaluator:
                 v = k.reducer.func(ToolContext(self.time[sl]), arr[sl], **k.args)
             if v is None or not np.isfinite(v):
                 return None, hi, Status.NO_SAMPLES, f"{d.reduce} of '{d.of}' has no valid samples"
-            return float(v), hi, Status.OK, ""
+            return float(abs(v) if d.absolute else v), hi, Status.OK, ""
         except _MomentFailure as exc:
             return None, None, exc.status, str(exc)
         except MissingSignal as exc:

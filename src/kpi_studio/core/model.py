@@ -257,6 +257,8 @@ class KpiDef(_Strict):
     which: Optional[dict[str, str]] = None
     # a yes / no KPI: its occurrences' rows are highlighted in the Excel summary where it is true
     highlight: bool = False
+    # reduce form: the absolute value of the reduced result, e.g. abs(change(gap)) instead of change(abs(gap))
+    absolute: bool = False
 
     @model_validator(mode="after")
     def _one_form(self):
@@ -297,6 +299,8 @@ class KpiDef(_Strict):
             raise ValueError(f"KPI '{self.name}': use 'over' (a range) or 'between' (two moments), not both")
         if form not in ("reduce", "which") and self.over:
             raise ValueError(f"KPI '{self.name}': 'over' is only used with 'reduce' and 'which'")
+        if self.absolute and (form != "reduce" or self.reduce == "duration"):
+            raise ValueError(f"KPI '{self.name}': 'absolute' is only used with a reducer such as change or mean")
         if form != "reduce" and (self.of or self.args):
             raise ValueError(f"KPI '{self.name}': 'of' and 'args' are only used with 'reduce'")
         if form not in ("reduce", "which") and self.between:
