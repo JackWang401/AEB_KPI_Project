@@ -12,7 +12,7 @@ import tokenize
 
 # fields whose values are not signal expressions
 _SKIP_KEYS = {"name", "use", "as", "event", "description", "unit", "title", "at", "duration", "between",
-              "after", "before", "offset", "reduce", "x", "y", "type", "color_by", "group_by", "enum",
+              "after", "before", "offset", "reduce", "x", "y", "type", "color_by", "also_color_by", "group_by", "enum",
               "channels", "imports", "label", "merge",
               "over", "ranges"}
 
@@ -131,6 +131,10 @@ def rename_kpi(data: dict, event: str, old: str, new: str) -> int:
             if p.get(key) == old:
                 p[key] = new
                 counter[0] += 1
+        more = p.get("also_color_by") or []
+        if old in more:
+            p["also_color_by"] = [new if c == old else c for c in more]
+            counter[0] += 1
     return counter[0]
 
 

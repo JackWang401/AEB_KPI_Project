@@ -408,6 +408,11 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
                 err(where, f"colour by a KPI ('{p.color_by}') works for scatter plots; use file, event or none")
             elif p.color_by not in kpi_names:
                 err(where, f"colour by: unknown KPI '{p.color_by}' (or use file, event or none)")
+        for c in p.also_color_by:
+            if p.type != "scatter":
+                err(where, f"colour by '{c}': more than one colour-by works for scatter plots only")
+            elif c not in ("file", "event") and c not in kpi_names:
+                err(where, f"colour by: unknown KPI '{c}' (or use file or event)")
         if p.merge and p.type != "scatter":
             err(where, f"merge '{p.merge}': only scatter plots can be merged into one chart")
     merged: dict = {}

@@ -2540,3 +2540,54 @@ def test_highlight_checkbox_saves_on_yes_no_kpis(qtbot, window, mf4_dir):
     form.highlight.setChecked(True)
     state.validate_now()
     assert any("highlight" in str(i) for i in state.issues)
+
+
+def test_scatter_coloured_by_several_kpis():
+    from src.kpi_studio.core.model import PlotDef
+    from src.kpi_studio.report.plots import kpi_figure
+
+    wide = _wide_for_plots()
+    wide["fail"] = [0.0, 1.0, 1.0, 0.0]
+    fig = kpi_figure(PlotDef(type="scatter", x="v", y="gap", color_by="type", also_color_by=["fail"]),
+                     wide, {}, ["f"])
+    assert [t.name for t in fig.data] == ["FB · fail: true", "PB · fail: false", "PB + FB · fail: true",
+                                          "none · fail: false"]
+    fig = kpi_figure(PlotDef(type="scatter", x="v", y="gap", color_by="none", also_color_by=["fail"]),
+                     wide, {}, ["f"])
+    assert [t.name for t in fig.data] == ["fail: false", "fail: true"]
+    assert len({t.marker.color for t in fig.data}) == 2
+    fig = kpi_figure(PlotDef(type="scatter", x="v", y="gap", color_by="file", also_color_by=["decel"]),
+                     wide, {}, ["f"])
+    assert [t.name for t in fig.data] == ["f · decel=-7", "f · decel=-5", "f · decel=-3", "f · no decel"]
+    with pytest.raises(Exception):
+        PlotDef(type="scatter", x="v", y="gap", also_color_by=["a", "b", "c", "d", "e"])  # at most 5 in all
+
+
+def test_colour_by_columns_in_the_plot_table(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.run_page
+    kpis = window.state.kpi_names()
+    window.state.data["plots"] = [{"type": "scatter", "x": kpis[0], "y": kpis[1]}, {"type": "box", "y": kpis[1]}]
+    window.state.edited(structure=True)
+    page.refresh_plots()
+    extra = page.MORE_COLOUR
+    assert page.colour_count.value() == 1 and page.plots.isColumnHidden(extra)  # one column by default
+    header = page.plots.horizontalHeader()
+    assert header.visualIndex(extra) == header.visualIndex(4) + 1  # next to the first colour column
+    page.colour_count.setValue(3)
+    assert not page.plots.isColumnHidden(extra + 1) and page.plots.isColumnHidden(extra + 2)
+    assert page.plots.cellWidget(1, extra) is None  # box plots: one group-by only
+    page.plots.cellWidget(0, extra + 1).setCurrentText(kpis[2])  # an empty column before it closes up
+    plot = window.state.data["plots"][0]
+    assert plot["also_color_by"] == [kpis[2]]
+    qtbot.waitUntil(lambda: page.plots.cellWidget(0, extra).currentText() == kpis[2])
+    window.state.validate_now()
+    assert window.state.compiled is not None, [str(i) for i in window.state.issues]
+    page.colour_count.setValue(1)  # fewer columns: their choices go
+    assert "also_color_by" not in plot
+    plot["also_color_by"] = ["file", "event", kpis[2]]
+    page.refresh_plots()
+    assert page.colour_count.value() == 4  # enough columns to show what the profile has
+    window.state.data["plots"][1]["also_color_by"] = ["file"]
+    window.state.validate_now()
+    assert any("scatter plots only" in str(i) for i in window.state.issues)

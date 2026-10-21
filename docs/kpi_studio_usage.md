@@ -60,7 +60,9 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    window and moments; *occurrence* (n / total) steps through the event's occurrences in all files. *Save KPI to library* shares a KPI between profiles.
 4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. A scatter plot's *Colour / group by*
    can also be a KPI: a numeric KPI colours the points on a light-to-dark scale, a text KPI (e.g.
-   `PB + FB`) gives one colour per text. In *Merge with row*, pick another scatter plot's row
+   `PB + FB`) gives one colour per text. *Colour-by columns* (1 to 5, default 1) adds more
+   colour columns: the points then get one colour per combination, e.g. `FB · aeb_fail: true`
+   (saved as `also_color_by`). In *Merge with row*, pick another scatter plot's row
    number to draw both in one chart (same X and Y axes, told apart by marker shape; titled by
    the first title set). By default the
    result goes to `kpi_results/` next to the input MF4 files and replaces the previous

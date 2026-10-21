@@ -133,6 +133,8 @@ def kpi_figure(p: PlotDef, wide: pd.DataFrame, units: dict, files: list[str]) ->
 
 def _colour_groups(d: pd.DataFrame, p: PlotDef, files: list[str]) -> Optional[list[tuple[str, pd.DataFrame]]]:
     """Point groups for one colour each, or None when the points are coloured by a numeric KPI."""
+    if p.also_color_by:
+        return _combined_groups(d, [c for c in [p.color_by, *p.also_color_by] if c != "none"], files)
     if p.color_by in BUILTIN_COLOR_BY:
         return [(_short(n) if p.color_by == "file" else n, g) for n, g in _groups(d, p.color_by, files)]
     col = TEXT + p.color_by
@@ -141,6 +143,36 @@ def _colour_groups(d: pd.DataFrame, p: PlotDef, files: list[str]) -> Optional[li
         order = sorted(vals.unique(), key=lambda v: (v == "none", v))
         return [(v, d[vals == v]) for v in order]
     return None
+
+
+def _combined_groups(d: pd.DataFrame, keys: list[str], files: list[str]) -> list[tuple[str, pd.DataFrame]]:
+    """One group per combination of several colour-by keys, labelled like "a.mf4 · gap_too_small: true"."""
+    if d.empty or not keys:
+        return [("all", d)]
+    labels, sorts = [], []
+    for k in dict.fromkeys(keys):
+        if k == "file":
+            labels.append(d["file"].map(_short))
+            sorts.append(d["file"].map(lambda f: files.index(f) if f in files else len(files)))
+        elif k == "event":
+            labels.append(d["event"].astype(str))
+            sorts.append(d["event"].astype(str))
+        elif TEXT + k in d.columns:  # a text KPI
+            v = d[TEXT + k].fillna("none")
+            labels.append(v)
+            sorts.append(v.map(lambda t: (t == "none", t)))
+        else:
+            v = d[k] if k in d.columns else pd.Series(float("nan"), index=d.index)
+            yes_no = v.dropna().isin([0, 1]).all()
+            labels.append(v.map(lambda x: f"no {k}" if pd.isna(x) else
+                                f"{k}: {'true' if x else 'false'}" if yes_no else f"{k}={x:.3g}"))
+            sorts.append(v.fillna(float("inf")))
+    label = labels[0].astype(str)
+    for extra in labels[1:]:
+        label = label + " · " + extra.astype(str)
+    order = sorted(range(len(d)), key=lambda i: tuple(s.iloc[i] for s in sorts))
+    names = list(dict.fromkeys(label.iloc[i] for i in order))
+    return [(n, d[label == n]) for n in names]
 
 
 def scatter_figure(plots: list, wide: pd.DataFrame, units: dict, files: list[str], title: str
@@ -165,8 +197,9 @@ def scatter_figure(plots: list, wide: pd.DataFrame, units: dict, files: list[str
         groups = _colour_groups(d, p, files)
         if groups is not None:
             for i, (name, g) in enumerate(groups):
-                colour = _color(j if p.color_by == "none" else i)
-                label = p.y if (merged and p.color_by == "none") else prefix + name
+                single = p.color_by == "none" and not p.also_color_by
+                colour = _color(j if single else i)
+                label = p.y if (merged and single) else prefix + name
                 fig.add_trace(go.Scatter(
                     x=g[p.x], y=g[p.y], mode="markers", name=label,
                     marker=dict(size=9, color=colour, symbol=symbol, line=dict(color=SURFACE, width=2)),

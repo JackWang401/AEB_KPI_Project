@@ -351,6 +351,7 @@ class PlotDef(_Strict):
     x: Optional[str] = None
     y: Optional[str] = None
     color_by: str = "file"  # "file", "event", "none", or a KPI name: points coloured by that KPI's value
+    also_color_by: list[str] = Field(default_factory=list, max_length=4)  # scatter: one colour per combination
     group_by: Literal["file", "event"] = "file"
     event: Optional[str] = None
     signals: list[str] = Field(default_factory=list)

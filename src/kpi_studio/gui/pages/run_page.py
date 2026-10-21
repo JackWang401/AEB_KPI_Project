@@ -106,7 +106,10 @@ class AxesDialog(QDialog):
 
 class RunPage(QWidget):
     PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
-                 "Signals (timeseries)", "Axis ranges", "Merge with row"]
+                 "Signals (timeseries)", "Axis ranges", "Merge with row",
+                 "Colour by 2", "Colour by 3", "Colour by 4", "Colour by 5"]
+    MORE_COLOUR = 9  # first extra colour-by column (logical index); shown right after "Colour / group by"
+    MAX_COLOUR = 5
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):
         super().__init__(parent)
@@ -129,6 +132,14 @@ class RunPage(QWidget):
         ptitle.setObjectName("sectionTitle")
         prow.addWidget(ptitle)
         prow.addStretch(1)
+        prow.addWidget(QLabel("Colour-by columns"))
+        self.colour_count = QSpinBox()
+        self.colour_count.setRange(1, self.MAX_COLOUR)
+        self.colour_count.setValue(int(settings.value("run/colour_columns", 1)))
+        self.colour_count.setToolTip("How many colour-by columns scatter plots have: points get one colour "
+                                     "per combination of the chosen values")
+        prow.addWidget(self.colour_count)
+        prow.addSpacing(12)
         for b in context_menu.plus_minus(add=self.new_plot, remove=self.delete_plot, add_tip="Add a plot",
                                          remove_tip="Delete the selected plots"):
             prow.addWidget(b)
@@ -139,6 +150,13 @@ class RunPage(QWidget):
         self.plots.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         for col, width in ((0, 110), (2, 190), (3, 190), (4, 150), (5, 170), (7, 100), (8, 130)):
             self.plots.setColumnWidth(col, width)
+        header = self.plots.horizontalHeader()
+        for k in range(self.MAX_COLOUR - 1):  # the extra colour columns sit next to the first one
+            col = self.MORE_COLOUR + k
+            header.moveSection(header.visualIndex(col), header.visualIndex(4) + 1 + k)
+            self.plots.setColumnWidth(col, 150)
+        self.settings = settings
+        self.colour_count.valueChanged.connect(self.set_colour_count)
         pl.addWidget(self.plots)
         context_menu.install(self.plots, add=[("Add plot", self.new_plot)],
                              item=lambda rows: [("Delete plot" if len(rows) == 1 else f"Delete {len(rows)} plots",
@@ -245,6 +263,18 @@ class RunPage(QWidget):
                 self.plots.removeCellWidget(r, 4)
                 item = QTableWidgetItem("")
                 self.plots.setItem(r, 4, item)
+            more = p.get("also_color_by") or []
+            for k in range(self.MAX_COLOUR - 1):
+                col = self.MORE_COLOUR + k
+                if ptype == "scatter":
+                    combo = self._choice(r, "also_color_by", ["file", "event"] + kpis,
+                                         more[k] if k < len(more) else "", editable=True)
+                    combo.currentTextChanged.disconnect()
+                    combo.currentTextChanged.connect(lambda v, row=r, i=k: self.set_more_colour(row, i, v.strip()))
+                    self.plots.setCellWidget(r, col, combo)
+                else:
+                    self.plots.removeCellWidget(r, col)
+                    self.plots.setItem(r, col, QTableWidgetItem(""))
             axes = QPushButton("Ranges…")
             axes.setToolTip("Axis ranges (axis titles come from the X / Y KPIs)")
             axes.setEnabled(ptype != "timeseries")
@@ -264,7 +294,49 @@ class RunPage(QWidget):
             else:
                 self.plots.removeCellWidget(r, 8)
                 self.plots.setItem(r, 8, QTableWidgetItem(""))
+        needed = max([1 + len(p.get("also_color_by") or []) for p in plots] + [1])
+        if self.colour_count.value() < needed:
+            self.colour_count.setValue(needed)
+        for k in range(self.MAX_COLOUR - 1):
+            self.plots.setColumnHidden(self.MORE_COLOUR + k, k + 2 > self.colour_count.value())
         self._loading = False
+
+    def set_colour_count(self, n: int):
+        """Show n colour-by columns; values in columns that are hidden now are dropped."""
+        self.settings.setValue("run/colour_columns", n)
+        for k in range(self.MAX_COLOUR - 1):
+            self.plots.setColumnHidden(self.MORE_COLOUR + k, k + 2 > n)
+        if self._loading:
+            return
+        changed = False
+        for p in self.state.data.get("plots", []) or []:
+            more = p.get("also_color_by") or []
+            if len(more) > n - 1:
+                changed = True
+                if n > 1:
+                    p["also_color_by"] = more[:n - 1]
+                else:
+                    p.pop("also_color_by", None)
+        if changed:
+            self.state.edited()
+            self.refresh_plots()
+
+    def set_more_colour(self, row: int, index: int, value: str):
+        """Colour-by column `index` + 2 of `row`; empty columns close up."""
+        if self._loading:
+            return
+        plot = self.state.data["plots"][row]
+        more = list(plot.get("also_color_by") or [])
+        more += [""] * (index + 1 - len(more))
+        more[index] = value
+        compact = [c for c in more if c]
+        if compact:
+            plot["also_color_by"] = compact
+        else:
+            plot.pop("also_color_by", None)
+        self.state.edited()
+        if compact != more:
+            QTimer.singleShot(0, self.refresh_plots)  # later columns move left
 
     def merged_with(self, row: int) -> Optional[int]:
         """The first other row drawn in the same chart as `row`, or None."""
