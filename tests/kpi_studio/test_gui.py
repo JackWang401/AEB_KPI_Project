@@ -2605,20 +2605,52 @@ def test_timeseries_columns_show_only_for_timeseries_plots(qtbot, window, mf4_di
     qtbot.waitUntil(lambda: not page.plots.isColumnHidden(5) and not page.plots.isColumnHidden(6))
 
 
-def test_absolute_value_of_a_reduced_kpi(qtbot, window, mf4_dir):
+def test_operations_after_the_reducer(qtbot, window, mf4_dir):
+    from PySide6.QtCore import QMimeData
+
+    from src.kpi_studio.gui.widgets.common import TOOL_MIME, dropped_tool
+
     _load(qtbot, window, mf4_dir)
     state = window.state
     state.data["events"]["served"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 1"}
     state.data["kpis"] += [{"name": "dspd", "event": "served", "reduce": "change", "of": "egoSpeed",
-                            "over": "event"}]
+                            "over": "event", "absolute": True}]  # the earlier spelling loads as .abs()
     state.edited(structure=True)
     form = window.kpi_page.kpi_form
     form.load(len(state.data["kpis"]) - 1)
-    assert form.absolute.isVisibleTo(form) and not form.absolute.isChecked()
-    form.absolute.setChecked(True)
-    assert state.data["kpis"][-1]["absolute"] is True
-    assert form.reduced.text() == "= abs(change(egoSpeed))"  # abs reads in front of the reducer
+    assert form.range_ops.ops() == ["abs"]
+    assert form.reads.text() == "egoSpeed.change(event).abs()"
+    md = QMimeData()
+    md.setData(TOOL_MIME, b"reducer:max")  # dropping a reducer replaces it
+    form.range_ops.dropEvent(_FakeDrop(md))
+    md = QMimeData()
+    md.setData(TOOL_MIME, b"signal:to_kph")  # dropping a point-wise tool takes the result as its input
+    form.range_ops.dropEvent(_FakeDrop(md))
+    md.setData(TOOL_MIME, b"signal:lowpass")  # a whole-signal tool is not taken
+    assert not form.range_ops._usable(dropped_tool(md))
+    k = state.data["kpis"][-1]
+    assert k["reduce"] == "max" and k["then"] == ["abs", "to_kph"] and "absolute" not in k
+    assert form.reads.text() == "egoSpeed.max(event).abs().to_kph()"
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
-    form.reducer.setCurrentIndex(form.reducer.findData("duration"))
-    assert not form.absolute.isVisibleTo(form) and "absolute" not in state.data["kpis"][-1]
+    assert state.compiled.kpis[-1].unit == "km/h"
+    form.range_ops.remove(0)  # clicking a step removes it
+    assert state.data["kpis"][-1]["then"] == ["to_kph"]
+    form.form.setCurrentIndex(0)  # at a moment: egoSpeed.start()
+    assert form.reads.text() == "egoSpeed.start()" and "then" not in state.data["kpis"][-1]
+    form.at_ops.append("abs")
+    assert state.data["kpis"][-1]["then"] == ["abs"] and form.reads.text() == "egoSpeed.start().abs()"
+
+
+class _FakeDrop:
+    def __init__(self, md):
+        self._md = md
+
+    def mimeData(self):
+        return self._md
+
+    def acceptProposedAction(self):
+        pass
+
+    def ignore(self):
+        pass

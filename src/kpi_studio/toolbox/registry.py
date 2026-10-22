@@ -122,6 +122,8 @@ class ToolSpec:
     hidden: bool = False
     # to_<unit>() methods: the unit they convert to (the unit converted from is the input's Unit)
     converts_to: str = ""
+    # works value by value, so it can also follow a KPI's reducer: abs, sign, sqrt, to_<unit>
+    pointwise: bool = False
 
     @property
     def summary(self) -> str:
@@ -193,6 +195,7 @@ def tool(
     input_unit: str = "",
     hidden: bool = False,
     converts_to: str = "",
+    pointwise: bool = False,
 ):
     """Register a toolbox function."""
     if kind not in KINDS:
@@ -214,6 +217,7 @@ def tool(
             input_unit=input_unit,
             hidden=hidden,
             converts_to=converts_to,
+            pointwise=pointwise,
         )
         register(spec)
         return func

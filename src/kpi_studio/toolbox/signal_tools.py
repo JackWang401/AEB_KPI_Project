@@ -174,19 +174,19 @@ def fill(ctx, x, value):
 
 
 # --------------------------------------------------------------------------- math
-@tool("signal", "Math", unit="same")
+@tool("signal", "Math", unit="same", pointwise=True)
 def abs_(ctx, x):
     """Absolute value."""
     return np.abs(_f(x))
 
 
-@tool("signal", "Math", unit="same")
+@tool("signal", "Math", unit="same", pointwise=True)
 def sign(ctx, x):
     """Sign of x (-1, 0, 1)."""
     return np.sign(_f(x))
 
 
-@tool("signal", "Math", unit="same")
+@tool("signal", "Math", unit="same", pointwise=True)
 def sqrt(ctx, x):
     """Square root (NaN for negative input)."""
     x = _f(x)
@@ -240,7 +240,7 @@ def _converter(name: str, target: str):
                     f"none, give it: {name}(x, \"unit\").")
     if target in ("deg", "rad"):
         func.__doc__ += f" A rate converts to {target}/s."
-    tool("signal", "Units", unit=target, converts_to=target, params=(
+    tool("signal", "Units", unit=target, converts_to=target, pointwise=True, params=(
         Param("from_unit", str, "", doc="unit x is in; empty = its Unit column"),
     ))(func)
 

@@ -260,7 +260,7 @@ class FileEvaluator:
                 v = sample_at(self.time, arr, t, hold=k.value.hold)
                 if not np.isfinite(v):
                     return None, t, Status.NO_SAMPLES, f"'{d.value}' has no valid value at {t:.3f}s"
-                return v, t, Status.OK, ""
+                return self._then(k, v), t, Status.OK, ""
             if d.form == "duration":
                 a, b = self._ref_kpi(times, d.duration[0]), self._ref_kpi(times, d.duration[1])
                 return b - a, b, Status.OK, ""
@@ -296,7 +296,7 @@ class FileEvaluator:
                 v = k.reducer.func(ToolContext(self.time[sl]), arr[sl], **k.args)
             if v is None or not np.isfinite(v):
                 return None, hi, Status.NO_SAMPLES, f"{d.reduce} of '{d.of}' has no valid samples"
-            return float(abs(v) if d.absolute else v), hi, Status.OK, ""
+            return self._then(k, float(v)), hi, Status.OK, ""
         except _MomentFailure as exc:
             return None, None, exc.status, str(exc)
         except MissingSignal as exc:
@@ -304,6 +304,13 @@ class FileEvaluator:
         except Exception as exc:  # noqa: BLE001
             log.debug("KPI %s failed", d.name, exc_info=True)
             return None, None, Status.ERROR, f"{type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _then(k: CompiledKpi, v: float) -> float:
+        """The KPI's result after its follow-up operations, e.g. abs in gap.change(braking).abs()."""
+        for spec, params in k.then:
+            v = float(np.asarray(spec.func(ToolContext(np.zeros(1)), np.array([v]), **params), dtype=float)[0])
+        return v
 
     @staticmethod
     def _ref_kpi(times: dict, name: str) -> float:

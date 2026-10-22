@@ -62,6 +62,7 @@ class CompiledKpi:
     which: list = field(default_factory=list)  # which form: [(label, Compiled condition)]
     unit: str = ""   # taken from the signal the KPI reads; the profile's 'unit' only when it cannot be inferred
     scale: float = 1.0  # reduce: converts `of` to the unit the reducer takes (e.g. km/h -> m/s for distance)
+    then: list = field(default_factory=list)  # [(point-wise ToolSpec, params)] applied to the result in turn
 
     @property
     def is_bool(self) -> bool:
@@ -147,9 +148,18 @@ def kpi_unit(kdef: KpiDef, units: Mapping[str, str]) -> str:
                 inferred = ""
             elif spec.unit and "x" not in spec.unit:
                 inferred = spec.unit
-    if inferred:
-        return inferred
-    return kdef.unit or (inferred or "")
+    unit = inferred or kdef.unit or ""
+    for name in kdef.then:  # a to_<unit> step changes the unit
+        try:
+            target = toolbox.get("signal", name).converts_to
+        except ToolError:
+            continue
+        if target:
+            try:
+                unit = convert_to(target, unit)[1]
+            except ValueError:
+                unit = target
+    return unit
 
 
 @dataclass
@@ -375,6 +385,30 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
                                         f"give the signal a unit on the Signals page to have it converted")
             for m in kdef.between or ():
                 check_moment(m, "between")
+        unit = kpi_unit(kdef.model_copy(update={"then": []}), sig_units)
+        for name in kdef.then:
+            try:
+                spec = toolbox.get("signal", name)
+            except ToolError:
+                err(f"{where}.then", f"unknown operation '{name}'")
+                continue
+            if not spec.pointwise:
+                err(f"{where}.then", f"'{name}' works on a whole signal; after a KPI's value use one of "
+                                     f"{', '.join(s.name for s in toolbox.tools('signal') if s.pointwise)}")
+                continue
+            params = {}
+            if spec.converts_to:
+                if not unit:
+                    err(f"{where}.then", f"{name}: the KPI has no unit to convert from")
+                    continue
+                try:
+                    converted = convert_to(spec.converts_to, unit)[1]
+                except ValueError as exc:
+                    err(f"{where}.then", f"{name}: {exc}")
+                    continue
+                params = {"from_unit": unit}
+                unit = converted
+            ck.then.append((spec, params))
         if kdef.highlight and not ck.is_bool and (ck.value is not None or ck.reducer is not None):
             warn(f"{where}.highlight", "only a yes / no KPI (a condition, any / all) can highlight its rows")
         kpis.append(ck)

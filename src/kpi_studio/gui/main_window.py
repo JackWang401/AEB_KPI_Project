@@ -70,6 +70,10 @@ QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; lef
                    color: #1d1d1f; }
 QLabel { background: transparent; }
 QLabel#hint { color: #6e6e73; }
+QLabel#readsAs { font-family: "SF Mono", Menlo, Consolas, monospace; color: #1d1d1f; }
+QToolButton#opChain, QToolButton#opChip { padding: 2px 8px; border: 1px solid #b7d4ff; border-radius: 10px;
+                       background: #eaf3ff; color: #0058c4; }
+QToolButton#opChip:hover { background: #ffe5e5; border-color: #f2a8a8; color: #c62828; }
 QLabel#sectionTitle { font-weight: 700; }
 QToolBar { spacing: 6px; padding: 6px 12px; background: #f5f5f7; border: none; border-bottom: 1px solid #e5e5ea; }
 QToolBar QToolButton { padding: 4px 10px; border-radius: 6px; }

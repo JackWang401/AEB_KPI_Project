@@ -8,7 +8,7 @@ import re
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -343,6 +344,142 @@ def format_options(opts: dict) -> str:
     return ", ".join(parts)
 
 
+TOOL_MIME = "application/x-kpi-studio-tool"  # "<kind>:<name>" of a toolbox entry being dragged
+
+
+def _tool_snippet(spec) -> str:
+    """What inserting a toolbox entry into an expression writes, e.g. lowpass(x, 5.0)."""
+    if spec.kind in ("signal", "condition"):
+        args = list(spec.input_names) or (["x"] if spec.inputs != -1 else ["a", "b"])
+        args += [str(p.example_value()) for p in spec.params if p.required]
+        return f"{spec.name}({', '.join(args)})"
+    return spec.name
+
+
+class _ToolTree(QTreeWidget):
+    """The toolbox tree; its entries can be dragged into an expression (as text) or onto a KPI's
+    operations (as the tool itself)."""
+
+    def mimeTypes(self):
+        return [TOOL_MIME, "text/plain"]
+
+    def mimeData(self, items):
+        md = QMimeData()
+        item = items[0] if items else None
+        name = item.data(0, Qt.UserRole + 1) if item else None
+        spec = item.data(0, Qt.UserRole) if item else None
+        if name:
+            md.setText(name)
+        elif spec is not None:
+            md.setData(TOOL_MIME, f"{spec.kind}:{spec.name}".encode())
+            md.setText(_tool_snippet(spec))
+        return md
+
+
+def dropped_tool(md: QMimeData):
+    """The toolbox entry a drag carries, or None."""
+    if not md.hasFormat(TOOL_MIME):
+        return None
+    kind, _, name = bytes(md.data(TOOL_MIME)).decode().partition(":")
+    try:
+        return toolbox.get(kind, name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class OpChain(QWidget):
+    """A KPI's moment or reducer (`head`) followed by operations on its result, applied in turn:
+    egoSpeed.change(braking).abs(). Drag a point-wise tool (abs, to_kph, ...) from the toolbox here,
+    or pick one from +, to add it; drag a reducer here to use that reducer; click a step to remove it."""
+
+    changed = Signal()
+    reducer_dropped = Signal(str)
+
+    def __init__(self, head: QWidget, accept_reducers: bool = False, parent=None):
+        super().__init__(parent)
+        self.head = head
+        self.accept_reducers = accept_reducers
+        self._ops: list[str] = []
+        self.setAcceptDrops(True)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        lay.addWidget(head, 1)
+        self.chips = QHBoxLayout()
+        self.chips.setSpacing(4)
+        lay.addLayout(self.chips)
+        self.add = QToolButton()
+        self.add.setText("+")
+        self.add.setToolTip("Add an operation on the result, e.g. abs: or drag one here from the toolbox")
+        self.add.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.add)
+        for spec in toolbox.tools("signal"):
+            if spec.pointwise:
+                act = menu.addAction(f".{spec.name}()")
+                act.setToolTip(spec.summary)
+                act.triggered.connect(lambda _c=False, n=spec.name: self.append(n))
+        self.add.setMenu(menu)
+        lay.addWidget(self.add)
+
+    def ops(self) -> list[str]:
+        return list(self._ops)
+
+    def set_ops(self, ops: list[str]):
+        self._ops = list(ops)
+        self._rebuild()
+
+    def append(self, name: str):
+        self._ops.append(name)
+        self._rebuild()
+        self.changed.emit()
+
+    def remove(self, index: int):
+        del self._ops[index]
+        self._rebuild()
+        self.changed.emit()
+
+    def set_chain_visible(self, on: bool):
+        """Hide the operations (e.g. for a duration, which has none)."""
+        self.add.setVisible(on)
+        for i in range(self.chips.count()):
+            self.chips.itemAt(i).widget().setVisible(on)
+
+    def _rebuild(self):
+        while self.chips.count():
+            self.chips.takeAt(0).widget().deleteLater()
+        for i, name in enumerate(self._ops):
+            chip = QToolButton()
+            chip.setObjectName("opChip")
+            chip.setText(f".{name}()  ✕")
+            chip.setToolTip(f"Then {name}() of the result; click to remove it")
+            chip.clicked.connect(lambda _c=False, i=i: self.remove(i))
+            self.chips.addWidget(chip)
+
+    def _usable(self, spec) -> bool:
+        return spec is not None and ((spec.kind == "signal" and spec.pointwise)
+                                     or (spec.kind == "reducer" and self.accept_reducers))
+
+    def dragEnterEvent(self, e):
+        if self._usable(dropped_tool(e.mimeData())):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        spec = dropped_tool(e.mimeData())
+        if not self._usable(spec):
+            e.ignore()
+            return
+        e.acceptProposedAction()
+        if spec.kind == "reducer":
+            self.reducer_dropped.emit(spec.name)
+        else:
+            self.append(spec.name)
+
+
 class ToolPalette(QWidget):
     """Searchable toolbox browser. Double-click inserts a call into the last focused ExprEdit."""
 
@@ -360,9 +497,12 @@ class ToolPalette(QWidget):
         title.setObjectName("sectionTitle")
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search signals and tools…")
-        self.tree = QTreeWidget()
+        self.tree = _ToolTree()
         self.tree.setHeaderHidden(True)
-        self.tree.setToolTip("Hover a tool to read what it does; double-click to insert it")
+        self.tree.setDragEnabled(True)
+        self.tree.setDragDropMode(QTreeWidget.DragOnly)
+        self.tree.setToolTip("Hover a tool to read what it does; double-click to insert it, or drag it into a "
+                             "field (abs, to_kph... onto a KPI's reducer or moment to apply them to the result)")
         self.tree.setItemDelegate(HighlightDelegate(lambda: self.search.text(), self.tree))  # matches
         lay.addWidget(title)
         lay.addWidget(self.search)
@@ -441,13 +581,7 @@ class ToolPalette(QWidget):
         spec = item.data(0, Qt.UserRole)
         if spec is None:
             return
-        if spec.kind in ("signal", "condition"):
-            args = list(spec.input_names) or (["x"] if spec.inputs != -1 else ["a", "b"])
-            args += [str(p.example_value()) if p.required else f"{p.name}={p.default!r}" for p in spec.params
-                     if p.required]
-            self.insert_requested.emit(f"{spec.name}({', '.join(args)})")
-        else:
-            self.insert_requested.emit(spec.name)
+        self.insert_requested.emit(_tool_snippet(spec))
 
 
 def parse_condition_rows(text: str) -> Optional[list[dict]]:

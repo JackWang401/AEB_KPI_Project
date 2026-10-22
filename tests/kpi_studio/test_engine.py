@@ -276,14 +276,19 @@ def test_change_is_the_difference_at_the_two_moments():
         "kpis": [{"name": "dv", "event": "e", "reduce": "change", "of": "v", "over": "braking"},
                  {"name": "dv_half", "event": "e", "reduce": "change", "of": "v", "over": "half"},
                  {"name": "dv_abs", "event": "e", "reduce": "change", "of": "v", "over": "braking",
-                  "absolute": True}]}, "t")
+                  "absolute": True},  # an earlier spelling of then: [abs]
+                 {"name": "dv_kph", "event": "e", "reduce": "change", "of": "v", "over": "braking",
+                  "then": ["abs", "to_mps"]},
+                 {"name": "v_slow", "event": "e", "value": "v", "at": "slow", "then": ["to_mps"]}]}, "t")
     cp = compile_profile(prof)
-    assert cp.kpis[0].unit == "km/h"
+    assert cp.kpis[0].unit == "km/h" and cp.kpis[3].unit == cp.kpis[4].unit == "m/s"
     t = np.arange(0, 10, 1.0)
     on = np.array([0, 0, 1, 1, 1, 1, 0, 0, 0, 0], float)
     v = np.array([9, 9, 8, 6, 2, 1, 0, 0, 0, 0], float)
     out = evaluate_frame(cp, SignalFrame(time=t, values={"on": on, "v": v}), "f")
-    assert {r.kpi: r.value for r in out.results} == {"dv": -6.0, "dv_half": -1.0, "dv_abs": 6.0}  # 2 - 8; 7 (interpolated) - 8
+    assert {r.kpi: r.value for r in out.results} == {"dv": -6.0, "dv_half": -1.0, "dv_abs": 6.0,
+                                                          "dv_kph": pytest.approx(6 / 3.6),
+                                                          "v_slow": pytest.approx(2 / 3.6)}  # 2 - 8; 7 (interpolated) - 8
 
 
 def test_unknown_range_is_an_error():
@@ -376,9 +381,17 @@ def test_unit_converters_read_the_unit_column():
     assert np.allclose(run("to_kph(n)"), [36 * 3.6, 72 * 3.6])  # older profiles: m/s assumed
 
 
-def test_absolute_needs_a_reducer():
+def test_then_needs_a_value_or_reducer():
     from src.kpi_studio.io.profile_store import parse_profile
 
-    with pytest.raises(Exception, match="absolute"):
+    from src.kpi_studio.core.validate import compile_profile
+
+    with pytest.raises(Exception, match="then"):
         parse_profile({"name": "p", "signals": {"v": {"channels": ["v"]}}, "events": {"e": {"start": "v > 0"}},
-                       "kpis": [{"name": "k", "event": "e", "value": "v", "at": "start", "absolute": True}]}, "t")
+                       "kpis": [{"name": "k", "event": "e", "formula": "1", "then": ["abs"]}]}, "t")
+    prof = parse_profile({"name": "p", "signals": {"v": {"channels": ["v"]}}, "events": {"e": {"start": "v > 0"}},
+                          "kpis": [{"name": "k", "event": "e", "value": "v", "at": "start",
+                                    "then": ["lowpass", "to_kph"]}]}, "t")
+    with pytest.raises(Exception) as exc:
+        compile_profile(prof)
+    assert "works on a whole signal" in str(exc.value) and "no unit to convert from" in str(exc.value)

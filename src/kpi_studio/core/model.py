@@ -257,8 +257,18 @@ class KpiDef(_Strict):
     which: Optional[dict[str, str]] = None
     # a yes / no KPI: its occurrences' rows are highlighted in the Excel summary where it is true
     highlight: bool = False
-    # reduce form: the absolute value of the reduced result, e.g. abs(change(gap)) instead of change(abs(gap))
-    absolute: bool = False
+    # value and reduce forms: operations applied to the result in turn, e.g. [abs] for abs(change(gap)),
+    # shown as gap.change(braking).abs(); each one a point-wise signal tool (abs, sign, sqrt, to_<unit>)
+    then: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _absolute(cls, data):
+        if isinstance(data, dict) and "absolute" in data:  # an earlier spelling of then: [abs]
+            data = dict(data)
+            if data.pop("absolute"):
+                data["then"] = ["abs", *data.get("then", [])]
+        return data
 
     @model_validator(mode="after")
     def _one_form(self):
@@ -299,8 +309,8 @@ class KpiDef(_Strict):
             raise ValueError(f"KPI '{self.name}': use 'over' (a range) or 'between' (two moments), not both")
         if form not in ("reduce", "which") and self.over:
             raise ValueError(f"KPI '{self.name}': 'over' is only used with 'reduce' and 'which'")
-        if self.absolute and (form != "reduce" or self.reduce == "duration"):
-            raise ValueError(f"KPI '{self.name}': 'absolute' is only used with a reducer such as change or mean")
+        if self.then and (form not in ("reduce", "value") or self.reduce == "duration"):
+            raise ValueError(f"KPI '{self.name}': 'then' is only used with a value at a moment or a reducer")
         if form != "reduce" and (self.of or self.args):
             raise ValueError(f"KPI '{self.name}': 'of' and 'args' are only used with 'reduce'")
         if form not in ("reduce", "which") and self.between:
