@@ -37,7 +37,7 @@ def test_load_profile_and_files(qtbot, window, mf4_dir):
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
     assert window.signals_page.tree.topLevelItemCount() > 0
     assert window.kpi_page.kpis.count() == 26
-    assert window.kpi_page.kpis.item(25).text() == "aeb.peakDecel"  # event.kpi
+    assert window.kpi_page.kpis.item(25).text() == "peakDecel"  # the selected event's KPIs, by name
     assert window.signals_page.sig_table.rowCount() >= 9
 
 
@@ -906,7 +906,7 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert window.side_bar.current == window.side_bar.titles.index("Events & KPIs")
     assert not window.issues_dock.isHidden()  # pops up with the error
     assert all(window.issues.item(i).text().startswith("✖") for i in range(window.issues.count()))
-    assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
+    assert window.kpi_page.kpi_form.index == len(state.data["kpis"]) - 1
     expr = window.kpi_page.kpi_form.expr
     assert expr.text() == "egoSpeed @ moment1" and expr.error  # not a moment of the event: shown in red
     expr.setText("egoSpeed @ braking")
@@ -1344,7 +1344,7 @@ def test_build_buttons_stay_in_view_in_a_narrow_events_panel(qtbot, window, mf4_
     state.data["events"]["served"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 0.5"}  # a condition event
     state.edited(structure=True)
     kp = window.kpi_page
-    kp.events.setCurrentRow(list(state.data["events"]).index("served"))
+    kp.select_event("served")
     qtbot.wait(100)
     view = kp.form_scroll.viewport()
     for b in kp.event_form.build_buttons:
@@ -1420,7 +1420,7 @@ def test_moment_expression_column_is_the_widest(qtbot, window, mf4_dir):
     window.show()
     bar = window.side_bar
     bar.open(bar.titles.index("Events & KPIs"), sticky=True)
-    window.kpi_page.events.setCurrentRow(0)
+    window.kpi_page.select_event("aeb")
     qtbot.wait(100)
     h = window.kpi_page.event_form.moments.horizontalHeader()
     assert h.sectionSize(2) > h.sectionSize(3) and h.sectionSize(2) > h.sectionSize(1)
@@ -1432,7 +1432,7 @@ def test_dragged_columns_still_span_the_whole_width(qtbot, window, mf4_dir):
     window.show()
     bar = window.side_bar
     bar.open(bar.titles.index("Events & KPIs"), sticky=True)
-    window.kpi_page.events.setCurrentRow(0)
+    window.kpi_page.select_event("aeb")
     qtbot.wait(100)
     h = window.kpi_page.event_form.moments.horizontalHeader()
     qtbot.waitUntil(lambda: bool(h.property("columnSizer")), timeout=5000)
@@ -1464,7 +1464,7 @@ def test_long_text_in_a_box_shows_its_start(qtbot, window, mf4_dir):
     bar = window.side_bar
     bar.open(bar.titles.index("Events & KPIs"), sticky=True)
     form = window.kpi_page.event_form
-    window.kpi_page.events.setCurrentRow(0)
+    window.kpi_page.select_event("aeb")
     qtbot.wait(50)
     edits = [w for w in form.moments.findChildren(ExprEdit) if w.isVisible()]
     assert edits and all(e.cursorPosition() == 0 for e in edits)
@@ -2477,9 +2477,9 @@ def test_a_formula_kpi_does_not_widen_the_events_form(qtbot, window, mf4_dir):
                            {"name": "f", "event": "served", "formula": "a > 1 or a < 0"}]
     state.edited(structure=True)
     kp = window.kpi_page
-    kp.kpis.setCurrentRow(len(state.data["kpis"]) - 1)  # the formula's rows are shown
+    kp.select_kpi(len(state.data["kpis"]) - 1)  # the formula's rows are shown
     qtbot.wait(50)
-    kp.events.setCurrentRow(list(state.data["events"]).index("served"))
+    kp.select_event("served")
     qtbot.wait(100)
     view = kp.form_scroll.viewport()
     for b in kp.event_form.build_buttons:
@@ -2667,3 +2667,28 @@ def test_typing_at_lists_the_moments(qtbot, window, mf4_dir):
     form.expr.picker.picked.emit("start")  # a moment already after the @ is swapped
     assert form.expr.text() == "egoSpeed @ start.abs()"
     form.expr.picker.close()
+
+
+def test_kpi_list_shows_the_selected_events_kpis(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state, kp = window.state, window.kpi_page
+    state.data["events"]["served"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 0.5"}
+    state.data["kpis"] += [{"name": "a", "event": "served", "value": "egoSpeed", "at": "start"},
+                           {"name": "b", "event": "served", "value": "egoSpeed", "at": "end"}]
+    state.edited(structure=True)
+    names = lambda: [kp.kpis.item(i).text() for i in range(kp.kpis.count())]  # noqa: E731
+    kp.select_event("served")
+    assert names() == ["a", "b"] and kp.stack.currentWidget() is kp.event_form
+    kp.kpis.setCurrentRow(1)
+    assert kp.kpi_form.k["name"] == "b"
+    kp.move_kpi(-1)  # within the event's list
+    assert names() == ["b", "a"] and [k["name"] for k in state.data["kpis"][-2:]] == ["b", "a"]
+    kp.new_kpi()
+    assert state.data["kpis"][-1]["event"] == "served" and len(names()) == 3
+    kp.select_event("aeb")
+    assert "a" not in names() and "peakDecel" in names()
+    kp.select_kpi(len(state.data["kpis"]) - 2)  # e.g. from Profile check: the list switches to its event
+    assert kp.cur_event == "served" and kp.kpis.currentItem().text() == "a"
+    kp.kpi_form.event.setCurrentText("aeb")  # moved to another event: the list follows it
+    assert kp.cur_event == "aeb" and kp.kpis.currentItem().text() == "a"
+    assert kp.events.currentItem().text() == "aeb"

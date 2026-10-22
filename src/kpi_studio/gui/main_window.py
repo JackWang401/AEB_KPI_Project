@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
             if row is None:
                 return
             self.open_panel("Events & KPIs")
-            self.kpi_page.kpis.setCurrentRow(row)
+            self.kpi_page.select_kpi(row)
             form = self.kpi_page.kpi_form
             target = form.event if field == "event" else form.expr
             if target is not None and target.isVisible():

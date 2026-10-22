@@ -754,9 +754,13 @@ class KpiForm(QWidget):
         if self.highlight.isChecked() and not self.highlight.isHidden():
             k["highlight"] = True
         if k != self.k:
+            moved = k["event"] != self.k.get("event")
             self.state.data["kpis"][self.index] = k
             self.state.edited()
-            self.page.refresh_kpi_labels()
+            if moved:  # the list follows it to its new event
+                self.page.select_kpi(self.index)
+            else:
+                self.page.refresh_kpi_labels()
         self.update_unit(k)
 
     def update_unit(self, k: dict):
@@ -816,6 +820,8 @@ class KpiPage(QWidget):
         self.state = state
         self.viewer = viewer  # the shared signal viewer / preview below the tabs
         self.target: ExprEdit | None = None
+        self.cur_event: str | None = None  # the KPI list shows this event's KPIs
+        self.kpi_rows: list[int] = []  # the profile index of each row of the KPI list
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(*PAGE_MARGINS)
@@ -898,6 +904,9 @@ class KpiPage(QWidget):
 
 
         self.events.currentRowChanged.connect(self.event_selected)
+        # clicking the event again (its KPI list is already shown) brings its form back
+        self.events.itemClicked.connect(lambda item: self.stack.currentWidget() is not self.event_form
+                                        and self.event_selected(self.events.row(item)))
         self.kpis.currentRowChanged.connect(self.kpi_selected)
         self.up.clicked.connect(lambda: self.move_kpi(-1))
         self.down.clicked.connect(lambda: self.move_kpi(1))
@@ -918,59 +927,96 @@ class KpiPage(QWidget):
 
     # ------------------------------------------------------------------ lists
     def refresh(self):
-        cur_ev = self.events.currentItem().text() if self.events.currentItem() else None
+        events = self.state.data.get("events", {})
+        if self.cur_event not in events:
+            self.cur_event = next(iter(events), None)
         self.events.blockSignals(True)
         self.events.clear()
-        for name in self.state.data.get("events", {}):
+        for name in events:
             self.events.addItem(name)
+        if self.cur_event:  # shows whose KPIs are listed
+            self.events.setCurrentRow(list(events).index(self.cur_event))
         self.events.blockSignals(False)
         self.refresh_kpi_labels()
-        if self.stack.currentWidget() is self.event_form and self.event_form.name in self.state.data.get("events", {}):
+        if self.stack.currentWidget() is self.event_form and self.event_form.name in events:
             self.event_form.load(self.event_form.name)
-        elif cur_ev and cur_ev in self.state.data.get("events", {}):
-            pass
         elif self.stack.currentWidget() is self.kpi_form and self.kpi_form.index is not None \
                 and self.kpi_form.index < len(self.state.data.get("kpis", [])):
             self.kpi_form.load(self.kpi_form.index)
-        else:
+        elif self.stack.currentWidget() is not self.lib_note:
             self.stack.setCurrentWidget(self.empty)
 
+    def _listed(self, k: dict) -> bool:
+        """In the selected event's KPI list: its own KPIs, library entries, and KPIs of an event that is gone."""
+        events = self.state.data.get("events", {})
+        return self.cur_event is None or bool(k.get("use")) or k.get("event") == self.cur_event \
+            or k.get("event") not in events
+
     def refresh_kpi_labels(self):
-        row = self.kpis.currentRow()
+        cur = self.kpi_rows[self.kpis.currentRow()] if 0 <= self.kpis.currentRow() < len(self.kpi_rows) else None
+        if self.stack.currentWidget() is self.kpi_form and self.kpi_form.index is not None:
+            cur = self.kpi_form.index
         self.kpis.blockSignals(True)
         self.kpis.clear()
-        for k in self.state.data.get("kpis", []):
+        events = self.state.data.get("events", {})
+        self.kpi_rows = []
+        for i, k in enumerate(self.state.data.get("kpis", [])):
+            if not self._listed(k):
+                continue
             if k.get("use"):
                 label = f"⧉ {k['use']}" + (f" as {k['as']}" if k.get("as") else "")
-            else:
-                label = f"{k.get('event') or '?'}.{k.get('name') or '?'}"
+            elif k.get("event") in events:
+                label = k.get("name") or "?"
+            else:  # its event was deleted or renamed: listed everywhere until it gets one
+                label = f"{k.get('name') or '?'}  (no event)"
             self.kpis.addItem(label)
-        self.kpis.setCurrentRow(row)
+            self.kpi_rows.append(i)
+        self.kpis.setCurrentRow(self.kpi_rows.index(cur) if cur in self.kpi_rows else -1)
         self.kpis.blockSignals(False)
 
     def select_event(self, name):
         items = self.events.findItems(name, Qt.MatchExactly)
         if items:
-            self.events.setCurrentItem(items[0])
+            if self.events.currentItem() is items[0]:
+                self.event_selected(self.events.row(items[0]))
+            else:
+                self.events.setCurrentItem(items[0])
+
+    def select_kpi(self, index: int):
+        """Show KPI `index` (its place in the profile), switching the list to its event."""
+        ev = self.state.data["kpis"][index].get("event")
+        if ev in self.state.data.get("events", {}) and ev != self.cur_event:
+            self.cur_event = ev
+            self.events.blockSignals(True)
+            self.events.setCurrentRow(list(self.state.data["events"]).index(ev))
+            self.events.blockSignals(False)
+        self.refresh_kpi_labels()
+        if index not in self.kpi_rows:
+            return
+        self.kpis.blockSignals(True)
+        self.kpis.setCurrentRow(self.kpi_rows.index(index))
+        self.kpis.blockSignals(False)
+        self.kpi_selected(self.kpis.currentRow())
 
     def event_selected(self, row):
         if row < 0:
             return
+        self.cur_event = self.events.item(row).text()
+        self.kpi_form.index = None
         self.kpis.blockSignals(True)
         self.kpis.setCurrentRow(-1)
         self.kpis.blockSignals(False)
-        self.event_form.load(self.events.item(row).text())
+        self.event_form.load(self.cur_event)
         self.stack.setCurrentWidget(self.event_form)
+        self.refresh_kpi_labels()
         if self.viewer is not None:
-            self.viewer.set_event(self.events.item(row).text())
+            self.viewer.set_event(self.cur_event)
 
     def kpi_selected(self, row):
-        if row < 0:
+        if not 0 <= row < len(self.kpi_rows):
             return
-        self.events.blockSignals(True)
-        self.events.setCurrentRow(-1)
-        self.events.blockSignals(False)
-        k = self.state.data["kpis"][row]
+        index = self.kpi_rows[row]
+        k = self.state.data["kpis"][index]
         if self.viewer is not None and k.get("event"):
             self.viewer.set_event(k["event"])
         if k.get("use"):
@@ -978,7 +1024,7 @@ class KpiPage(QWidget):
                                   "Edit the library file to change them, or delete this entry and add your own.")
             self.stack.setCurrentWidget(self.lib_note)
             return
-        self.kpi_form.load(row)
+        self.kpi_form.load(index)
         self.stack.setCurrentWidget(self.kpi_form)
 
     def new_event(self):
@@ -1016,12 +1062,13 @@ class KpiPage(QWidget):
         while f"kpi{i}" in names:
             i += 1
         events = self.state.event_names()
-        kpis.append({"name": f"kpi{i}", "event": events[0] if events else "", "value": "", "at": "start"})
+        event = self.cur_event or (events[0] if events else "")
+        kpis.append({"name": f"kpi{i}", "event": event, "value": "", "at": "start"})
         self.state.edited(structure=True)
-        self.kpis.setCurrentRow(len(kpis) - 1)
+        self.select_kpi(len(kpis) - 1)
 
     def delete_kpi(self):
-        rows = self._selected_rows(self.kpis)
+        rows = [self.kpi_rows[r] for r in self._selected_rows(self.kpis)]
         if not rows:
             return
         for row in reversed(rows):
@@ -1031,15 +1078,16 @@ class KpiPage(QWidget):
         self.state.edited(structure=True)
 
     def move_kpi(self, delta):
+        """Swap the KPI with the one above or below it in the list (the event's KPIs only)."""
         row = self.kpis.currentRow()
-        kpis = self.state.data.get("kpis", [])
-        new = row + delta
-        if row < 0 or not 0 <= new < len(kpis):
+        if row < 0 or not 0 <= row + delta < len(self.kpi_rows):
             return
-        kpis[row], kpis[new] = kpis[new], kpis[row]
-        self.kpi_form.index = new
+        kpis = self.state.data.get("kpis", [])
+        a, b = self.kpi_rows[row], self.kpi_rows[row + delta]
+        kpis[a], kpis[b] = kpis[b], kpis[a]
+        self.kpi_form.index = b
         self.state.edited(structure=True)
-        self.kpis.setCurrentRow(new)
+        self.select_kpi(b)
 
     # ------------------------------------------------------------------ toolbox
     def set_target(self, edit):
