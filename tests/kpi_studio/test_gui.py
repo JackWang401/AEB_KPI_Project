@@ -2623,6 +2623,8 @@ class _FakeDrop:
 
 
 def test_hovering_a_long_expression_shows_all_of_it(qtbot, window, mf4_dir):
+    import html
+
     _load(qtbot, window, mf4_dir)
     window.resize(1100, 800)
     window.show()
@@ -2633,7 +2635,7 @@ def test_hovering_a_long_expression_shows_all_of_it(qtbot, window, mf4_dir):
     form.event.setCurrentText("aeb")
     long = "which(event, " + ", ".join(f"C{i}=egoSpeed > {i}" for i in range(12)) + ")"
     form.expr.setText(long)
-    assert form.expr.hover_tip().startswith(long)  # cut off in the field: shown whole
+    assert form.expr.hover_tip().startswith("<qt><code>" + html.escape(long))  # cut off: shown whole
     form.expr.setText("egoSpeed @ end")
     tip = form.expr.hover_tip()
-    assert not tip.startswith("egoSpeed @ end") and "<signal>.<reducer>" in tip  # fits: just the help
+    assert "egoSpeed @ end" not in tip and "Write the KPI as" in tip  # fits: just the help

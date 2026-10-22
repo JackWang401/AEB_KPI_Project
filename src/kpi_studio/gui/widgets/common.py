@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import fnmatch
 import re
 from typing import Callable, Optional
@@ -339,12 +340,12 @@ class ExprEdit(QLineEdit):
         text = self.text()
         room = self.width() - 40  # the ▾ button and the frame
         if text and self.fontMetrics().horizontalAdvance(text) > room:
-            parts.append(text)
+            parts.append(f"<code>{html.escape(text)}</code>")
         if self.error:
-            parts.append(self.error)
+            parts.append(f"<span style='color:#c62828'>{html.escape(self.error)}</span>")
         if getattr(self, "_help", "") and not self.error:
-            parts.append(self._help)
-        return "\n\n".join(parts)
+            parts.append(self._help)  # rich text, short lines
+        return "<qt>" + "<br><br>".join(parts) + "</qt>" if parts else ""
 
     def event(self, e):
         if e.type() == QEvent.ToolTip:

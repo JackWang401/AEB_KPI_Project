@@ -634,10 +634,14 @@ class KpiForm(QWidget):
         self.expr = ExprEdit(self.state.signal_names, placeholder="e.g. gap_dist.change(event).abs() or "
                              "egoSpeed @ end", enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
                              kpi_fn=self.expr_context, extras_fn=self.expr_names)
-        self.expr.setToolTip("<signal>.<reducer>(<range>) or <signal> @ <moment>, then any of .abs() .sign() "
-                             ".sqrt() .to_<unit>() on the result, e.g. (speed @ end).to_kph(); which(<range>, Label=condition, ...) for the "
-                             "conditions met; or a formula of earlier KPIs, e.g. gap_too_small or speed > 0. Drag a "
-                             "reducer or abs / to_kph from the toolbox onto this field to apply it.")
+        self.expr.setToolTip(
+            "<b>Write the KPI as</b><table cellspacing=3>"
+            "<tr><td>signal.reducer(range)</td><td><code>gap_dist.change(braking)</code></td></tr>"
+            "<tr><td>signal @ moment</td><td><code>speed @ veh_stopped</code></td></tr>"
+            "<tr><td>then .abs() .to_kph() …</td><td><code>(speed @ end).to_kph()</code></td></tr>"
+            "<tr><td>conditions met</td><td><code>which(braking, PB=pb == 1)</code></td></tr>"
+            "<tr><td>earlier KPIs</td><td><code>too_close or v &gt; 0</code></td></tr></table>"
+            "Drag a reducer or abs / to_kph from the toolbox onto the field to apply it.")
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "When the signal has no unit, and for a formula, type one here.")
