@@ -3,6 +3,7 @@ import pytest
 from src.kpi_studio.core.kpi_expr import KpiExprError, kpi_expr_text, parse_kpi_expr
 
 M, R = ["start", "end", "veh_stopped"], ["event", "window", "braking"]
+KPIS = ["too_close", "speed", "gap_kpi"]  # KPIs listed earlier: a formula may use them
 
 
 @pytest.mark.parametrize("text, fields, canonical", [
@@ -16,9 +17,14 @@ M, R = ["start", "end", "veh_stopped"], ["event", "window", "braking"]
     ("egoSpeed.veh_stopped().to_kph()", {"value": "egoSpeed", "at": "veh_stopped", "then": ["to_kph"]}, None),
     ("veh_stopped(egoSpeed)", {"value": "egoSpeed", "at": "veh_stopped"}, "egoSpeed.veh_stopped()"),
     ("duration(braking)", {"reduce": "duration", "over": "braking"}, None),
+    ("which(braking, PB=pb == 1, FB=fb == 1)", {"which": {"PB": "pb == 1", "FB": "fb == 1"}, "over": "braking"},
+     None),
+    ("which(event, {'Full brake': fb == 1})", {"which": {"Full brake": "fb == 1"}, "over": "event"}, None),
+    ("too_close or speed > 0", {"formula": "too_close or speed > 0"}, None),
+    ("abs(speed - gap_kpi)", {"formula": "abs(speed - gap_kpi)"}, None),
 ])
 def test_kpi_expression_round_trip(text, fields, canonical):
-    assert parse_kpi_expr(text, M, R) == fields
+    assert parse_kpi_expr(text, M, R, KPIS) == fields
     assert kpi_expr_text(fields) == (canonical or text)
 
 
@@ -28,7 +34,9 @@ def test_kpi_expression_round_trip(text, fields, canonical):
     ("gap", "write the KPI as"),
     ("gap.veh_stopped(1)", "a moment takes only the signal"),
     ("gap.change(event", "not a valid expression"),
+    ("which(braking)", "at least one labelled condition"),
+    ("too_close or later_kpi", "write the KPI as"),
 ])
 def test_kpi_expression_errors(text, message):
     with pytest.raises(KpiExprError, match=message):
-        parse_kpi_expr(text, M, R)
+        parse_kpi_expr(text, M, R, KPIS)

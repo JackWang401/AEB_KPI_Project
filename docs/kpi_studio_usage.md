@@ -40,18 +40,19 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 3. **Events & KPIs** – define an event (a start/end condition; an older profile's
    event preset, and its domain-specific tools such as `vehicle_stop` or `ttc`, still run), its moments (e.g. `first`, `argmin`,
    `crossing`), its *Ranges* (named spans from one moment to another, e.g. `braking`: `aeb_braking` to
-   `veh_stopped`; `event` = start to end and `window` = window_start to window_end are built in), then KPIs of
-   three kinds. *Expression* writes the whole KPI in one line, signal first: `<signal>.<reducer>(<range>)`
-   or `<signal>.<moment>()`, e.g. `gap_dist.change(braking).abs()`, `change(gap_dist, braking).abs()`
-   (the same), `egoSpeed.veh_stopped()`, `ego_speed_kph.distance(braking)` (in m, converted from the
-   speed's own unit), `(fb_state == 1).any(event)`, `duration(braking)`. A reducer takes the signal and
-   one range (options as keywords); `change` = the value at the range's end minus the value at its start.
-   `.abs()`, `.sign()`, `.sqrt()` and `.to_<unit>()` after it act on the result, while `abs(x).change(braking)`
-   reduces abs(x). Dragging `abs` or `to_kph` from the toolbox onto the field appends it; dragging a reducer
-   swaps the reducer. *Which conditions are met* = a text result such as `PB + FB` over a range, each
-   condition a signal, operator and value, or *expression* to type a longer one; *Formula* combines
-   earlier KPIs. The yaml keeps the parts: `reduce: change, of: gap_dist, over: braking, then: [abs]`
-   or `value: egoSpeed, at: veh_stopped`. In the yaml a range KPI reads `over: braking` and the event lists
+   `veh_stopped`; `event` = start to end and `window` = window_start to window_end are built in), then
+   KPIs. A KPI is one *Expression*, signal first: `<signal>.<reducer>(<range>)` or `<signal>.<moment>()`,
+   e.g. `gap_dist.change(braking).abs()`, `change(gap_dist, braking).abs()` (the same),
+   `gap_dist.veh_stopped()` / `veh_stopped(gap_dist)`, `ego_speed_kph.distance(braking)` (in m, converted
+   from the speed's own unit), `(fb_state == 1).any(event)`, `duration(braking)`. A reducer takes the signal
+   and one range (options as keywords); `change` = the value at the range's end minus the value at its
+   start. `.abs()`, `.sign()`, `.sqrt()` and `.to_<unit>()` after it act on the result, while
+   `abs(x).change(braking)` reduces abs(x). `which(braking, PB=pb_state == 1, FB=fb_state == 1)` gives a
+   text result naming the conditions met, such as `PB + FB`; an expression of KPIs listed earlier for
+   the event (`gap_too_small or speed_at_release > 0`) is a formula of them. Dragging `abs` or `to_kph`
+   from the toolbox onto the field appends it; dragging a reducer swaps the reducer. The yaml keeps the
+   parts: `reduce: change, of: gap_dist, over: braking, then: [abs]`, `value: egoSpeed, at: veh_stopped`,
+   `which: {PB: ...}, over: braking` or `formula: ...`. In the yaml a range KPI reads `over: braking` and the event lists
    `ranges: {braking: [aeb_braking, veh_stopped]}`; an older profile's `between: [a, b]` and
    `duration: [a, b]` KPIs are moved onto named ranges when it is opened (save to keep it). Every window in a file is found, each one a separate occurrence. The rule
    before *Start when* / *End when* picks which time the condition is met: *first* (the default),

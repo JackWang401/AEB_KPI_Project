@@ -238,9 +238,7 @@ class MainWindow(QMainWindow):
             self.open_panel("Events & KPIs")
             self.kpi_page.kpis.setCurrentRow(row)
             form = self.kpi_page.kpi_form
-            target = {"formula": form.formula, "which": form.which, "event": form.event}.get(field, form.expr)
-            if field == "over" and form.range.isVisible():  # a which KPI's range
-                target = form.range
+            target = form.event if field == "event" else form.expr
             if target is not None and target.isVisible():
                 target.setFocus()
         elif section == "events":

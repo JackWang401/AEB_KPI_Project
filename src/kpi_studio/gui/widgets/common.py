@@ -228,7 +228,7 @@ class ExprEdit(QLineEdit):
                  units_fn: Optional[Callable[[], dict]] = None,
                  kpi_fn: Optional[Callable[[], tuple]] = None):
         super().__init__(parent)
-        # a KPI expression (gap.change(braking).abs()): kpi_fn gives the event's (moments, ranges)
+        # a KPI expression (gap.change(braking).abs()): kpi_fn gives the event's (moments, ranges, earlier KPIs)
         self.kpi_fn = kpi_fn
         self.build_fn = build_fn
         self.units_fn = units_fn  # signal -> Unit, so to_<unit>() calls are checked against it
@@ -313,11 +313,15 @@ class ExprEdit(QLineEdit):
             self.error = None if self.allow_empty else "required"
         else:
             try:
+                parts = [text]
                 if self.kpi_fn is not None:
                     fields = parse_kpi_expr(text, *self.kpi_fn())
-                    text = fields.get("value") or fields.get("of")
-                if text:
-                    compile_expr(text, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn(),
+                    parts = [p for p in [fields.get("value"), fields.get("of"), *(fields.get("which") or {}).values()]
+                             if p]
+                    if fields.get("formula"):
+                        compile_expr(fields["formula"], names=set(self.kpi_fn()[2]))
+                for part in parts:
+                    compile_expr(part, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn(),
                                  units=self.units_fn() if self.units_fn else None)
                 self.error = None
             except (ExprError, KpiExprError) as exc:
@@ -343,6 +347,11 @@ class ExprEdit(QLineEdit):
             fields = parse_kpi_expr(text, *self.kpi_fn())
         except KpiExprError:
             fields = None
+        if fields is not None and ("formula" in fields or "which" in fields):
+            if spec.kind == "signal" and "formula" in fields:
+                self.setText(f"{spec.name}({text})")
+                self.editingFinished.emit()
+            return
         if spec.kind == "signal":
             self.setText(f"{text}.{spec.name}()" if fields is not None else f"{spec.name}({text})")
         elif fields is not None and fields.get("reduce") not in (None, "duration"):

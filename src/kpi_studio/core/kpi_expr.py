@@ -5,8 +5,13 @@
 
 A reducer takes the signal expression and one range of the event (plus options as keywords:
 max(x, braking, k=2)); a moment takes the signal expression only. Point-wise operations (abs, sign,
-sqrt, to_<unit>) can follow, each taking the result so far. The profile keeps its fields (value + at,
-reduce + of + over + args, then): parse_kpi_expr fills them, kpi_expr_text writes them back."""
+sqrt, to_<unit>) can follow, each taking the result so far. Two more shapes:
+
+    which(braking, PB=pb_state == 1, FB=fb_state == 1)     the labels of the conditions met: "PB + FB"
+    gap_too_small or speed_at_release > 0                  a formula of KPIs listed earlier
+
+The profile keeps its fields (value + at, reduce + of + over + args, then, which, formula):
+parse_kpi_expr fills them, kpi_expr_text writes them back."""
 
 from __future__ import annotations
 
@@ -46,6 +51,15 @@ def _wrap(expr: str) -> str:
 def kpi_expr_text(k: dict) -> str:
     """The KPI's expression from its profile fields ("" when it has none of them yet)."""
     then = (["abs"] if k.get("absolute") else []) + list(k.get("then") or [])
+    if k.get("formula") is not None:
+        return str(k["formula"])
+    if k.get("which") is not None:
+        items = (k.get("which") or {}).items()
+        if all(re.fullmatch(r"[A-Za-z_]\w*", str(label)) for label, _ in items):
+            conds = [f"{label}={cond}" for label, cond in items]
+        else:  # labels that are not names: a {label: condition} mapping
+            conds = ["{" + ", ".join(f"{str(label)!r}: {cond}" for label, cond in items) + "}"]
+        return f"which({', '.join([k.get('over') or 'event'] + conds)})"
     if k.get("value") is not None:
         if not str(k["value"]).strip():
             return ""
@@ -62,24 +76,51 @@ def kpi_expr_text(k: dict) -> str:
     return core + "".join(f".{op}()" for op in then)
 
 
-def parse_kpi_expr(text: str, moments: Iterable[str], ranges: Iterable[str]) -> dict:
-    """The profile fields of a KPI expression: {value, at} or {reduce, of, over[, args]}, plus 'then'
-    when operations follow. KpiExprError says what is wrong."""
-    moments, ranges = list(moments), list(ranges)
+def parse_kpi_expr(text: str, moments: Iterable[str], ranges: Iterable[str],
+                   kpis: Iterable[str] = ()) -> dict:
+    """The profile fields of a KPI expression: {value, at}, {reduce, of, over[, args]}, {which, over} or
+    {formula}, plus 'then' when operations follow. `kpis`: the earlier KPIs a formula may use.
+    KpiExprError says what is wrong."""
+    moments, ranges, kpis = list(moments), list(ranges), set(kpis)
     try:
         tree = ast.parse(text.strip(), mode="eval").body
     except SyntaxError as exc:
         raise KpiExprError(f"not a valid expression: {exc.msg}") from None
+    which = _which(tree, ranges)
+    if which is not None:
+        return which
     found = _parse(tree, set(moments), ranges)
     if found is None:
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} - {
+            n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        if used and used <= kpis:  # only earlier KPIs: a formula of them
+            return {"formula": text.strip()}
         raise KpiExprError(
             "write the KPI as <signal>.<reducer>(<range>) or <signal>.<moment>(), e.g. gap_dist.change(event).abs() "
-            f"or egoSpeed.{moments[-1] if moments else 'start'}(); reducers: {', '.join(_reducers())}; "
-            f"moments: {', '.join(moments)}; ranges: {', '.join(ranges)}")
+            f"or egoSpeed.{moments[-1] if moments else 'start'}(), or a formula of earlier KPIs"
+            + (f" ({', '.join(sorted(kpis))})" if kpis else "")
+            + f"; reducers: {', '.join(_reducers())}; moments: {', '.join(moments)}; ranges: {', '.join(ranges)}")
     fields, then = found
     if then:
         fields["then"] = then
     return fields
+
+
+def _which(node, ranges: list):
+    """which(range, Label=condition, ...) or which(range, {"label": condition, ...}), else None."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "which"):
+        return None
+    if not node.args:
+        raise KpiExprError("which takes a range and labelled conditions: which(braking, PB=pb == 1, FB=fb == 1)")
+    over = _range(node.args[0], "which", ranges)
+    items = {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
+    for extra in node.args[1:]:
+        if not isinstance(extra, ast.Dict) or not all(isinstance(k, ast.Constant) for k in extra.keys):
+            raise KpiExprError("which: give the conditions as Label=condition, e.g. which(braking, PB=pb == 1)")
+        items.update({str(k.value): ast.unparse(v) for k, v in zip(extra.keys, extra.values)})
+    if not items:
+        raise KpiExprError("which needs at least one labelled condition: which(braking, PB=pb == 1)")
+    return {"which": items, "over": over}
 
 
 def _parse(node, moments: set, ranges: list):

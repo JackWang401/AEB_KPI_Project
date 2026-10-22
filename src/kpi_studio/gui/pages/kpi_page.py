@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -48,8 +47,6 @@ from src.kpi_studio.gui.widgets import context_menu
 from src.kpi_studio.gui.widgets.common import (
     PAGE_MARGINS,
     ConditionBuilder,
-    ConditionRow,
-    parse_condition_rows,
     ExprEdit,
     ToolPalette,
     format_options,
@@ -60,92 +57,8 @@ from src.kpi_studio.toolbox.units import plain as plain_unit
 from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-FORMS = [("expr", "Expression"), ("which", "Which conditions are met (text)"), ("formula", "Formula of earlier KPIs")]
-EXPR_KEYS = ("value", "at", "reduce", "of", "over", "args", "then", "absolute", "between", "duration")
-
-
-class WhichTable(QWidget):
-    """Label + condition rows of a 'which' KPI: its result names the conditions met in the range.
-    Each condition is signal / operator / value in its own column, so each column can be dragged wider."""
-
-    COLUMNS = ["Label", "Signal", "Operator", "Value"]
-
-    def __init__(self, state, on_change):
-        super().__init__()
-        self.state, self.on_change = state, on_change
-        self.rows: list[ConditionRow] = []  # one per table row, in order
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)  # no stretching gaps in the form
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
-        row = QHBoxLayout()  # hint with + / − on the right, as above the Moments table
-        hint = QLabel("The result lists the labels whose condition is met in the range, e.g. PB + FB "
-                      "(in this order), or none.")
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        hint.setMinimumWidth(120)
-        row.addWidget(hint, 1)
-        for b in context_menu.plus_minus(add=self.add_row, remove=self.remove_row, add_tip="Add a condition",
-                                         remove_tip="Delete the selected condition"):
-            row.addWidget(b)
-        lay.addLayout(row)
-        self.table = QTableWidget(0, len(self.COLUMNS))
-        self.table.setHorizontalHeaderLabels(self.COLUMNS)
-        h = self.table.horizontalHeader()
-        for col in (1, 3):  # Signal and Value share the free width
-            h.setSectionResizeMode(col, QHeaderView.Stretch)
-        for col, width in ((0, 70), (2, 90)):  # Label and Operator: set widths (still draggable)
-            h.setSectionResizeMode(col, QHeaderView.Fixed)
-            h.resizeSection(col, width)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setMinimumHeight(110)
-        self.table.setMaximumHeight(170)  # a few rows; the form below stays in view
-        self.table.itemChanged.connect(lambda *_: self.on_change())
-        lay.addWidget(self.table)
-
-    def set_items(self, items: dict):
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.rows.clear()
-        for label, cond in items.items():
-            self._append(label, cond)
-        self.table.blockSignals(False)
-
-    def _append(self, label="", cond=""):
-        r = self.table.rowCount()
-        blocked = self.table.blockSignals(True)
-        self.table.insertRow(r)
-        self.table.setItem(r, 0, QTableWidgetItem(label))
-        self.table.blockSignals(blocked)
-        row = ConditionRow(self.state.signal_names, self.state.enum_map, self.table, laid_out=False)
-        row.hide()  # holds the logic; its fields sit in the cells
-        row.set_expression(cond)
-        row.changed.connect(self.on_change)
-        self.rows.append(row)
-        for col, w in enumerate((row.sig, row.op, row.val), start=1):
-            self.table.setCellWidget(r, col, w)
-        self.table.setRowHeight(r, max(self.table.rowHeight(r), row.sig.sizeHint().height() + 6))
-
-    def add_row(self):
-        self._append()
-        self.table.setCurrentCell(self.table.rowCount() - 1, 0)
-        self.table.editItem(self.table.item(self.table.rowCount() - 1, 0))
-
-    def remove_row(self):
-        r = self.table.currentRow()
-        if r >= 0:
-            self.table.removeRow(r)
-            self.rows.pop(r).deleteLater()
-            self.on_change()
-
-    def items(self) -> dict:
-        out = {}
-        for r, row in enumerate(self.rows):
-            label = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
-            cond = row.expression()
-            if label or cond:
-                out[label] = cond
-        return out
+EXPR_KEYS = ("value", "at", "reduce", "of", "over", "args", "then", "absolute", "between", "duration", "which",
+             "formula")
 
 
 def _spin(minimum=0.0, maximum=1e6, decimals=2, step=0.1):
@@ -704,68 +617,6 @@ class EventForm(QWidget):
 
 
 # ============================================================================ KPI form
-class FormulaField(QWidget):
-    """A formula of earlier KPIs, built from rows (KPI, operator, value, joined with and / or / xor, with
-    brackets), e.g. a pass / fail rule. Arithmetic such as  dist / time  is typed instead."""
-
-    changed = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.names: list[str] = []
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        self.typed = QCheckBox("Type the formula instead (for arithmetic, e.g. braking_dist / braking_time)")
-        self.typed.toggled.connect(self._mode_changed)
-        self.line = QLineEdit()
-        self.line.setPlaceholderText("e.g. braking_dist / braking_time")
-        self.line.editingFinished.connect(self.changed.emit)
-        self.rows: Optional[ConditionBuilder] = None
-        self.rows_box = QVBoxLayout()
-        lay.addLayout(self.rows_box)
-        lay.addWidget(self.line)
-        lay.addWidget(self.typed)
-        self._make_rows("")
-        self._mode_changed(False)
-
-    def _make_rows(self, text: str):
-        if self.rows is not None:
-            self.rows.setParent(None)
-            self.rows.deleteLater()
-        self.rows = ConditionBuilder(self.names, self, embedded=True)
-        self.rows.findChild(QLabel).setText(
-            "Each row is  KPI  operator  value, e.g. speed_at_release > 0.5. Join rows with and / or / xor and "
-            "group them with brackets. The result is 1 when true, 0 when false.")
-        if text:
-            self.rows.load_expression(text)
-        self.rows.changed.connect(self.changed.emit)
-        self.rows_box.addWidget(self.rows)
-
-    def _mode_changed(self, typed: bool):
-        if typed and not self.line.text().strip():
-            self.line.setText(self.rows.expression())
-        self.rows.setVisible(not typed)
-        self.line.setVisible(typed)
-        if not typed and self.line.text().strip():
-            self._make_rows(self.line.text().strip())
-        self.changed.emit()
-
-    def set_formula(self, text: str, names: list[str]):
-        """Show `text` as rows when it fits them, else typed; `names` are the KPIs it may use."""
-        self.blockSignals(True)
-        self.names = list(names)
-        rows = not text.strip() or parse_condition_rows(text) is not None
-        self.line.setText(text)
-        self._make_rows(text if rows else "")
-        self.typed.setChecked(not rows)
-        self.rows.setVisible(rows)
-        self.line.setVisible(not rows)
-        self.blockSignals(False)
-
-    def text(self) -> str:
-        return self.line.text().strip() if self.typed.isChecked() else self.rows.expression()
-
-
 class KpiForm(QWidget):
     def __init__(self, page: "KpiPage"):
         super().__init__()
@@ -778,22 +629,15 @@ class KpiForm(QWidget):
         lay.setContentsMargins(0, 0, 12, 0)  # flush top and bottom; room for the scroll bar on the right
         self.name_edit = QLineEdit()
         self.event = QComboBox()
-        self.form = QComboBox()
-        for key, label in FORMS:
-            self.form.addItem(label, key)
-        # the whole KPI, signal first: gap_dist.change(braking).abs(), egoSpeed.veh_stopped()
+        # the whole KPI in one line: gap_dist.change(braking).abs(), egoSpeed.veh_stopped(),
+        # which(braking, PB=..., FB=...), or a formula of earlier KPIs
         self.expr = ExprEdit(self.state.signal_names, placeholder="e.g. gap_dist.change(event).abs() or "
                              "egoSpeed.end()", enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
-                             kpi_fn=self.moments_and_ranges, extras_fn=self.expr_names)
+                             kpi_fn=self.expr_context, extras_fn=self.expr_names)
         self.expr.setToolTip("<signal>.<reducer>(<range>) or <signal>.<moment>(), then any of .abs() .sign() "
-                             ".sqrt() .to_<unit>() on the result. Drag a reducer or abs / to_kph from the toolbox "
-                             "onto this field to apply it.")
-        self.formula = FormulaField()
-        self.range = QComboBox()
-        self.range.setProperty("kind", "range")
-        self.range.setProperty("tip", "The range of the event to reduce over: 'event' is start to end, 'window' is "
-                              "window_start to window_end; add your own under Ranges on the event")
-        self.which = WhichTable(self.state, self.save)
+                             ".sqrt() .to_<unit>() on the result; which(<range>, Label=condition, ...) for the "
+                             "conditions met; or a formula of earlier KPIs, e.g. gap_too_small or speed > 0. Drag a "
+                             "reducer or abs / to_kph from the toolbox onto this field to apply it.")
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
                              "When the signal has no unit, and for a formula, type one here.")
@@ -802,10 +646,8 @@ class KpiForm(QWidget):
                                   "occurrence where it is true gets its row highlighted, e.g. failed runs")
         self.desc = QLineEdit()
         self.rows = {}
-        for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
-                         ("Range", self.range), ("Expression", self.expr),
-                         ("Formula", self.formula), ("Conditions", self.which), ("Unit", self.unit),
-                         ("Highlight", self.highlight), ("Description", self.desc)):
+        for label, w in (("Name", self.name_edit), ("Event", self.event), ("Expression", self.expr),
+                         ("Unit", self.unit), ("Highlight", self.highlight), ("Description", self.desc)):
             lab = QLabel(label)
             lay.addRow(lab, w)
             self.rows[label] = (lab, w)
@@ -815,16 +657,11 @@ class KpiForm(QWidget):
 
         self.name_edit.editingFinished.connect(self.rename)
         self.event.currentTextChanged.connect(self.event_changed)
-        self.form.currentIndexChanged.connect(self.form_changed)
         self.expr.editingFinished.connect(self.save)
-        self.formula.changed.connect(self.save)
-        self.range.currentTextChanged.connect(lambda t: self._set_moment(self.range, t))  # clears a "missing" mark
-        self.range.currentTextChanged.connect(lambda *_: self.save())
         for w in (self.unit, self.desc):
             w.editingFinished.connect(self.save)
         self.highlight.toggled.connect(lambda *_: self.save())
         self.expr.focused.connect(page.set_target)
-        self._show_form("expr")  # until a KPI is loaded: no hidden form's rows widen the panel
 
     @property
     def k(self) -> dict:
@@ -834,40 +671,30 @@ class KpiForm(QWidget):
         """The KPIs a formula may use: those listed before it for the same event."""
         return [k.get("name", "") for k in self.state.data["kpis"][:index] if k.get("event") == event and k.get("name")]
 
-    def moments_and_ranges(self) -> tuple[list[str], list[str]]:
+    def expr_context(self) -> tuple[list[str], list[str], list[str]]:
+        """The event's moments and ranges, and the earlier KPIs a formula may use."""
         event = self.event.currentText()
-        return self.state.moments_of(event), self.state.ranges_of(event)
+        kpis = self.earlier_kpis(self.index, event) if self.index is not None else []
+        return self.state.moments_of(event), self.state.ranges_of(event), kpis
 
     def expr_names(self) -> dict:
         """Picker sections next to the signals: what a KPI expression can call."""
-        moments, ranges = self.moments_and_ranges()
-        return {"Reducers": toolbox.names("reducer") + ["duration"], "Ranges": ranges, "Moments": moments,
-                "Then": [s.name for s in toolbox.tools("signal") if s.pointwise]}
-
-    def _fill_moments(self, event: str):
-        items = self.state.ranges_of(event)
-        cur = self.range.currentText()
-        self.range.blockSignals(True)
-        self.range.clear()
-        self.range.addItems(items)
-        if cur in items:
-            self.range.setCurrentText(cur)
-        self.range.blockSignals(False)
+        moments, ranges, kpis = self.expr_context()
+        return {"Reducers": toolbox.names("reducer") + ["duration", "which"], "Ranges": ranges, "Moments": moments,
+                "Then": [s.name for s in toolbox.tools("signal") if s.pointwise], "Earlier KPIs": kpis}
 
     @staticmethod
     def _set_moment(combo: QComboBox, value: str):
-        """Select `value`; a moment (or range) the event no longer has is shown in red at the top, so it can be
-        replaced."""
+        """Select `value`; a moment the event no longer has is shown in red at the top, so it can be replaced."""
         combo.blockSignals(True)
-        what = "range" if combo.property("kind") == "range" else "moment"
         if value and combo.findText(value) < 0:
             combo.insertItem(0, value)
             combo.setItemData(0, QColor("#e34948"), Qt.ForegroundRole)
-            combo.setItemData(0, f"'{value}' is not a {what} of this event: pick one from the list", Qt.ToolTipRole)
+            combo.setItemData(0, f"'{value}' is not a moment of this event: pick one from the list", Qt.ToolTipRole)
         combo.setCurrentText(value)
         missing = combo.currentIndex() == 0 and combo.itemData(0, Qt.ForegroundRole) is not None
         combo.setStyleSheet("QComboBox { color: #e34948; border: 1px solid #e34948; }" if missing else "")
-        combo.setToolTip(f"'{value}' is not a {what} of this event: pick one from the list" if missing
+        combo.setToolTip(f"'{value}' is not a moment of this event: pick one from the list" if missing
                          else combo.property("tip") or "")
         combo.blockSignals(False)
 
@@ -884,62 +711,33 @@ class KpiForm(QWidget):
         self.event.addItems(self.state.event_names())
         self.event.setCurrentText(k.get("event", ""))
         self.event.blockSignals(False)
-        self._fill_moments(k.get("event", ""))
-        form = "which" if "which" in k else "formula" if "formula" in k else "expr"
-        self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
         self.expr.setText(kpi_expr_text(k))
-        self.formula.set_formula(k.get("formula", ""), self.earlier_kpis(index, k.get("event", "")))
-        self._set_moment(self.range, k.get("over") or "event")
-        self.which.set_items(k.get("which") or {})
         self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
         self.highlight.setChecked(bool(k.get("highlight")))
-        self._show_form(form)
+        self.highlight.setVisible("which" not in k and k.get("reduce") != "duration")  # never true / false
         self._loading = False
         self.show_status()
 
-    def _show_form(self, form):
-        visible = {"expr": {"Expression", "Highlight"}, "which": {"Range", "Conditions"},
-                   "formula": {"Formula", "Highlight"}}[form]  # a number KPI can't be true; the check says so
-        for label in ("Range", "Expression", "Formula", "Conditions", "Highlight"):
-            lab, w = self.rows[label]
-            lab.setVisible(label in visible)
-            w.setVisible(label in visible)
-
-    def form_changed(self):
-        form = self.form.currentData()
-        if form == "which" and not self._loading and self.index is not None and self.k.get("over") is None:
-            self._set_moment(self.range, "event")  # the event itself, start to end
-        self._show_form(form)
-        self.save()
-
     def event_changed(self, ev):
-        self._fill_moments(ev)
         self.expr.check()  # the event's moments and ranges are what the expression may use
         self.save()
-        if self.index is not None:
-            self.formula.set_formula(self.formula.text(), self.earlier_kpis(self.index, ev))
 
     def save(self):
         if self._loading or self.index is None:
             return
-        form = self.form.currentData()
         name = self.k.get("name")
         k = {"name": name, "event": self.event.currentText()}
-        if form == "expr":
-            text = self.expr.text().strip()
-            if not text:
-                k.update(value="", at="start")
-            else:
-                try:
-                    k.update(parse_kpi_expr(text, *self.moments_and_ranges()))
-                except KpiExprError:  # not finished yet: the KPI keeps its last valid calculation
-                    k.update({key: v for key, v in self.k.items() if key in EXPR_KEYS})
-        elif form == "which":
-            k.update(which=self.which.items(), over=self.range.currentText())
+        text = self.expr.text().strip()
+        if not text:
+            k.update(value="", at="start")
         else:
-            k.update(formula=self.formula.text().strip())
-        if form == "formula":
+            try:
+                k.update(parse_kpi_expr(text, *self.expr_context()))
+            except KpiExprError:  # not finished yet: the KPI keeps its last valid calculation
+                k.update({key: v for key, v in self.k.items() if key in EXPR_KEYS})
+        self.highlight.setVisible("which" not in k and k.get("reduce") != "duration")
+        if k.get("formula") is not None:
             if self.unit.text().strip():
                 k["unit"] = plain_unit(self.unit.text().strip())
         elif not self.unit.isReadOnly():  # the signal has no unit: the one typed in
@@ -949,7 +747,7 @@ class KpiForm(QWidget):
             k["unit"] = self.k["unit"]  # kept as a fallback when the signal has no unit
         if self.desc.text().strip():
             k["description"] = self.desc.text().strip()
-        if self.highlight.isChecked() and self.highlight.isVisibleTo(self):
+        if self.highlight.isChecked() and not self.highlight.isHidden():
             k["highlight"] = True
         if k != self.k:
             self.state.data["kpis"][self.index] = k

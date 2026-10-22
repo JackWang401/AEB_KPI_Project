@@ -66,20 +66,17 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
-    assert form.range.currentText() == "event" and not form.expr.isVisibleTo(form)
-    for label, cond in (("PB", "egoSpeed > 5"), ("FB", "longActAccel < -2")):
-        form.which.add_row()
-        r = form.which.table.rowCount() - 1
-        form.which.table.item(r, 0).setText(label)
-        form.which.rows[r].set_expression(cond)
-        form.which.rows[r].changed.emit()
+    form.expr.setText("which(event, PB=egoSpeed > 5, FB=longActAccel < -2)")
+    form.expr.editingFinished.emit()
     k = window.state.data["kpis"][-1]
     assert k["which"] == {"PB": "egoSpeed > 5", "FB": "longActAccel < -2"} and k["over"] == "event"
+    assert form.highlight.isHidden()  # a text result is never true / false
     window.state.validate_now()
     assert window.state.compiled is not None, [str(i) for i in window.state.issues]
-    form.load(len(window.state.data["kpis"]) - 1)  # reloads into the same rows
-    assert form.which.items() == k["which"] and form.which.isVisibleTo(form)
+    form.load(len(window.state.data["kpis"]) - 1)  # reloads into the same line
+    assert form.expr.text() == "which(event, PB=egoSpeed > 5, FB=longActAccel < -2)" and not form.expr.error
+    form.expr.setText("which(event, PB=nosuchsignal > 5)")
+    assert form.expr.error  # each condition is checked against the signals
 
 
 def test_kpis_over_named_ranges(qtbot, window, mf4_dir):
@@ -96,7 +93,7 @@ def test_kpis_over_named_ranges(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    assert "after_stop" in form.moments_and_ranges()[1]
+    assert "after_stop" in form.expr_context()[1]
     form.expr.setText("(egoSpeed < 1).all(after_stop)")
     form.expr.editingFinished.emit()
     k = window.state.data["kpis"][-1]
@@ -2138,37 +2135,6 @@ def test_condition_row_fields(qtbot, window, mf4_dir):
     assert row.op.currentText() == "expression" and row.expression() == "a > 1 and b < 2"
 
 
-def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
-    _load(qtbot, window, mf4_dir)
-    window.resize(1500, 1000)
-    window.show()
-    window.open_panel("Events & KPIs")
-    page = window.kpi_page
-    page.new_kpi()
-    form = page.kpi_form
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
-    form.which.set_items({"PB": "egoSpeed > 5"})
-    table = form.which.table
-    assert [table.horizontalHeaderItem(c).text() for c in range(4)] == ["Label", "Signal", "Operator", "Value"]
-    row = form.which.rows[0]
-    assert [table.cellWidget(0, c) for c in (1, 2, 3)] == [row.sig, row.op, row.val]
-    h = table.horizontalHeader()
-    qtbot.waitUntil(lambda: bool(h.property("columnSizer")))
-    sizer = h._column_sizer
-    x0 = h.sectionViewportPosition(2)  # the border between Signal and Operator
-    before = h.sectionSize(1)
-    sizer._drag = (1, x0, {k: h.sectionSize(k) for k in sizer._visible()})
-    sizer.drag_to(x0 + 40)
-    assert h.sectionSize(1) == before + 40
-    x1 = h.sectionViewportPosition(3)  # widen Operator past what its box used to stop at
-    sizer._drag = (2, x1, {k: h.sectionSize(k) for k in sizer._visible()})
-    sizer.drag_to(x1 + 80)
-    qtbot.wait(50)
-    for c in (1, 2, 3):  # every field fills its whole column, whatever the width
-        assert table.cellWidget(0, c).width() >= table.columnWidth(c) - 1, c  # less the grid line
-    assert form.which.items() == {"PB": "egoSpeed > 5"}
-
-
 def _wide_for_plots():
     import pandas as pd
 
@@ -2469,26 +2435,25 @@ def test_software_version_column_in_files(qtbot, window, mf4_dir):
     assert f not in window.state.versions
 
 
-def test_formula_is_built_from_rows_of_earlier_kpis(qtbot, window, mf4_dir):
+def test_formula_of_earlier_kpis_in_the_expression(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     state = window.state
     state.data["events"]["served"] = {"start": "egoSpeed > 1", "moments": {"m1": {"first": "egoSpeed > 2"}}}
     state.data["kpis"] += [{"name": "spd", "event": "served", "value": "egoSpeed", "at": "m1"},
                            {"name": "gap", "event": "served", "value": "egoSpeed", "at": "start"},
-                           {"name": "fail", "event": "served", "formula": "spd > 0.5 or gap == 1"},
-                           {"name": "ratio", "event": "served", "formula": "spd / gap"}]
+                           {"name": "fail", "event": "served", "formula": "spd > 0.5 or gap == 1"}]
     state.edited(structure=True)
     form = window.kpi_page.kpi_form
     n = len(state.data["kpis"])
-    form.load(n - 2)
-    f = form.formula
-    assert not f.typed.isChecked() and len(f.rows.rows) == 2
-    assert [f.rows.rows[0][0].itemText(i) for i in range(f.rows.rows[0][0].count())] == ["gap", "spd"]  # earlier KPIs
-    assert f.rows.links[1][0].currentText() == "or"
-    f.rows.links[1][0].setCurrentText("xor")
-    assert state.data["kpis"][n - 2]["formula"] == "(spd > 0.5) ^ (gap == 1)"
-    form.load(n - 1)  # arithmetic doesn't fit rows: typed
-    assert f.typed.isChecked() and f.line.text() == "spd / gap" and f.text() == "spd / gap"
+    form.load(n - 1)
+    assert form.expr.text() == "spd > 0.5 or gap == 1" and not form.expr.error
+    assert not form.unit.isReadOnly()  # a formula's unit is typed
+    form.expr.setText("abs(spd - gap)")
+    form.expr.editingFinished.emit()
+    assert state.data["kpis"][n - 1]["formula"] == "abs(spd - gap)"
+    form.load(n - 2)  # gap: only KPIs listed earlier, so 'fail' is not usable here
+    form.expr.setText("fail or spd > 1")
+    assert form.expr.error
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
 
