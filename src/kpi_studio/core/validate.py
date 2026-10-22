@@ -428,6 +428,10 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
     for n in profile.shown_signals:
         if n not in names:
             warn("shown_signals", f"unknown signal '{n}'")
+    for ev_name, ev in profile.events.items():
+        for n in ev.shown_signals:
+            if n not in names:
+                warn(f"events.{ev_name}.shown_signals", f"unknown signal '{n}'")
 
     # ---------------- plots
     kpi_names = {k.defn.name for k in kpis}

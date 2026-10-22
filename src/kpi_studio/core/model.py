@@ -188,6 +188,7 @@ class EventDef(_Strict):
     moments: dict[str, Any] = Field(default_factory=dict)
     # named ranges: {name: [from moment, to moment]}; KPIs reduce over them with 'over: <name>'
     ranges: dict[str, tuple[str, str]] = Field(default_factory=dict)
+    shown_signals: list[str] = Field(default_factory=list)  # signals ticked in the viewer for this event
 
     @field_validator("ranges", mode="before")
     @classmethod

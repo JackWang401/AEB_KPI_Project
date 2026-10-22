@@ -2692,3 +2692,25 @@ def test_kpi_list_shows_the_selected_events_kpis(qtbot, window, mf4_dir):
     kp.kpi_form.event.setCurrentText("aeb")  # moved to another event: the list follows it
     assert kp.cur_event == "aeb" and kp.kpis.currentItem().text() == "a"
     assert kp.events.currentItem().text() == "aeb"
+
+
+def test_each_event_keeps_its_own_ticked_signals(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    viewer, state = window.viewer, window.state
+    state.data["events"]["lsaeb"] = {"start": "egoSpeed > 1", "end": "egoSpeed < 0.5"}
+    state.edited(structure=True)
+    viewer.set_event("aeb")
+    viewer.plot_signals(["egoSpeed", "yawRate"])
+    qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
+    assert set(state.data["events"]["aeb"]["shown_signals"]) == {"egoSpeed", "yawRate"}
+    viewer.set_event("lsaeb")  # no set of its own yet: what is on screen stays, and is not saved for it
+    assert set(viewer.checked()) == {"egoSpeed", "yawRate"} and "shown_signals" not in state.data["events"]["lsaeb"]
+    viewer.set_checked(["egoSpeedKph"], only=True)
+    viewer.draw()
+    assert state.data["events"]["lsaeb"]["shown_signals"] == ["egoSpeedKph"]
+    viewer.set_event("aeb")
+    assert set(viewer.checked()) == {"egoSpeed", "yawRate"}
+    viewer.set_event("lsaeb")
+    assert viewer.checked() == ["egoSpeedKph"]
+    state.validate_now()
+    assert not [i for i in state.issues if "shown_signals" in str(i)]
