@@ -629,13 +629,13 @@ class KpiForm(QWidget):
         lay.setContentsMargins(0, 0, 12, 0)  # flush top and bottom; room for the scroll bar on the right
         self.name_edit = QLineEdit()
         self.event = QComboBox()
-        # the whole KPI in one line: gap_dist.change(braking).abs(), egoSpeed.veh_stopped(),
+        # the whole KPI in one line: gap_dist.change(braking).abs(), egoSpeed @ veh_stopped,
         # which(braking, PB=..., FB=...), or a formula of earlier KPIs
         self.expr = ExprEdit(self.state.signal_names, placeholder="e.g. gap_dist.change(event).abs() or "
-                             "egoSpeed.end()", enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
+                             "egoSpeed @ end", enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
                              kpi_fn=self.expr_context, extras_fn=self.expr_names)
-        self.expr.setToolTip("<signal>.<reducer>(<range>) or <signal>.<moment>(), then any of .abs() .sign() "
-                             ".sqrt() .to_<unit>() on the result; which(<range>, Label=condition, ...) for the "
+        self.expr.setToolTip("<signal>.<reducer>(<range>) or <signal> @ <moment>, then any of .abs() .sign() "
+                             ".sqrt() .to_<unit>() on the result, e.g. (speed @ end).to_kph(); which(<range>, Label=condition, ...) for the "
                              "conditions met; or a formula of earlier KPIs, e.g. gap_too_small or speed > 0. Drag a "
                              "reducer or abs / to_kph from the toolbox onto this field to apply it.")
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals

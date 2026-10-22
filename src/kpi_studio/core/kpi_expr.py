@@ -1,10 +1,10 @@
 """A KPI written as one expression, signal first, e.g.
 
     gap_dist.change(braking).abs()      change(gap_dist, braking).abs()      abs(change(gap_dist, braking))
-    egoSpeed.veh_stopped()              veh_stopped(egoSpeed)                duration(braking)
+    egoSpeed @ veh_stopped              (egoSpeed @ veh_stopped).to_kph()    duration(braking)
 
 A reducer takes the signal expression and one range of the event (plus options as keywords:
-max(x, braking, k=2)); a moment takes the signal expression only. Point-wise operations (abs, sign,
+max(x, braking, k=2)); `x @ moment` is x's value at a moment (x.moment() and moment(x) read the same). Point-wise operations (abs, sign,
 sqrt, to_<unit>) can follow, each taking the result so far. Two more shapes:
 
     which(braking, PB=pb_state == 1, FB=fb_state == 1)     the labels of the conditions met: "PB + FB"
@@ -63,7 +63,9 @@ def kpi_expr_text(k: dict) -> str:
     if k.get("value") is not None:
         if not str(k["value"]).strip():
             return ""
-        core = f"{_wrap(k['value'])}.{k.get('at') or 'start'}()"
+        core = f"{_wrap(k['value'])} @ {k.get('at') or 'start'}"
+        if then:  # (x @ moment).abs(): the operation takes the value, not the moment
+            core = f"({core})"
     elif k.get("reduce") == "duration":
         core = f"duration({k.get('over') or 'event'})"
     elif k.get("reduce"):
@@ -96,8 +98,9 @@ def parse_kpi_expr(text: str, moments: Iterable[str], ranges: Iterable[str],
         if used and used <= kpis:  # only earlier KPIs: a formula of them
             return {"formula": text.strip()}
         raise KpiExprError(
-            "write the KPI as <signal>.<reducer>(<range>) or <signal>.<moment>(), e.g. gap_dist.change(event).abs() "
-            f"or egoSpeed.{moments[-1] if moments else 'start'}(), or a formula of earlier KPIs"
+            "write the KPI as <signal>.<reducer>(<range>) or <signal> @ <moment>, e.g. gap_dist.change(event).abs() "
+            f"or egoSpeed @ {moments[-1] if moments else 'start'} (brackets around a longer signal expression: "
+            "(a - b) @ start), or a formula of earlier KPIs"
             + (f" ({', '.join(sorted(kpis))})" if kpis else "")
             + f"; reducers: {', '.join(_reducers())}; moments: {', '.join(moments)}; ranges: {', '.join(ranges)}")
     fields, then = found
@@ -161,6 +164,11 @@ def _options(node, reducer: str) -> dict:
 
 def _core(node, moments: set, ranges: list):
     """The reducer or moment the expression ends in, or None."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.MatMult):  # x @ moment
+        if not (isinstance(node.right, ast.Name) and node.right.id in moments):
+            raise KpiExprError(f"'{ast.unparse(node.right)}' is not a moment of this event; after @ use one of "
+                               f"{', '.join(sorted(moments))}")
+        return {"value": ast.unparse(node.left), "at": node.right.id}
     if not isinstance(node, ast.Call):
         return None
     f, args = node.func, node.args
@@ -185,6 +193,6 @@ def _core(node, moments: set, ranges: list):
         return fields
     if name in moments:
         if signal is None or rest or node.keywords:
-            raise KpiExprError(f"a moment takes only the signal: x.{name}() or {name}(x)")
+            raise KpiExprError(f"a moment takes only the signal: x @ {name}")
         return {"value": ast.unparse(signal), "at": name}
     return None

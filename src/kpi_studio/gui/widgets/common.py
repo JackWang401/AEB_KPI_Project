@@ -380,7 +380,8 @@ class ExprEdit(QLineEdit):
                 self.editingFinished.emit()
             return
         if spec.kind == "signal":
-            self.setText(f"{text}.{spec.name}()" if fields is not None else f"{spec.name}({text})")
+            self.setText(kpi_expr_text({**fields, "then": [*fields.get("then", []), spec.name]})
+                         if fields is not None else f"{spec.name}({text})")
         elif fields is not None and fields.get("reduce") not in (None, "duration"):
             self.setText(kpi_expr_text({**fields, "reduce": spec.name, "args": {}}))
         else:

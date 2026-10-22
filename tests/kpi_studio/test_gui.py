@@ -160,7 +160,7 @@ def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.expr.setText("egoSpeedKph.start()")  # no unit in the test profile
+    form.expr.setText("egoSpeedKph @ start")  # no unit in the test profile
     form.expr.editingFinished.emit()
     assert not form.unit.isReadOnly() and form.unit.text() == ""
     form.unit.setText("km/h")
@@ -171,7 +171,7 @@ def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
     assert next(k.unit for k in window.state.compiled.kpis if k.defn.name == name) == "km/h"
     form.load(len(window.state.data["kpis"]) - 1)
     assert form.unit.text() == "km/h" and not form.unit.isReadOnly()
-    form.expr.setText("longActAccel.start()")  # has a unit: shown, not typed
+    form.expr.setText("longActAccel @ start")  # has a unit: shown, not typed
     form.expr.editingFinished.emit()
     assert form.unit.isReadOnly() and form.unit.text() != "km/h"
 
@@ -905,8 +905,8 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert all(window.issues.item(i).text().startswith("✖") for i in range(window.issues.count()))
     assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
     expr = window.kpi_page.kpi_form.expr
-    assert expr.text() == "egoSpeed.moment1()" and expr.error  # not a moment of the event: shown in red
-    expr.setText("egoSpeed.braking()")
+    assert expr.text() == "egoSpeed @ moment1" and expr.error  # not a moment of the event: shown in red
+    expr.setText("egoSpeed @ braking")
     expr.editingFinished.emit()
     assert state.data["kpis"][-1]["at"] == "braking" and not expr.error
     state.validate_now()
@@ -2589,7 +2589,7 @@ def test_kpi_written_as_one_expression(qtbot, window, mf4_dir):
     md = QMimeData()
     md.setData(TOOL_MIME, b"signal:to_kph")  # a dropped operation takes the whole result
     form.expr.dropEvent(_FakeDrop(md))
-    assert form.expr.text() == "change(egoSpeed, event).abs().to_kph()"
+    assert form.expr.text() == "egoSpeed.change(event).abs().to_kph()"
     md = QMimeData()
     md.setData(TOOL_MIME, b"reducer:max")  # a dropped reducer replaces the reducer
     form.expr.dropEvent(_FakeDrop(md))
@@ -2599,7 +2599,7 @@ def test_kpi_written_as_one_expression(qtbot, window, mf4_dir):
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
     assert state.compiled.kpis[-1].unit == "km/h"
-    form.expr.setText("egoSpeed.end()")  # a value at a moment
+    form.expr.setText("egoSpeed @ end")  # a value at a moment
     form.expr.editingFinished.emit()
     k = state.data["kpis"][-1]
     assert k["value"] == "egoSpeed" and k["at"] == "end" and "reduce" not in k and "then" not in k
@@ -2634,6 +2634,6 @@ def test_hovering_a_long_expression_shows_all_of_it(qtbot, window, mf4_dir):
     long = "which(event, " + ", ".join(f"C{i}=egoSpeed > {i}" for i in range(12)) + ")"
     form.expr.setText(long)
     assert form.expr.hover_tip().startswith(long)  # cut off in the field: shown whole
-    form.expr.setText("egoSpeed.end()")
+    form.expr.setText("egoSpeed @ end")
     tip = form.expr.hover_tip()
-    assert not tip.startswith("egoSpeed.end()") and "<signal>.<reducer>" in tip  # fits: just the help
+    assert not tip.startswith("egoSpeed @ end") and "<signal>.<reducer>" in tip  # fits: just the help
