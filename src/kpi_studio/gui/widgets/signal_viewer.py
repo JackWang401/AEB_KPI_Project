@@ -380,10 +380,6 @@ class SignalViewer(QWidget):
         # through select_recordings); not shown
         self.files = QListWidget(self)
         self.files.setVisible(False)
-        self.separate_btn = QPushButton("One signal per subplot")
-        self.separate_btn.setToolTip("Undo drag and drop: give every signal its own subplot again")
-        self.separate_btn.setVisible(False)
-        bar.addWidget(self.separate_btn)
         self.status = ElideLabel()
         self.status.setObjectName("hint")
         pbar = bar  # one row: load + status, event preview, cursor readout
@@ -391,7 +387,8 @@ class SignalViewer(QWidget):
         pbar.addWidget(QLabel("Event"))
         self.pv_event = QComboBox()
         self.pv_event.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.pv_event.setMinimumContentsLength(16)
+        self.pv_event.setMinimumContentsLength(8)
+        self.pv_event.setMaximumWidth(160)
         self.pv_event.setToolTip("Choose an event and press Run preview to see its occurrences, moments and KPIs")
         pbar.addWidget(self.pv_event)
         pbar.addWidget(QLabel("occurrence"))
@@ -399,6 +396,9 @@ class SignalViewer(QWidget):
         self.pv_occ.setMinimum(1)
         self.pv_occ.setMinimumWidth(60)
         pbar.addWidget(self.pv_occ)
+        self.pv_source = QLabel()  # where the shown occurrence comes from: recording.mf4 #3
+        self.pv_source.setObjectName("hint")
+        pbar.addWidget(self.pv_source)
         self.pv_run = QPushButton("Run preview")
         self.pv_run.setObjectName("primary")
         self.pv_run.setToolTip("Evaluate the profile on every checked recording; the occurrence box then "
@@ -478,7 +478,6 @@ class SignalViewer(QWidget):
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("resize_event", lambda *_: self._apply_layout())
-        self.separate_btn.clicked.connect(self.separate_all)
         state.files_changed.connect(self.refresh_files)
         state.validated.connect(self.refresh_names)
         state.validated.connect(self._drop_stale_cache)
@@ -1116,7 +1115,6 @@ class SignalViewer(QWidget):
         self.kpi_others = []    # preview KPIs whose signals are not plotted
         names = self.checked()
         loaded = [(r, self.cache[r.name]) for r in self.selected() if r.name in self.cache]
-        self.separate_btn.setVisible(bool(self.host))
         if not loaded:
             self._message("Tick signals on the left to plot them")
             return
@@ -1261,7 +1259,9 @@ class SignalViewer(QWidget):
         """(recording, occurrence) chosen in the occurrence box, or None."""
         occs = self.all_occurrences()
         k = self.pv_occ.value() - 1
-        return occs[k] if 0 <= k < len(occs) else None
+        hit = occs[k] if 0 <= k < len(occs) else None
+        self.pv_source.setText(f"{Path(hit[0]).name} #{hit[1].index}" if hit is not None else "")
+        return hit
 
     def goto_occurrence(self):
         """Show the chosen occurrence: switch to its recording (read by the preview) and zoom to it."""
@@ -1598,6 +1598,8 @@ class SignalViewer(QWidget):
         menu = QMenu(self)
         for n in names:
             self.signal_menu([n], menu.addMenu(n))
+        menu.addSeparator()  # undo drag and drop
+        menu.addAction("One signal per subplot").triggered.connect(lambda _on: self.separate_all())
         return menu
 
     def _legend_axes(self, event):

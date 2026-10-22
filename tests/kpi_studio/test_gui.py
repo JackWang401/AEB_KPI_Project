@@ -353,9 +353,10 @@ def test_occurrences_of_every_file(qtbot, window, mf4_dir):
     _, occ = occs[2]
     assert viewer._axes[0].get_xlim() == (occ.t_window_start, occ.t_window_end)
     assert "b.mf4" in viewer._axes[0].get_title() and "#1" in viewer._axes[0].get_title()
+    assert viewer.pv_source.text() == "b.mf4 #1"  # where the occurrence comes from, next to the box
     viewer.pv_occ.setValue(2)  # and back
     qtbot.waitUntil(lambda: viewer.worker is None, timeout=20000)
-    assert Path(viewer.preview["rec"]).name == "a.mf4"
+    assert Path(viewer.preview["rec"]).name == "a.mf4" and viewer.pv_source.text() == "a.mf4 #2"
     assert viewer._axes[0].get_xlim() == (occs[1][1].t_window_start, occs[1][1].t_window_end)
 
 
@@ -845,7 +846,9 @@ def test_drag_signal_onto_a_subplot(qtbot, window, mf4_dir):
     viewer.drop_signals(["aebTargetDecel"], viewer.axes_at(pos))
     assert len(viewer._axes) == 2
     assert ["egoSpeed", "aebTargetDecel"] in [viewer._ax_groups[a] for a in viewer._axes]
-    assert viewer.separate_btn.isVisible()
+    merged = next(a for a in viewer._axes if viewer._ax_groups[a] == ["egoSpeed", "aebTargetDecel"])
+    acts = [a.text() for a in viewer.subplot_menu(merged).actions()]
+    assert "One signal per subplot" in acts  # undoing it is on the subplot's right-click menu
     other = next(a for a in viewer._axes if viewer._ax_groups[a] == ["longActAccel"])
     viewer.drop_signals(["longGap"], other)  # unticked signal: ticked and added
     assert "longGap" in viewer.checked()
