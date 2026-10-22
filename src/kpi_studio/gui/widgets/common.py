@@ -8,7 +8,7 @@ import re
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFocusEvent, QIcon, QPainter, QPalette, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QToolTip,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -327,8 +328,34 @@ class ExprEdit(QLineEdit):
             except (ExprError, KpiExprError) as exc:
                 self.error = str(exc)
         self.setStyleSheet(BAD_STYLE if self.error else OK_STYLE)
-        self.setToolTip(self.error or "")
         return self.error is None
+
+    def setToolTip(self, text: str):
+        self._help = text  # shown on hover under the full text and any error (see hover_tip)
+
+    def hover_tip(self) -> str:
+        """What hovering shows: the whole expression when it doesn't fit the field, then any error, then help."""
+        parts = []
+        text = self.text()
+        room = self.width() - 40  # the ▾ button and the frame
+        if text and self.fontMetrics().horizontalAdvance(text) > room:
+            parts.append(text)
+        if self.error:
+            parts.append(self.error)
+        if getattr(self, "_help", "") and not self.error:
+            parts.append(self._help)
+        return "\n\n".join(parts)
+
+    def event(self, e):
+        if e.type() == QEvent.ToolTip:
+            tip = self.hover_tip()
+            if tip:
+                QToolTip.showText(e.globalPos(), tip, self)
+            else:
+                QToolTip.hideText()
+                e.ignore()
+            return True
+        return super().event(e)
 
     def insert_text(self, snippet: str):
         self.insert(snippet)
