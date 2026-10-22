@@ -40,6 +40,7 @@ from src.kpi_studio.core.model import (
     KpiDef,
     signal_units,
 )
+from src.kpi_studio.core.kpi_expr import KpiExprError, kpi_expr_text, parse_kpi_expr
 from src.kpi_studio.core.rename import rename_kpi, rename_moment, rename_range, use_named_ranges
 from src.kpi_studio.core.validate import kpi_unit
 from src.kpi_studio.gui.state import AppState
@@ -50,7 +51,6 @@ from src.kpi_studio.gui.widgets.common import (
     ConditionRow,
     parse_condition_rows,
     ExprEdit,
-    OpChain,
     ToolPalette,
     format_options,
     parse_options,
@@ -60,9 +60,8 @@ from src.kpi_studio.toolbox.units import plain as plain_unit
 from src.kpi_studio.toolbox.units import pretty as pretty_unit
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-FORMS = [("value", "At a moment"), ("range", "Over a range"), ("formula", "Formula of earlier KPIs")]
-# reducers that are not toolbox tools: the range's length, and the conditions met in it
-SPECIAL_REDUCERS = [("duration", "duration (length of the range)"), ("which", "which conditions are met (text)")]
+FORMS = [("expr", "Expression"), ("which", "Which conditions are met (text)"), ("formula", "Formula of earlier KPIs")]
+EXPR_KEYS = ("value", "at", "reduce", "of", "over", "args", "then", "absolute", "between", "duration")
 
 
 class WhichTable(QWidget):
@@ -782,29 +781,18 @@ class KpiForm(QWidget):
         self.form = QComboBox()
         for key, label in FORMS:
             self.form.addItem(label, key)
-        self.expr = ExprEdit(self.state.signal_names, placeholder="expression, e.g. egoSpeedKph",
-                             enums_fn=self.state.enum_map, units_fn=self.state.unit_map)
+        # the whole KPI, signal first: gap_dist.change(braking).abs(), egoSpeed.veh_stopped()
+        self.expr = ExprEdit(self.state.signal_names, placeholder="e.g. gap_dist.change(event).abs() or "
+                             "egoSpeed.end()", enums_fn=self.state.enum_map, units_fn=self.state.unit_map,
+                             kpi_fn=self.moments_and_ranges, extras_fn=self.expr_names)
+        self.expr.setToolTip("<signal>.<reducer>(<range>) or <signal>.<moment>(), then any of .abs() .sign() "
+                             ".sqrt() .to_<unit>() on the result. Drag a reducer or abs / to_kph from the toolbox "
+                             "onto this field to apply it.")
         self.formula = FormulaField()
-        self.at = QComboBox()
         self.range = QComboBox()
         self.range.setProperty("kind", "range")
         self.range.setProperty("tip", "The range of the event to reduce over: 'event' is start to end, 'window' is "
                               "window_start to window_end; add your own under Ranges on the event")
-        self.reducer = QComboBox()
-        for name in toolbox.names("reducer"):
-            self.reducer.addItem(name, name)
-        for key, label in SPECIAL_REDUCERS:
-            self.reducer.addItem(label, key)
-        # the reducer / moment, then operations on its result: gap_dist.change(braking).abs()
-        self.range_ops = OpChain(self.reducer, accept_reducers=True)
-        self.at_ops = OpChain(self.at)
-        self.reads = QLabel()  # the whole calculation written signal first, e.g. gap_dist.change(braking).abs()
-        self.reads.setObjectName("readsAs")
-        self.reads.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.reads.setToolTip("How this KPI is calculated: the expression, then the reducer over the range "
-                              "(or its value at the moment), then each operation on the result")
-        self.args = QLineEdit()
-        self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
         self.unit = QLineEdit()  # shows the unit taken from the signal; typed for formulas and unit-less signals
         self.unit.setToolTip("Taken from the signal the KPI reads (a KPI is one value of that signal). "
@@ -815,9 +803,8 @@ class KpiForm(QWidget):
         self.desc = QLineEdit()
         self.rows = {}
         for label, w in (("Name", self.name_edit), ("Event", self.event), ("Kind", self.form),
-                         ("Range", self.range), ("Reducer", self.range_ops), ("Expression", self.expr),
-                         ("Formula", self.formula), ("Conditions", self.which),
-                         ("At moment", self.at_ops), ("Options", self.args), ("Reads as", self.reads), ("Unit", self.unit),
+                         ("Range", self.range), ("Expression", self.expr),
+                         ("Formula", self.formula), ("Conditions", self.which), ("Unit", self.unit),
                          ("Highlight", self.highlight), ("Description", self.desc)):
             lab = QLabel(label)
             lay.addRow(lab, w)
@@ -831,24 +818,13 @@ class KpiForm(QWidget):
         self.form.currentIndexChanged.connect(self.form_changed)
         self.expr.editingFinished.connect(self.save)
         self.formula.changed.connect(self.save)
-        for w in (self.at, self.range):  # a valid choice clears the "missing" mark
-            w.currentTextChanged.connect(lambda _t, w=w: self._set_moment(w, w.currentText()))
-        self.reducer.currentIndexChanged.connect(lambda *_: self._show_form(self.form.currentData()))
-        for w in (self.at, self.range, self.reducer):
-            w.currentTextChanged.connect(lambda *_: self.save())
-        for w in (self.args, self.unit, self.desc):
+        self.range.currentTextChanged.connect(lambda t: self._set_moment(self.range, t))  # clears a "missing" mark
+        self.range.currentTextChanged.connect(lambda *_: self.save())
+        for w in (self.unit, self.desc):
             w.editingFinished.connect(self.save)
         self.highlight.toggled.connect(lambda *_: self.save())
-        for chain in (self.range_ops, self.at_ops):
-            chain.changed.connect(self.save)
-            chain.changed.connect(self.show_reads)
-        self.range_ops.reducer_dropped.connect(
-            lambda name: self.reducer.setCurrentIndex(max(0, self.reducer.findData(name))))
-        self.expr.textChanged.connect(lambda *_: self.show_reads())
-        for w in (self.at, self.range, self.reducer):
-            w.currentTextChanged.connect(lambda *_: self.show_reads())
         self.expr.focused.connect(page.set_target)
-        self._show_form("value")  # until a KPI is loaded: no hidden form's rows widen the panel
+        self._show_form("expr")  # until a KPI is loaded: no hidden form's rows widen the panel
 
     @property
     def k(self) -> dict:
@@ -858,15 +834,25 @@ class KpiForm(QWidget):
         """The KPIs a formula may use: those listed before it for the same event."""
         return [k.get("name", "") for k in self.state.data["kpis"][:index] if k.get("event") == event and k.get("name")]
 
+    def moments_and_ranges(self) -> tuple[list[str], list[str]]:
+        event = self.event.currentText()
+        return self.state.moments_of(event), self.state.ranges_of(event)
+
+    def expr_names(self) -> dict:
+        """Picker sections next to the signals: what a KPI expression can call."""
+        moments, ranges = self.moments_and_ranges()
+        return {"Reducers": toolbox.names("reducer") + ["duration"], "Ranges": ranges, "Moments": moments,
+                "Then": [s.name for s in toolbox.tools("signal") if s.pointwise]}
+
     def _fill_moments(self, event: str):
-        for combo, items in ((self.at, self.state.moments_of(event)), (self.range, self.state.ranges_of(event))):
-            cur = combo.currentText()
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItems(items)
-            if cur in items:
-                combo.setCurrentText(cur)
-            combo.blockSignals(False)
+        items = self.state.ranges_of(event)
+        cur = self.range.currentText()
+        self.range.blockSignals(True)
+        self.range.clear()
+        self.range.addItems(items)
+        if cur in items:
+            self.range.setCurrentText(cur)
+        self.range.blockSignals(False)
 
     @staticmethod
     def _set_moment(combo: QComboBox, value: str):
@@ -899,68 +885,37 @@ class KpiForm(QWidget):
         self.event.setCurrentText(k.get("event", ""))
         self.event.blockSignals(False)
         self._fill_moments(k.get("event", ""))
-        form = "value" if "value" in k else "formula" if "formula" in k else "range"
+        form = "which" if "which" in k else "formula" if "formula" in k else "expr"
         self.form.setCurrentIndex([f for f, _ in FORMS].index(form))
-        self.expr.setText(k.get("value") or k.get("of") or "")
+        self.expr.setText(kpi_expr_text(k))
         self.formula.set_formula(k.get("formula", ""), self.earlier_kpis(index, k.get("event", "")))
-        self._set_moment(self.at, k.get("at", "start"))
-        self._set_moment(self.range, k.get("over") or ("window" if k.get("reduce") else "event"))
+        self._set_moment(self.range, k.get("over") or "event")
         self.which.set_items(k.get("which") or {})
-        reducer = "which" if "which" in k else k.get("reduce", "max")
-        self.reducer.setCurrentIndex(max(0, self.reducer.findData(reducer)))
-        self.args.setText(format_options(k.get("args", {})))
         self.update_unit(k)
         self.desc.setText(k.get("description", "") or "")
         self.highlight.setChecked(bool(k.get("highlight")))
-        then = (["abs"] if k.get("absolute") else []) + list(k.get("then") or [])  # absolute: an older spelling
-        self.range_ops.set_ops(then if form == "range" else [])
-        self.at_ops.set_ops(then if form == "value" else [])
         self._show_form(form)
         self._loading = False
         self.show_status()
 
     def _show_form(self, form):
-        reducer = self.reducer.currentData()
-        if form == "range":
-            visible = {"Range", "Reducer"} | ({"Conditions"} if reducer == "which" else set() if reducer == "duration"
-                                              else {"Expression", "Options"})
-        else:
-            visible = {"value": {"Expression", "At moment"}, "formula": {"Formula"}}[form]
-        if not (form == "range" and reducer in ("which", "duration")):
-            visible.add("Highlight")  # a number KPI can't be true; the check says so
-        if form != "formula" and not (form == "range" and reducer in ("which", "duration")):
-            visible.add("Reads as")
-        for label in ("Range", "Reducer", "Expression", "Formula", "Conditions", "At moment", "Options", "Highlight",
-                      "Reads as"):
+        visible = {"expr": {"Expression", "Highlight"}, "which": {"Range", "Conditions"},
+                   "formula": {"Formula", "Highlight"}}[form]  # a number KPI can't be true; the check says so
+        for label in ("Range", "Expression", "Formula", "Conditions", "Highlight"):
             lab, w = self.rows[label]
             lab.setVisible(label in visible)
             w.setVisible(label in visible)
-        self.range_ops.set_chain_visible(reducer not in ("which", "duration"))
-        self.show_reads()
-
-    def show_reads(self):
-        """Spell out the calculation signal first: egoSpeed.vehicle_stopped(), gap_dist.change(braking).abs()."""
-        expr = self.expr.text().strip() or "…"
-        if not re.fullmatch(r"[A-Za-z_]\w*(\(.*\))?", expr):
-            expr = f"({expr})"  # e.g. (a - b).max(event)
-        if self.form.currentData() == "value":
-            text = f"{expr}.{self.at.currentText() or '…'}()" + "".join(f".{op}()" for op in self.at_ops.ops())
-        else:
-            args = ", ".join([self.range.currentText() or "…"] + ([self.args.text().strip()] if self.args.text().strip()
-                                                                   else []))
-            text = (f"{expr}.{self.reducer.currentData()}({args})"
-                    + "".join(f".{op}()" for op in self.range_ops.ops()))
-        self.reads.setText(text)
 
     def form_changed(self):
         form = self.form.currentData()
-        if form == "range" and not self._loading and self.index is not None and self.k.get("over") is None:
+        if form == "which" and not self._loading and self.index is not None and self.k.get("over") is None:
             self._set_moment(self.range, "event")  # the event itself, start to end
         self._show_form(form)
         self.save()
 
     def event_changed(self, ev):
         self._fill_moments(ev)
+        self.expr.check()  # the event's moments and ranges are what the expression may use
         self.save()
         if self.index is not None:
             self.formula.set_formula(self.formula.text(), self.earlier_kpis(self.index, ev))
@@ -971,27 +926,17 @@ class KpiForm(QWidget):
         form = self.form.currentData()
         name = self.k.get("name")
         k = {"name": name, "event": self.event.currentText()}
-        if form == "value":
-            k.update(value=self.expr.text().strip(), at=self.at.currentText())
-            if self.at_ops.ops():
-                k["then"] = self.at_ops.ops()
-        elif form == "range":
-            reducer = self.reducer.currentData()
-            if reducer == "which":
-                k["which"] = self.which.items()
-            elif reducer == "duration":
-                k["reduce"] = "duration"
+        if form == "expr":
+            text = self.expr.text().strip()
+            if not text:
+                k.update(value="", at="start")
             else:
-                k.update(reduce=reducer, of=self.expr.text().strip())
-                if self.range_ops.ops():
-                    k["then"] = self.range_ops.ops()
                 try:
-                    args = parse_options(self.args.text())
-                    if args:
-                        k["args"] = args
-                except Exception:  # noqa: BLE001
-                    pass
-            k["over"] = self.range.currentText()
+                    k.update(parse_kpi_expr(text, *self.moments_and_ranges()))
+                except KpiExprError:  # not finished yet: the KPI keeps its last valid calculation
+                    k.update({key: v for key, v in self.k.items() if key in EXPR_KEYS})
+        elif form == "which":
+            k.update(which=self.which.items(), over=self.range.currentText())
         else:
             k.update(formula=self.formula.text().strip())
         if form == "formula":

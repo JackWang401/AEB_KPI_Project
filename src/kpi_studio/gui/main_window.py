@@ -70,10 +70,6 @@ QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; lef
                    color: #1d1d1f; }
 QLabel { background: transparent; }
 QLabel#hint { color: #6e6e73; }
-QLabel#readsAs { font-family: "SF Mono", Menlo, Consolas, monospace; color: #1d1d1f; }
-QToolButton#opChain, QToolButton#opChip { padding: 2px 8px; border: 1px solid #b7d4ff; border-radius: 10px;
-                       background: #eaf3ff; color: #0058c4; }
-QToolButton#opChip:hover { background: #ffe5e5; border-color: #f2a8a8; color: #c62828; }
 QLabel#sectionTitle { font-weight: 700; }
 QToolBar { spacing: 6px; padding: 6px 12px; background: #f5f5f7; border: none; border-bottom: 1px solid #e5e5ea; }
 QToolBar QToolButton { padding: 4px 10px; border-radius: 6px; }
@@ -242,8 +238,9 @@ class MainWindow(QMainWindow):
             self.open_panel("Events & KPIs")
             self.kpi_page.kpis.setCurrentRow(row)
             form = self.kpi_page.kpi_form
-            target = {"at": form.at, "duration": form.range, "between": form.range, "over": form.range,
-                      "value": form.expr, "of": form.expr, "formula": form.formula, "reduce": form.reducer, "event": form.event}.get(field)
+            target = {"formula": form.formula, "which": form.which, "event": form.event}.get(field, form.expr)
+            if field == "over" and form.range.isVisible():  # a which KPI's range
+                target = form.range
             if target is not None and target.isVisible():
                 target.setFocus()
         elif section == "events":

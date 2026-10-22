@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -34,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from src.kpi_studio import toolbox
 from src.kpi_studio.core.expr import ExprError, compile_expr
+from src.kpi_studio.core.kpi_expr import KpiExprError, kpi_expr_text, parse_kpi_expr
 from src.kpi_studio.gui.widgets.context_menu import plus_minus
 
 # outer padding of every page (left, top, right, bottom), macOS-style generous margins
@@ -225,8 +225,11 @@ class ExprEdit(QLineEdit):
                  extras_fn: Optional[Callable[[], dict]] = None,
                  build_fn: Optional[Callable[["ExprEdit"], None]] = None,
                  build_label: str = "Edit condition",
-                 units_fn: Optional[Callable[[], dict]] = None):
+                 units_fn: Optional[Callable[[], dict]] = None,
+                 kpi_fn: Optional[Callable[[], tuple]] = None):
         super().__init__(parent)
+        # a KPI expression (gap.change(braking).abs()): kpi_fn gives the event's (moments, ranges)
+        self.kpi_fn = kpi_fn
         self.build_fn = build_fn
         self.units_fn = units_fn  # signal -> Unit, so to_<unit>() calls are checked against it
         self.build_label = build_label
@@ -310,10 +313,14 @@ class ExprEdit(QLineEdit):
             self.error = None if self.allow_empty else "required"
         else:
             try:
-                compile_expr(text, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn(),
-                             units=self.units_fn() if self.units_fn else None)
+                if self.kpi_fn is not None:
+                    fields = parse_kpi_expr(text, *self.kpi_fn())
+                    text = fields.get("value") or fields.get("of")
+                if text:
+                    compile_expr(text, names=set(self.names_fn()) | {"time"}, enums=self.enums_fn(),
+                                 units=self.units_fn() if self.units_fn else None)
                 self.error = None
-            except ExprError as exc:
+            except (ExprError, KpiExprError) as exc:
                 self.error = str(exc)
         self.setStyleSheet(BAD_STYLE if self.error else OK_STYLE)
         self.setToolTip(self.error or "")
@@ -322,6 +329,30 @@ class ExprEdit(QLineEdit):
     def insert_text(self, snippet: str):
         self.insert(snippet)
         self.setFocus()
+
+    def dropEvent(self, e):
+        """On a KPI expression, a dropped operation (abs, to_kph...) takes the whole result and a
+        dropped reducer replaces the reducer (or reduces the signal over the event): gap.change(event).abs()."""
+        spec = dropped_tool(e.mimeData()) if self.kpi_fn is not None else None
+        text = self.text().strip()
+        if spec is None or not text or not (spec.kind == "reducer" or (spec.kind == "signal" and spec.pointwise)):
+            super().dropEvent(e)
+            return
+        e.acceptProposedAction()
+        try:
+            fields = parse_kpi_expr(text, *self.kpi_fn())
+        except KpiExprError:
+            fields = None
+        if spec.kind == "signal":
+            self.setText(f"{text}.{spec.name}()" if fields is not None else f"{spec.name}({text})")
+        elif fields is not None and fields.get("reduce") not in (None, "duration"):
+            self.setText(kpi_expr_text({**fields, "reduce": spec.name, "args": {}}))
+        else:
+            signal = fields.get("value") if fields else text
+            self.setText(kpi_expr_text({"reduce": spec.name, "of": signal, "over": "event",
+                                        "then": (fields or {}).get("then", [])}))
+        self.setFocus()
+        self.editingFinished.emit()
 
 
 def parse_options(text: str) -> dict:
@@ -387,99 +418,6 @@ def dropped_tool(md: QMimeData):
         return None
 
 
-class OpChain(QWidget):
-    """A KPI's moment or reducer (`head`) followed by operations on its result, applied in turn:
-    egoSpeed.change(braking).abs(). Drag a point-wise tool (abs, to_kph, ...) from the toolbox here,
-    or pick one from +, to add it; drag a reducer here to use that reducer; click a step to remove it."""
-
-    changed = Signal()
-    reducer_dropped = Signal(str)
-
-    def __init__(self, head: QWidget, accept_reducers: bool = False, parent=None):
-        super().__init__(parent)
-        self.head = head
-        self.accept_reducers = accept_reducers
-        self._ops: list[str] = []
-        self.setAcceptDrops(True)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
-        lay.addWidget(head, 1)
-        self.chips = QHBoxLayout()
-        self.chips.setSpacing(4)
-        lay.addLayout(self.chips)
-        self.add = QToolButton()
-        self.add.setText("+")
-        self.add.setToolTip("Add an operation on the result, e.g. abs: or drag one here from the toolbox")
-        self.add.setPopupMode(QToolButton.InstantPopup)
-        menu = QMenu(self.add)
-        for spec in toolbox.tools("signal"):
-            if spec.pointwise:
-                act = menu.addAction(f".{spec.name}()")
-                act.setToolTip(spec.summary)
-                act.triggered.connect(lambda _c=False, n=spec.name: self.append(n))
-        self.add.setMenu(menu)
-        lay.addWidget(self.add)
-
-    def ops(self) -> list[str]:
-        return list(self._ops)
-
-    def set_ops(self, ops: list[str]):
-        self._ops = list(ops)
-        self._rebuild()
-
-    def append(self, name: str):
-        self._ops.append(name)
-        self._rebuild()
-        self.changed.emit()
-
-    def remove(self, index: int):
-        del self._ops[index]
-        self._rebuild()
-        self.changed.emit()
-
-    def set_chain_visible(self, on: bool):
-        """Hide the operations (e.g. for a duration, which has none)."""
-        self.add.setVisible(on)
-        for i in range(self.chips.count()):
-            self.chips.itemAt(i).widget().setVisible(on)
-
-    def _rebuild(self):
-        while self.chips.count():
-            self.chips.takeAt(0).widget().deleteLater()
-        for i, name in enumerate(self._ops):
-            chip = QToolButton()
-            chip.setObjectName("opChip")
-            chip.setText(f".{name}()  ✕")
-            chip.setToolTip(f"Then {name}() of the result; click to remove it")
-            chip.clicked.connect(lambda _c=False, i=i: self.remove(i))
-            self.chips.addWidget(chip)
-
-    def _usable(self, spec) -> bool:
-        return spec is not None and ((spec.kind == "signal" and spec.pointwise)
-                                     or (spec.kind == "reducer" and self.accept_reducers))
-
-    def dragEnterEvent(self, e):
-        if self._usable(dropped_tool(e.mimeData())):
-            e.acceptProposedAction()
-        else:
-            e.ignore()
-
-    def dragMoveEvent(self, e):
-        self.dragEnterEvent(e)
-
-    def dropEvent(self, e):
-        spec = dropped_tool(e.mimeData())
-        if not self._usable(spec):
-            e.ignore()
-            return
-        e.acceptProposedAction()
-        if spec.kind == "reducer":
-            self.reducer_dropped.emit(spec.name)
-        else:
-            self.append(spec.name)
-
-
 class ToolPalette(QWidget):
     """Searchable toolbox browser. Double-click inserts a call into the last focused ExprEdit."""
 
@@ -502,7 +440,7 @@ class ToolPalette(QWidget):
         self.tree.setDragEnabled(True)
         self.tree.setDragDropMode(QTreeWidget.DragOnly)
         self.tree.setToolTip("Hover a tool to read what it does; double-click to insert it, or drag it into a "
-                             "field (abs, to_kph... onto a KPI's reducer or moment to apply them to the result)")
+                             "field (a reducer or abs, to_kph... onto a KPI's expression applies it to the result)")
         self.tree.setItemDelegate(HighlightDelegate(lambda: self.search.text(), self.tree))  # matches
         lay.addWidget(title)
         lay.addWidget(self.search)

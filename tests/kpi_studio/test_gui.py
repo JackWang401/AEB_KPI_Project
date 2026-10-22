@@ -66,8 +66,7 @@ def test_which_kpi_form(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
-    form.reducer.setCurrentIndex(form.reducer.findData("which"))
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
     assert form.range.currentText() == "event" and not form.expr.isVisibleTo(form)
     for label, cond in (("PB", "egoSpeed > 5"), ("FB", "longActAccel < -2")):
         form.which.add_row()
@@ -97,18 +96,16 @@ def test_kpis_over_named_ranges(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
-    assert "after_stop" in [form.range.itemText(i) for i in range(form.range.count())]
-    form.range.setCurrentText("after_stop")
-    form.reducer.setCurrentIndex(form.reducer.findData("all"))
-    form.expr.setText("egoSpeed < 1")
+    assert "after_stop" in form.moments_and_ranges()[1]
+    form.expr.setText("(egoSpeed < 1).all(after_stop)")
     form.expr.editingFinished.emit()
     k = window.state.data["kpis"][-1]
     assert k["reduce"] == "all" and k["of"] == "egoSpeed < 1" and k["over"] == "after_stop"
-    form.reducer.setCurrentIndex(form.reducer.findData("duration"))
+    form.expr.setText("duration(after_stop)")
+    form.expr.editingFinished.emit()
     k = window.state.data["kpis"][-1]
     assert k == {"name": k["name"], "event": "aeb", "reduce": "duration", "over": "after_stop"}
-    assert form.unit.text() == "s" and not form.expr.isVisibleTo(form)
+    assert form.unit.text() == "s"
     # renaming the range and its moment follows through to the KPI
     page.select_event("aeb")
     ef.ranges.item(r, 0).setText("stopped")
@@ -166,7 +163,7 @@ def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
     page.new_kpi()
     form = page.kpi_form
     form.event.setCurrentText("aeb")
-    form.expr.setText("egoSpeedKph")  # no unit in the test profile
+    form.expr.setText("egoSpeedKph.start()")  # no unit in the test profile
     form.expr.editingFinished.emit()
     assert not form.unit.isReadOnly() and form.unit.text() == ""
     form.unit.setText("km/h")
@@ -177,7 +174,7 @@ def test_unit_can_be_typed_when_the_signal_has_none(qtbot, window, mf4_dir):
     assert next(k.unit for k in window.state.compiled.kpis if k.defn.name == name) == "km/h"
     form.load(len(window.state.data["kpis"]) - 1)
     assert form.unit.text() == "km/h" and not form.unit.isReadOnly()
-    form.expr.setText("longActAccel")  # has a unit: shown, not typed
+    form.expr.setText("longActAccel.start()")  # has a unit: shown, not typed
     form.expr.editingFinished.emit()
     assert form.unit.isReadOnly() and form.unit.text() != "km/h"
 
@@ -910,10 +907,11 @@ def test_profile_check_click_goes_to_kpi_with_missing_moment(qtbot, window, mf4_
     assert not window.issues_dock.isHidden()  # pops up with the error
     assert all(window.issues.item(i).text().startswith("✖") for i in range(window.issues.count()))
     assert window.kpi_page.kpis.currentRow() == len(state.data["kpis"]) - 1
-    at = window.kpi_page.kpi_form.at
-    assert at.currentText() == "moment1" and "e34948" in at.styleSheet()  # missing moment shown in red
-    at.setCurrentText("braking")
-    assert state.data["kpis"][-1]["at"] == "braking" and at.styleSheet() == ""
+    expr = window.kpi_page.kpi_form.expr
+    assert expr.text() == "egoSpeed.moment1()" and expr.error  # not a moment of the event: shown in red
+    expr.setText("egoSpeed.braking()")
+    expr.editingFinished.emit()
+    assert state.data["kpis"][-1]["at"] == "braking" and not expr.error
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
     assert window.issues_dock.isHidden()  # fixed: Profile check goes away
@@ -2148,8 +2146,7 @@ def test_which_conditions_have_draggable_columns(qtbot, window, mf4_dir):
     page = window.kpi_page
     page.new_kpi()
     form = page.kpi_form
-    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("range"))
-    form.reducer.setCurrentIndex(form.reducer.findData("which"))
+    form.form.setCurrentIndex([f for f, _ in kpi_page.FORMS].index("which"))
     form.which.set_items({"PB": "egoSpeed > 5"})
     table = form.which.table
     assert [table.horizontalHeaderItem(c).text() for c in range(4)] == ["Label", "Signal", "Operator", "Value"]
@@ -2605,10 +2602,10 @@ def test_timeseries_columns_show_only_for_timeseries_plots(qtbot, window, mf4_di
     qtbot.waitUntil(lambda: not page.plots.isColumnHidden(5) and not page.plots.isColumnHidden(6))
 
 
-def test_operations_after_the_reducer(qtbot, window, mf4_dir):
+def test_kpi_written_as_one_expression(qtbot, window, mf4_dir):
     from PySide6.QtCore import QMimeData
 
-    from src.kpi_studio.gui.widgets.common import TOOL_MIME, dropped_tool
+    from src.kpi_studio.gui.widgets.common import TOOL_MIME
 
     _load(qtbot, window, mf4_dir)
     state = window.state
@@ -2618,28 +2615,32 @@ def test_operations_after_the_reducer(qtbot, window, mf4_dir):
     state.edited(structure=True)
     form = window.kpi_page.kpi_form
     form.load(len(state.data["kpis"]) - 1)
-    assert form.range_ops.ops() == ["abs"]
-    assert form.reads.text() == "egoSpeed.change(event).abs()"
-    md = QMimeData()
-    md.setData(TOOL_MIME, b"reducer:max")  # dropping a reducer replaces it
-    form.range_ops.dropEvent(_FakeDrop(md))
-    md = QMimeData()
-    md.setData(TOOL_MIME, b"signal:to_kph")  # dropping a point-wise tool takes the result as its input
-    form.range_ops.dropEvent(_FakeDrop(md))
-    md.setData(TOOL_MIME, b"signal:lowpass")  # a whole-signal tool is not taken
-    assert not form.range_ops._usable(dropped_tool(md))
+    assert form.expr.text() == "egoSpeed.change(event).abs()" and not form.expr.error
+    form.expr.setText("change(egoSpeed, event).abs()")  # the reducer as a function: same KPI
+    form.expr.editingFinished.emit()
     k = state.data["kpis"][-1]
-    assert k["reduce"] == "max" and k["then"] == ["abs", "to_kph"] and "absolute" not in k
-    assert form.reads.text() == "egoSpeed.max(event).abs().to_kph()"
+    assert (k["reduce"], k["of"], k["over"], k["then"]) == ("change", "egoSpeed", "event", ["abs"])
+    assert "absolute" not in k
+    md = QMimeData()
+    md.setData(TOOL_MIME, b"signal:to_kph")  # a dropped operation takes the whole result
+    form.expr.dropEvent(_FakeDrop(md))
+    assert form.expr.text() == "change(egoSpeed, event).abs().to_kph()"
+    md = QMimeData()
+    md.setData(TOOL_MIME, b"reducer:max")  # a dropped reducer replaces the reducer
+    form.expr.dropEvent(_FakeDrop(md))
+    assert form.expr.text() == "egoSpeed.max(event).abs().to_kph()"
+    k = state.data["kpis"][-1]
+    assert k["reduce"] == "max" and k["then"] == ["abs", "to_kph"]
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
     assert state.compiled.kpis[-1].unit == "km/h"
-    form.range_ops.remove(0)  # clicking a step removes it
-    assert state.data["kpis"][-1]["then"] == ["to_kph"]
-    form.form.setCurrentIndex(0)  # at a moment: egoSpeed.start()
-    assert form.reads.text() == "egoSpeed.start()" and "then" not in state.data["kpis"][-1]
-    form.at_ops.append("abs")
-    assert state.data["kpis"][-1]["then"] == ["abs"] and form.reads.text() == "egoSpeed.start().abs()"
+    form.expr.setText("egoSpeed.end()")  # a value at a moment
+    form.expr.editingFinished.emit()
+    k = state.data["kpis"][-1]
+    assert k["value"] == "egoSpeed" and k["at"] == "end" and "reduce" not in k and "then" not in k
+    form.expr.setText("egoSpeed.change(nowhere)")  # not valid: red, and the KPI keeps its last calculation
+    form.expr.editingFinished.emit()
+    assert "unknown range" in form.expr.error and state.data["kpis"][-1]["at"] == "end"
 
 
 class _FakeDrop:
