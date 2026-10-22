@@ -403,7 +403,6 @@ class SignalViewer(QWidget):
         self.pv_run.setObjectName("primary")
         self.pv_run.setToolTip("Evaluate the profile on every checked recording; the occurrence box then "
                                "steps through the event's occurrences in all of them")
-        pbar.addWidget(self.pv_run)
         self.pv_status = ElideLabel()  # long texts shorten with … instead of widening the window
         self.pv_status.setObjectName("hint")
         pbar.addWidget(self.pv_status, 2)
@@ -414,6 +413,7 @@ class SignalViewer(QWidget):
         self.cursor_info = QLabel()
         self.cursor_info.setObjectName("hint")
         pbar.addWidget(self.cursor_info)
+        pbar.addWidget(self.pv_run)  # at the right edge
         lay.addLayout(bar)
 
         split = QSplitter(Qt.Horizontal)
