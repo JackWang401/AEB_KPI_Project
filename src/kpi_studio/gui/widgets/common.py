@@ -272,12 +272,25 @@ class ExprEdit(QLineEdit):
         """In a KPI expression, typing @ lists the event's moments to pick from: gap @ veh_stopped."""
         pos = self.cursorPosition()
         if self.kpi_fn is not None and pos > 0 and text[pos - 1] == "@":
-            self.open_moments()
+            self.open_moments(pos)
 
-    def open_moments(self):
+    def open_moments(self, at: int):
+        """Pick a moment to write right after the @ at `at` (the signal before it stays)."""
         self.picker = NamePicker({"Moments": list(self.kpi_fn()[0])}, self)
-        self.picker.picked.connect(self.insert_name)
+        self.picker.picked.connect(lambda name: self.insert_after_at(at, name))
         self.picker.popup(self.mapToGlobal(self.cursorRect().bottomLeft()))
+
+    def insert_after_at(self, at: int, name: str):
+        text = self.text()
+        before, after = text[:at], text[at:]
+        before = before[:-1].rstrip() + " @"  # spaced: gap_dist @ veh_stopped
+        old = re.match(r"\s*[A-Za-z_]\w*", after)  # a moment already typed after the @ is swapped
+        if old:
+            after = after[old.end():]
+        self.setText(f"{before} {name}{after}")
+        self.setCursorPosition(len(before) + 1 + len(name))
+        self.setFocus()
+        self.editingFinished.emit()
 
     def open_picker(self):
         actions = {}

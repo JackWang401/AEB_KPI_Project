@@ -2654,6 +2654,13 @@ def test_typing_at_lists_the_moments(qtbot, window, mf4_dir):
     assert picker is not None and picker.isVisible()
     names = [picker.list.item(i).text().strip() for i in range(picker.list.count())]
     assert names[0] == "Moments" and "end" in names and "egoSpeed" not in names  # moments only
+    form.expr.setCursorPosition(0)  # wherever the cursor went meanwhile (e.g. back on the signal)
     picker.picked.emit("end")
-    assert form.expr.text() == "egoSpeed @ end" and not form.expr.error
+    assert form.expr.text() == "egoSpeed @ end" and not form.expr.error  # the signal stays
     picker.close()
+    form.expr.setText("egoSpeed@end.abs()")
+    form.expr.setCursorPosition(9)
+    form.expr._typed(form.expr.text())
+    form.expr.picker.picked.emit("start")  # a moment already after the @ is swapped
+    assert form.expr.text() == "egoSpeed @ start.abs()"
+    form.expr.picker.close()
