@@ -105,10 +105,10 @@ class AxesDialog(QDialog):
 
 
 class RunPage(QWidget):
-    PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour / group by", "Event (timeseries)",
+    PLOT_COLS = ["Type", "Title", "X (KPI)", "Y (KPI)", "Colour by 1", "Event (timeseries)",
                  "Signals (timeseries)", "Axis ranges", "Merge with row",
                  "Colour by 2", "Colour by 3", "Colour by 4", "Colour by 5"]
-    MORE_COLOUR = 9  # first extra colour-by column (logical index); shown right after "Colour / group by"
+    MORE_COLOUR = 9  # first extra colour-by column (logical index); shown right after "Colour by 1"
     MAX_COLOUR = 5
 
     def __init__(self, state: AppState, settings: QSettings, parent=None):

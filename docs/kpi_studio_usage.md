@@ -64,7 +64,7 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    The ▾ list of every condition field (start, end, moments) starts with the same
    *Edit condition*, so one method serves all three. *Run preview* evaluates the profile on every checked file and draws the
    window and moments; *occurrence* (n / total) steps through the event's occurrences in all files. *Save KPI to library* shares a KPI between profiles.
-4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. A scatter plot's *Colour / group by*
+4. **Plots & Run** – choose the plots, *Check files*, then *RUN*. A scatter plot's *Colour by 1*
    can also be a KPI: a numeric KPI colours the points on a light-to-dark scale, a text KPI (e.g.
    `PB + FB`) gives one colour per text. *Colour-by columns* (1 to 5, default 1) adds more
    colour columns: the points then get one colour per combination, e.g. `FB · aeb_fail: true`
