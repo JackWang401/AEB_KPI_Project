@@ -2639,3 +2639,21 @@ def test_hovering_a_long_expression_shows_all_of_it(qtbot, window, mf4_dir):
     form.expr.setText("egoSpeed @ end")
     tip = form.expr.hover_tip()
     assert "egoSpeed @ end" not in tip and "Write the KPI as" in tip  # fits: just the help
+
+
+def test_typing_at_lists_the_moments(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    page = window.kpi_page
+    page.new_kpi()
+    form = page.kpi_form
+    form.event.setCurrentText("aeb")
+    form.expr.setText("")
+    form.expr.setFocus()
+    qtbot.keyClicks(form.expr, "egoSpeed @")
+    picker = form.expr.picker
+    assert picker is not None and picker.isVisible()
+    names = [picker.list.item(i).text().strip() for i in range(picker.list.count())]
+    assert names[0] == "Moments" and "end" in names and "egoSpeed" not in names  # moments only
+    picker.picked.emit("end")
+    assert form.expr.text() == "egoSpeed @ end" and not form.expr.error
+    picker.close()

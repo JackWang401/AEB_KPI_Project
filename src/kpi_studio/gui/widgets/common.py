@@ -242,6 +242,7 @@ class ExprEdit(QLineEdit):
         self.error: Optional[str] = None
         self.setPlaceholderText(placeholder)
         self.textChanged.connect(self.check)
+        self.textEdited.connect(self._typed)
         self.pick_action = QAction(_arrow_icon(), "Pick a signal", self)
         self.pick_action.setToolTip("Pick a signal to insert")
         self.pick_action.triggered.connect(self.open_picker)
@@ -266,6 +267,17 @@ class ExprEdit(QLineEdit):
         before = [n for at, n in sorted(found, reverse=True) if at < pos]
         after = [n for at, n in found if at >= pos]
         return list(dict.fromkeys(before + after))
+
+    def _typed(self, text: str):
+        """In a KPI expression, typing @ lists the event's moments to pick from: gap @ veh_stopped."""
+        pos = self.cursorPosition()
+        if self.kpi_fn is not None and pos > 0 and text[pos - 1] == "@":
+            self.open_moments()
+
+    def open_moments(self):
+        self.picker = NamePicker({"Moments": list(self.kpi_fn()[0])}, self)
+        self.picker.picked.connect(self.insert_name)
+        self.picker.popup(self.mapToGlobal(self.cursorRect().bottomLeft()))
 
     def open_picker(self):
         actions = {}
