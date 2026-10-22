@@ -4,7 +4,7 @@
     egoSpeed @ veh_stopped              (egoSpeed @ veh_stopped).to_kph()    duration(braking)
 
 A reducer takes the signal expression and one range of the event (plus options as keywords:
-max(x, braking, k=2)); `x @ moment` is x's value at a moment (x.moment() and moment(x) read the same). Point-wise operations (abs, sign,
+max(x, braking, k=2)); `x @ moment` is x's value at a moment. Point-wise operations (abs, sign,
 sqrt, to_<unit>) can follow, each taking the result so far. Two more shapes:
 
     which(braking, PB=pb_state == 1, FB=fb_state == 1)     the labels of the conditions met: "PB + FB"
@@ -191,8 +191,6 @@ def _core(node, moments: set, ranges: list):
         if options:
             fields["args"] = options
         return fields
-    if name in moments:
-        if signal is None or rest or node.keywords:
-            raise KpiExprError(f"a moment takes only the signal: x @ {name}")
-        return {"value": ast.unparse(signal), "at": name}
+    if name in moments:  # a moment is not a method: x @ moment
+        raise KpiExprError(f"'{name}' is a moment, not a method: write {ast.unparse(signal) if signal else 'x'} @ {name}")
     return None
