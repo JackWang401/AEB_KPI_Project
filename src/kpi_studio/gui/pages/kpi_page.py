@@ -794,14 +794,17 @@ class KpiForm(QWidget):
             self.reducer.addItem(name, name)
         for key, label in SPECIAL_REDUCERS:
             self.reducer.addItem(label, key)
-        self.absolute = QCheckBox("absolute value")
+        self.absolute = QCheckBox("abs")  # in front of the reducer: reads abs(change(x))
         self.absolute.setToolTip("Take abs() of the reduced result, e.g. abs(change(gap_dist)). "
                                  "abs() in the Expression instead acts on every sample before reducing.")
+        self.reduced = QLabel()  # the whole calculation, e.g. abs(change(gap_dist))
+        self.reduced.setObjectName("hint")
         reducer_row = QWidget()
         rl = QHBoxLayout(reducer_row)
         rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(self.reducer, 1)
         rl.addWidget(self.absolute)
+        rl.addWidget(self.reducer, 1)
+        rl.addWidget(self.reduced)
         self.args = QLineEdit()
         self.args.setPlaceholderText("reducer options, if any")
         self.which = WhichTable(self.state, self.save)
@@ -839,6 +842,8 @@ class KpiForm(QWidget):
             w.editingFinished.connect(self.save)
         self.highlight.toggled.connect(lambda *_: self.save())
         self.absolute.toggled.connect(lambda *_: self.save())
+        self.absolute.toggled.connect(lambda *_: self.show_reduced())
+        self.expr.textChanged.connect(lambda *_: self.show_reduced())
         self.expr.focused.connect(page.set_target)
         self._show_form("value")  # until a KPI is loaded: no hidden form's rows widen the panel
 
@@ -923,6 +928,13 @@ class KpiForm(QWidget):
             lab.setVisible(label in visible)
             w.setVisible(label in visible)
         self.absolute.setVisible(reducer not in ("which", "duration"))
+        self.reduced.setVisible(reducer not in ("which", "duration"))
+        self.show_reduced()
+
+    def show_reduced(self):
+        """Spell out the calculation next to the reducer, e.g. = abs(change(gap_dist))."""
+        call = f"{self.reducer.currentData()}({self.expr.text().strip() or '…'})"
+        self.reduced.setText("= " + (f"abs({call})" if self.absolute.isChecked() else call))
 
     def form_changed(self):
         form = self.form.currentData()

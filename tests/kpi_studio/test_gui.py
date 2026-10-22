@@ -2617,6 +2617,7 @@ def test_absolute_value_of_a_reduced_kpi(qtbot, window, mf4_dir):
     assert form.absolute.isVisibleTo(form) and not form.absolute.isChecked()
     form.absolute.setChecked(True)
     assert state.data["kpis"][-1]["absolute"] is True
+    assert form.reduced.text() == "= abs(change(egoSpeed))"  # abs reads in front of the reducer
     state.validate_now()
     assert state.compiled is not None, [str(i) for i in state.issues]
     form.reducer.setCurrentIndex(form.reducer.findData("duration"))
