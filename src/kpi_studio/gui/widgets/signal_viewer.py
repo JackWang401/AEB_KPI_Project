@@ -362,7 +362,6 @@ class SignalViewer(QWidget):
         self.axis_range: dict[str, tuple] = {}  # common axis -> fixed (min, max) of its value axis
         self._loading_axes = False  # taking the axes from the profile: do not write them back yet
         self._pending_shown = None  # ticked signals from an opened profile, until the list holds them
-        self._shown_base: set | None = None  # ticked when the event was picked (not saved for it unless changed)
         self._ax_groups: dict = {}           # axes -> signal names drawn there
         self._enum_axes: set = set()
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
@@ -616,8 +615,6 @@ class SignalViewer(QWidget):
         shown, home = self.checked(), self._shown_home()
         if set(shown) == set(home.get("shown_signals") or []):
             return
-        if "shown_signals" not in home and set(shown) == self._shown_base:
-            return  # an event without its own set, just picked: keeps the signals on screen until changed
         if shown:
             home["shown_signals"] = shown
         else:
@@ -701,9 +698,7 @@ class SignalViewer(QWidget):
         """Take the common axes and ticked signals from the profile (opened, new, or renamed signals)."""
         home = self._shown_home()
         shown = [n for n in home.get("shown_signals") or [] if isinstance(n, str)]
-        if "shown_signals" not in home and home is not self.state.data:
-            self._shown_base = set(self.checked())  # an event without its own set: keep what is ticked
-        elif set(shown) != set(self.checked()):
+        if set(shown) != set(self.checked()):
             self._pending_shown = shown
             self._apply_shown()
         saved = self.state.data.get("common_axes") or []
@@ -1237,11 +1232,8 @@ class SignalViewer(QWidget):
             self.pv_event.setCurrentText(name)
 
     def _event_changed(self):
-        home = self._shown_home()  # each event has its own ticked signals
-        saved = [n for n in home.get("shown_signals") or [] if isinstance(n, str)]
-        if "shown_signals" in home:
-            self.set_checked(saved, only=True)
-        self._shown_base = set(self.checked())
+        home = self._shown_home()  # each event has its own ticked signals (none until some are ticked)
+        self.set_checked([n for n in home.get("shown_signals") or [] if isinstance(n, str)], only=True)
         self._update_occ_range()
         self.goto_occurrence()
 

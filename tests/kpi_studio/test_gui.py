@@ -2703,8 +2703,8 @@ def test_each_event_keeps_its_own_ticked_signals(qtbot, window, mf4_dir):
     viewer.plot_signals(["egoSpeed", "yawRate"])
     qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
     assert set(state.data["events"]["aeb"]["shown_signals"]) == {"egoSpeed", "yawRate"}
-    viewer.set_event("lsaeb")  # no set of its own yet: what is on screen stays, and is not saved for it
-    assert set(viewer.checked()) == {"egoSpeed", "yawRate"} and "shown_signals" not in state.data["events"]["lsaeb"]
+    viewer.set_event("lsaeb")  # no set of its own yet: nothing ticked
+    assert viewer.checked() == [] and "shown_signals" not in state.data["events"]["lsaeb"]
     viewer.set_checked(["egoSpeedKph"], only=True)
     viewer.draw()
     assert state.data["events"]["lsaeb"]["shown_signals"] == ["egoSpeedKph"]
