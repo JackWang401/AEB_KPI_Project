@@ -94,3 +94,21 @@ def test_derived_with_unit_and_description(tmp_path):
     assert signal_units(resolved) == {"speed": "m/s", "plain": "", "speedKph": "km/h"}
     assert derived_to_yaml(resolved.derived["plain"]) == "speed * 2"  # short form kept
     assert derived_to_yaml(resolved.derived["speedKph"])["unit"] == "km/h"
+
+
+def test_saved_profile_is_tidy_and_loads_the_same(tmp_path):
+    import yaml
+
+    from src.kpi_studio.core.model import Profile
+    from src.kpi_studio.io import profile_store
+
+    path = profile_store.builtin_profile_dir() / "aeb_example.kpi.yaml"
+    model = Profile.model_validate(profile_store.inline_libraries(yaml.safe_load(path.read_text()), path.parent))
+    text = profile_store.to_yaml(model)
+    again = Profile.model_validate(yaml.safe_load(text))
+    assert again.model_dump() == model.model_dump()  # defaults left out, nothing lost
+    lines = text.splitlines()
+    assert lines[:2] == ["schema_version: 1", f"name: {model.name}"]
+    assert "highlight: false" not in text and "start_rule: first" not in text and "required: true" not in text
+    assert "" in lines and not any(len(line) > 100 and "\n" in line for line in lines)
+    assert all(not line.startswith((" ", "-")) or line.strip() for line in lines)  # blank lines are empty

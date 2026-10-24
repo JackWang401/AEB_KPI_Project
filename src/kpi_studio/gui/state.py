@@ -107,7 +107,7 @@ class AppState(QObject):
         if path is None:
             raise ValueError("no file name")
         text = "# Draft: this profile still has errors; KPI Studio shows them in Profile check.\n" + \
-            yaml.safe_dump(self.clean_data(), sort_keys=False, allow_unicode=True)
+            profile_store.profile_text(self.clean_data())
         profile_store.atomic_write_text(path, text)
         self.path = path
         self._set_dirty(False)

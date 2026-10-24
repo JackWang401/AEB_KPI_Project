@@ -267,7 +267,94 @@ def load_compiled(path_or_profile: Union[PathLike, Profile], base_dir: Optional[
 
 def to_yaml(model: Union[Profile, Library]) -> str:
     data = model.model_dump(by_alias=True, exclude_none=True, exclude_defaults=False)
-    return yaml.safe_dump(_strip_empty(data), sort_keys=False, allow_unicode=True, width=110)
+    return profile_text(data)
+
+
+# the order a saved profile lists its parts in; the viewer's settings last
+_TOP_ORDER = ["schema_version", "name", "description", "timebase", "imports", "signals", "derived", "events", "kpis",
+              "plots", "common_axes", "shown_signals"]
+_KPI_FIRST, _KPI_LAST = ["name", "use", "as", "event"], ["unit", "highlight", "description"]
+_KEEP = {"schema_version", "name", "timebase", "signals"}  # written even when they hold the defaults
+
+
+def _drop_defaults(d: dict, cls) -> dict:
+    """`d` without the fields left at the model's default (they load the same)."""
+    defaults = {}
+    for name, f in cls.model_fields.items():
+        if not f.is_required():
+            default = f.get_default(call_default_factory=True)
+            defaults[f.alias or name] = default.model_dump() if hasattr(default, "model_dump") else default
+    return {k: v for k, v in d.items() if not (k in defaults and v == defaults[k] and v is not None)}
+
+
+def tidy_profile(data: dict) -> dict:
+    """The profile as it is saved: sections in a fixed order, values left at their defaults left out, whole
+    numbers in enums without .0, and a KPI's calculation before its unit and description."""
+    from src.kpi_studio.core.model import DerivedDef, EventDef, KpiDef, PlotDef, SignalDef, Window
+
+    data = _strip_empty(copy.deepcopy(data))
+    for name, sig in (data.get("signals") or {}).items():
+        if isinstance(sig, dict):
+            sig = _drop_defaults(sig, SignalDef)
+            if isinstance(sig.get("enum"), dict):
+                sig["enum"] = {k: int(v) if isinstance(v, float) and v.is_integer() else v
+                               for k, v in sig["enum"].items()}
+            data["signals"][name] = sig
+    for name, d in (data.get("derived") or {}).items():
+        if isinstance(d, dict):
+            data["derived"][name] = _drop_defaults(d, DerivedDef)
+    for name, ev in (data.get("events") or {}).items():
+        if isinstance(ev, dict):
+            if isinstance(ev.get("window"), dict):
+                ev["window"] = _drop_defaults(ev["window"], Window)
+            data["events"][name] = _drop_defaults(_strip_empty(ev), EventDef)
+    kpis = []
+    for k in data.get("kpis") or []:
+        if isinstance(k, dict):
+            k = _drop_defaults(k, KpiDef)
+            mid = [key for key in k if key not in _KPI_FIRST + _KPI_LAST]
+            k = {key: k[key] for key in _KPI_FIRST + mid + _KPI_LAST if key in k}
+        kpis.append(k)
+    if "kpis" in data:
+        data["kpis"] = kpis
+    if data.get("plots"):
+        data["plots"] = [_drop_defaults(p, PlotDef) if isinstance(p, dict) else p for p in data["plots"]]
+    data.setdefault("schema_version", SCHEMA_VERSION)
+    order = [k for k in _TOP_ORDER if k in data] + [k for k in data if k not in _TOP_ORDER]
+    return {k: data[k] for k in order if data[k] not in ({}, [], "", None) or k in _KEEP}
+
+
+_HEAD = {"schema_version", "name", "description", "timebase"}  # kept together at the top
+
+
+class _ProfileDumper(yaml.SafeDumper):
+    """Short lists of names or numbers on one line: ranges [from, to], then: [abs], range: [-16, 5]."""
+
+    def represent_list(self, data):
+        flow = all(isinstance(v, (int, float, bool)) or isinstance(v, str) and ":" not in v for v in data) \
+            and sum(len(str(v)) + 2 for v in data) < 90  # (channel names keep their own lines)
+        return self.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=flow)
+
+
+_ProfileDumper.add_representer(list, _ProfileDumper.represent_list)
+
+
+def profile_text(data: dict) -> str:
+    """YAML of the tidied profile: one line per expression, a blank line between sections and entries."""
+    tidy = tidy_profile(data)
+    text = yaml.dump(tidy, Dumper=_ProfileDumper, sort_keys=False, allow_unicode=True, width=100000)
+    out, section = [], None
+    for line in text.splitlines():
+        top = line[:1] not in (" ", "-", "#", "") and line.split(":", 1)[0] not in _HEAD
+        if top:
+            section = line.split(":", 1)[0]
+        entry = (line.startswith("- ") and section in ("kpis", "plots")) or \
+            (section in ("signals", "derived", "events") and line.startswith("  ") and line[2:3] not in (" ", "-"))
+        if out and (top or entry) and not out[-1].endswith(":"):
+            out.append("")
+        out.append(line)
+    spaced = "\n".join(out) + "\n"
+    return spaced if yaml.safe_load(spaced) == tidy else text  # (the blank lines never change a value)
 
 
 def _strip_empty(obj):
