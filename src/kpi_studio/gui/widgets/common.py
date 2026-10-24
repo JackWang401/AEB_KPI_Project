@@ -799,10 +799,11 @@ class ConditionBuilder(QDialog):
     can be built too."""
 
     OPS = ["==", "!=", ">", ">=", "<", "<=", "in", "changes to", "changes from", "changes from → to"]
-    HINTS = {"in": "list, e.g. 1, 2", "changes to": "value, e.g. 3", "changes from": "value, e.g. 3",
+    HINTS = {"in": "list, e.g. 1, 2", "changes to": "value(s), e.g. 3 or 2, 3", "changes from": "value(s), e.g. 3 or 2, 3",
              "changes from → to": "from, to   e.g. 0, 3"}
 
-    MULTI = ("in", "changes from → to")  # operators that take several values
+    # operators that take several values; 'changes from 2, 3' = leaves the set {2, 3} (2 -> 3 does not count)
+    MULTI = ("in", "changes to", "changes from", "changes from → to")
     JOINS = ["and", "or", "xor"]
     changed = Signal()
     OPENS = ["", "(", "((", "not", "not (", "not (("]
@@ -823,7 +824,8 @@ class ConditionBuilder(QDialog):
         lay = QVBoxLayout(self)
         info = QLabel("Each row is  signal  operator  value.  For 'in' give a list, e.g. 1, 2 or FULL, PARTIAL. "
                       "'changes to / from' are true only at the sample where the signal switches to or away "
-                      "from the value; 'changes from → to' takes two values, e.g. 0, 3.\n"
+                      "from the value; with several values, e.g. 2, 3, when it enters or leaves that set (2 → 3 "
+                      "does not count); 'changes from → to' takes two values, e.g. 0, 3.\n"
                       "Join each row to the one above with and / or / xor (exactly one of the two is true), and "
                       "group rows with the brackets before and after them (or negate them with not), e.g. "
                       "(a and b) or not (c). Without brackets, xor is applied first, then and, then or.\n"

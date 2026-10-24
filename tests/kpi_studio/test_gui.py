@@ -507,6 +507,12 @@ def test_condition_builder_value_changes_and_moment(qtbot, window, mf4_dir):
     assert rx("sig", "changes to", "3") == "rising(sig == 3)"
     assert rx("sig", "changes from", "FULL") == "falling(sig == FULL)"
     assert rx("sig", "changes to", "1, 2") == "rising(sig in (1, 2))"
+    # leaving a set of states: ACT -> HOLD does not count, ACT or HOLD -> anything else does
+    assert rx("sig", "changes from", "ACT, HOLD") == "falling(sig in (ACT, HOLD))"
+    from src.kpi_studio.gui.widgets.common import parse_condition_rows
+    rows = parse_condition_rows("falling(sig in (ACT, HOLD))")
+    assert len(rows) == 1 and rows[0]["op"] == "changes from" and rows[0]["val"] == "ACT, HOLD"
+    assert "changes from" in ConditionBuilder.MULTI
     assert rx("sig", "changes from → to", "0 -> 3") == "(falling(sig == 0) and rising(sig == 3))"
     assert rx("sig", "changes from → to", "0") == ""
     dlg = ConditionBuilder(["sig", "other"])
@@ -1696,10 +1702,14 @@ def test_condition_builder_lists_an_enum_signals_values(qtbot):
     sig.setCurrentText("fb_state")
     assert val.pick_action.isVisible()
     assert dlg.values_of("fb_state") == ["STATE_UNSPECIFIED", "STATE_READY", '"on hold"']  # in value order
-    op.setCurrentText("changes to")
+    op.setCurrentText("==")
     dlg.pick_value(val, op.currentText(), "STATE_READY")
     dlg.pick_value(val, op.currentText(), "STATE_UNSPECIFIED")  # one value: replaced
     assert val.text() == "STATE_UNSPECIFIED"
+    op.setCurrentText("changes from")  # leaving any of several states: picks add up
+    dlg.pick_value(val, op.currentText(), "STATE_READY")
+    assert val.text() == "STATE_UNSPECIFIED, STATE_READY"
+    val.setText("STATE_UNSPECIFIED")
     op.setCurrentText("in")
     dlg.pick_value(val, op.currentText(), '"on hold"')  # a list: added
     assert val.text() == 'STATE_UNSPECIFIED, "on hold"'
