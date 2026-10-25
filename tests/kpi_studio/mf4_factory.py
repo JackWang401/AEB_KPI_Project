@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import zlib
 from pathlib import Path
 
 import numpy as np
 
 
 def aeb_recording(path, *, speed_kph=40.0, aeb_at=(5.0,), decel=-8.0, duration=20.0, rate=100.0,
-                  speed_unit="m/s", with_gap=True, response_delay=0.15):
+                  speed_unit="m/s", with_gap=True, response_delay=0.15, start=None):
     """Ego drives at constant speed; at each `aeb_at` time a PB/FB request brakes it to a stop."""
     from asammdf import MDF, Signal
 
@@ -43,6 +45,9 @@ def aeb_recording(path, *, speed_kph=40.0, aeb_at=(5.0,), decel=-8.0, duration=2
         tg = t[::5]
         m.append([Signal(gap[::5], tg, name="aeb_state_info/aeb_full_state_info/longitudinal_clearance", unit="m")],
                  acq_name="aebStateInfo")
+    # a start of its own (from the name) per file: separate drives, unless a test sets `start`
+    m.header.start_time = start or (_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc)
+                                    + _dt.timedelta(hours=zlib.crc32(Path(path).name.encode()) % 10000))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     m.save(str(path), overwrite=True)
     m.close()

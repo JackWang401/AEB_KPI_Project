@@ -361,29 +361,61 @@ def recording_key(path: str | Path) -> str:
 
 
 def group_recordings(files: list, indexes: Optional[dict] = None, combine: bool = True,
-                     offsets: Optional[dict] = None, together: Optional[list] = None) -> list[Recording]:
+                     offsets: Optional[dict] = None) -> list[Recording]:
     """Group files into recordings: same folder and same name before the logger part
     (``AADT-150453_002_ABD_Robot__…`` + ``AADT-150453_002_MOTION_1__…``). Files whose
-    measurement start differs by more than MAX_START_GAP_S are kept apart.
-    `offsets` (file -> seconds) are manual time shifts carried by the recordings.
-    `together`: lists of files the user chose to read as one recording whatever their names (e.g. a
-    ground-truth logger next to the vehicle's); they are lined up by their measurement start like any
-    combined files."""
-    files = [str(f) for f in files]
-    out: list[Recording] = []
-    taken: set[str] = set()
-    for group in together or []:
-        members = [f for f in dict.fromkeys(str(g) for g in group) if f in files and f not in taken]
-        if len(members) > 1:
-            out.append(Recording(str(Path(members[0]).with_suffix("")) + f" + {len(members) - 1}", members))
-            taken |= set(members)
-    out += _group([f for f in files if f not in taken], indexes, combine)
-    order = {f: i for i, f in enumerate(files)}
-    out.sort(key=lambda r: min(order[f] for f in r.files))
+    measurement start differs by more than MAX_START_GAP_S are kept apart. Files recorded at the
+    same time (their time spans overlap, e.g. a ground-truth logger next to the vehicle's) are read
+    together too, whatever their names.
+    `offsets` (file -> seconds) are manual time shifts carried by the recordings."""
+    out = _group(files, indexes, combine)
+    if combine:
+        out = _merge_overlapping(out, indexes or {}, [str(f) for f in files])
     if offsets:
         for r in out:
             r.offsets = {f: float(offsets[f]) for f in r.files if offsets.get(f)}
     return out
+
+
+def _span(rec: Recording, indexes: dict) -> Optional[tuple[float, float]]:
+    """The recording's time span [s since the epoch], or None when a file's start or length is unknown."""
+    spans = []
+    for f in rec.files:
+        idx = indexes.get(f)
+        if idx is None or not idx.ok or idx.abs_start is None or idx.start is None or idx.end is None:
+            return None
+        spans.append((idx.abs_start + idx.start, idx.abs_start + idx.end))
+    return min(a for a, _ in spans), max(b for _, b in spans)
+
+
+def _merge_overlapping(recs: list[Recording], indexes: dict, files: list[str]) -> list[Recording]:
+    """Join recordings whose time spans overlap: they were recorded at the same time."""
+    spans = [_span(r, indexes) for r in recs]
+    parent = list(range(len(recs)))
+
+    def root(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+
+    for i in range(len(recs)):
+        for j in range(i + 1, len(recs)):
+            a, b = spans[i], spans[j]
+            if a and b and a[0] < b[1] and b[0] < a[1]:
+                parent[root(j)] = root(i)
+    groups: dict[int, list[Recording]] = {}
+    for i, r in enumerate(recs):
+        groups.setdefault(root(i), []).append(r)
+    order = {f: i for i, f in enumerate(files)}
+    out = []
+    for g in groups.values():
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        members = sorted((f for r in g for f in r.files), key=lambda f: order.get(f, 0))
+        first = min(g, key=lambda r: min(order.get(f, 0) for f in r.files))
+        out.append(Recording(str(Path(first.name).with_suffix("")) + f" + {len(g) - 1}", members))
+    return sorted(out, key=lambda r: min(order.get(f, 0) for f in r.files))
 
 
 def _group(files: list, indexes: Optional[dict], combine: bool) -> list[Recording]:

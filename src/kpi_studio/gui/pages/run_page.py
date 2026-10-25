@@ -526,7 +526,7 @@ class RunPage(QWidget):
                                 self.workers.value(), base_dir=self.state.base_dir,
                                 indexes=dict(self.state.indexes),
                                 offsets=dict(self.state.offsets), versions=dict(self.state.versions),
-                                together=[list(g) for g in self.state.together], parent=self)
+                                parent=self)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.finished_ok.connect(self.on_done)

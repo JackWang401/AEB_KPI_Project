@@ -2741,27 +2741,3 @@ def test_each_event_keeps_its_own_ticked_signals(qtbot, window, mf4_dir):
     assert viewer.checked() == ["egoSpeedKph"]
     state.validate_now()
     assert not [i for i in state.issues if "shown_signals" in str(i)]
-
-
-def test_files_read_together_as_one_recording(qtbot, window, mf4_dir):
-    from src.kpi_studio.gui.widgets.context_menu import menu_for
-
-    _load(qtbot, window, mf4_dir)
-    state, table = window.state, window.files_page.table
-    assert len(state.recordings()) == 2  # a.mf4 and b.mf4: different names, read apart
-    table.selectAll()
-    menu = menu_for(table, table.visualRect(table.model().index(0, 0)).center())
-    assert "Read together as one recording" in _texts(menu) and "Read separately again" not in _texts(menu)
-    next(a for a in menu.actions() if a.text() == "Read together as one recording").trigger()
-    recs = state.recordings()
-    assert len(recs) == 1 and len(recs[0].files) == 2
-    assert table.item(0, 1).text() == table.item(1, 1).text() == "a + 1"  # the Recording column
-    menu = menu_for(table, table.visualRect(table.model().index(0, 0)).center())
-    next(a for a in menu.actions() if a.text() == "Read separately again").trigger()
-    assert len(state.recordings()) == 2
-    # a signal the ticked recording lacks is named, not silently left out
-    viewer = window.viewer
-    viewer.select_recordings([state.recordings()[1].name])
-    viewer.plot_signals(["egoSpeed", "longGap"])  # b.mf4 has no gap signal
-    qtbot.waitUntil(lambda: bool(viewer.worker is None and viewer._axes), timeout=20000)
-    assert "longGap" in viewer.status.text() and "Read together" in viewer.status.text()
