@@ -48,6 +48,7 @@ class AppState(QObject):
         self.indexes: dict[str, RecordingIndex] = {}
         self.load_error: Optional[str] = None  # set when an unfinished (draft) profile was opened
         self.offsets: dict[str, float] = {}  # file -> manual time shift [s] (viewer and KPI run; not saved)
+        self.together: list[list[str]] = []  # files the user reads as one recording (Files: right-click)
         self.versions: dict[str, str] = {}  # file -> software version, written next to its results
         self.issues: list[Issue] = []
         self.compiled: Optional[CompiledProfile] = None
@@ -324,6 +325,7 @@ class AppState(QObject):
         self.files = list(dict.fromkeys(files))
         self.indexes = {f: i for f, i in self.indexes.items() if f in self.files}
         self.offsets = {f: v for f, v in self.offsets.items() if f in self.files}
+        self.together = [g for g in ([f for f in g if f in self.files] for g in self.together) if len(g) > 1]
         self.unchecked &= set(self.files)
         self.files_changed.emit()
 
@@ -348,7 +350,23 @@ class AppState(QObject):
 
     def recordings(self) -> list[Recording]:
         """What gets processed: the files grouped into recordings (files of one recording are always combined)."""
-        return group_recordings(self.checked_files, self.indexes, offsets=self.offsets)
+        return group_recordings(self.checked_files, self.indexes, offsets=self.offsets, together=self.together)
+
+    def read_together(self, files: list[str]):
+        """Read `files` as one recording from now on (lined up by their measurement start)."""
+        files = [f for f in dict.fromkeys(files) if f in self.files]
+        if len(files) < 2:
+            return
+        self.together = [g for g in ([f for f in g if f not in files] for g in self.together) if len(g) > 1]
+        self.together.append(files)
+        self.files_changed.emit()
+
+    def read_apart(self, files: list[str]):
+        """Undo read_together for `files`: each goes back to its automatic recording."""
+        before = [list(g) for g in self.together]
+        self.together = [g for g in ([f for f in g if f not in files] for g in self.together) if len(g) > 1]
+        if self.together != before:
+            self.files_changed.emit()
 
     def set_offsets(self, changes: dict[str, float]):
         """Set the manual time shift [s] of files (0 removes it); positive moves a file later."""

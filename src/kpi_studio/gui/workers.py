@@ -86,7 +86,7 @@ class RunWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, profile, files: list[str], output_root, workers: int, base_dir=None,
-                 indexes=None, offsets=None, versions=None, parent=None):
+                 indexes=None, offsets=None, versions=None, together=None, parent=None):
         super().__init__(parent)
         self.profile = profile
         self.files = files
@@ -96,6 +96,7 @@ class RunWorker(QThread):
         self.indexes = indexes or {}
         self.offsets = dict(offsets or {})
         self.versions = dict(versions or {})
+        self.together = [list(g) for g in (together or [])]
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -109,7 +110,7 @@ class RunWorker(QThread):
             svc = RunService(self.profile, self.files, self.output_root, workers=self.workers,
                              progress=lambda *a: self.progress.emit(*a), cancel=self.cancel_event,
                              base_dir=self.base_dir,
-                             offsets=self.offsets, versions=self.versions)
+                             offsets=self.offsets, versions=self.versions, together=self.together)
             svc.indexes.update(self.indexes)
             result = svc.run()
             for o in result.outcomes:

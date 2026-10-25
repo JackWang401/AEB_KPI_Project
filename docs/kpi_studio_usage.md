@@ -12,6 +12,9 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
 ```
 
 1. **Files** – add two or more MF4 files (or a folder, or drag and drop).
+   Files of one recording (same name before the logger part) are read together. To read other files
+   together, e.g. a ground-truth logger with the vehicle's file, select them, right-click and choose
+   *Read together as one recording* (lined up by their measurement start; *Read separately again* undoes it).
    When files are not time-synced, double-click a file's *Offset [s]* cell and
    enter a shift (positive moves it later). The offset is used by the
    viewer, the event preview and the KPI run; it is not saved with the profile.

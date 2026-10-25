@@ -40,7 +40,8 @@ class FilesPage(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
         intro = QLabel("Check the files to analyse. Right-click to add or remove files; drag and drop works too. "
-                       "Files of the same recording (one per logger) are read together.")
+                       "Files of the same recording (one per logger) are read together; to read others "
+                       "together (e.g. a ground-truth file), select them and right-click.")
         intro.setWordWrap(True)
         intro.setObjectName("hint")
         lay.addWidget(intro)
@@ -82,9 +83,12 @@ class FilesPage(QWidget):
                  ("Uncheck all files", lambda: self.check_all(False)),
                  ("Remove all files", lambda: self.state.set_files([]))],
             item=lambda rows: [("Check selected", lambda: self.check_selected(True)),
-                               ("Uncheck selected", lambda: self.check_selected(False)),
-                               ("Remove file" if len(rows) == 1 else f"Remove {len(rows)} files",
-                                self.remove_selected)])
+                               ("Uncheck selected", lambda: self.check_selected(False))]
+            + ([("Read together as one recording", self.read_together)] if len(rows) > 1 else [])
+            + ([("Read separately again", self.read_apart)]
+               if any(self.state.files[r] in g for r in rows if r < len(self.state.files)
+                      for g in self.state.together) else [])
+            + [("Remove file" if len(rows) == 1 else f"Remove {len(rows)} files", self.remove_selected)])
         self.table.itemChanged.connect(self._item_changed)
         state.files_changed.connect(self.refresh)
         self.refresh()
@@ -120,6 +124,17 @@ class FilesPage(QWidget):
     def check_selected(self, checked: bool):
         rows = {i.row() for i in self.table.selectedIndexes()}
         self.state.set_checked([f for i, f in enumerate(self.state.files) if i in rows], checked)
+
+    def _selected_files(self) -> list[str]:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        return [self.state.files[r] for r in rows if r < len(self.state.files)]
+
+    def read_together(self):
+        """Files from different loggers whose names don't match (e.g. ground truth + vehicle): one recording."""
+        self.state.read_together(self._selected_files())
+
+    def read_apart(self):
+        self.state.read_apart(self._selected_files())
 
     def check_all(self, checked: bool):
         self.state.set_checked(self.state.files, checked)

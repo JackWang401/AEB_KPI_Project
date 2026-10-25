@@ -361,12 +361,25 @@ def recording_key(path: str | Path) -> str:
 
 
 def group_recordings(files: list, indexes: Optional[dict] = None, combine: bool = True,
-                     offsets: Optional[dict] = None) -> list[Recording]:
+                     offsets: Optional[dict] = None, together: Optional[list] = None) -> list[Recording]:
     """Group files into recordings: same folder and same name before the logger part
     (``AADT-150453_002_ABD_Robot__…`` + ``AADT-150453_002_MOTION_1__…``). Files whose
     measurement start differs by more than MAX_START_GAP_S are kept apart.
-    `offsets` (file -> seconds) are manual time shifts carried by the recordings."""
-    out = _group(files, indexes, combine)
+    `offsets` (file -> seconds) are manual time shifts carried by the recordings.
+    `together`: lists of files the user chose to read as one recording whatever their names (e.g. a
+    ground-truth logger next to the vehicle's); they are lined up by their measurement start like any
+    combined files."""
+    files = [str(f) for f in files]
+    out: list[Recording] = []
+    taken: set[str] = set()
+    for group in together or []:
+        members = [f for f in dict.fromkeys(str(g) for g in group) if f in files and f not in taken]
+        if len(members) > 1:
+            out.append(Recording(str(Path(members[0]).with_suffix("")) + f" + {len(members) - 1}", members))
+            taken |= set(members)
+    out += _group([f for f in files if f not in taken], indexes, combine)
+    order = {f: i for i, f in enumerate(files)}
+    out.sort(key=lambda r: min(order[f] for f in r.files))
     if offsets:
         for r in out:
             r.offsets = {f: float(offsets[f]) for f in r.files if offsets.get(f)}

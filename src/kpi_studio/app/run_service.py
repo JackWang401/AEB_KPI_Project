@@ -74,12 +74,12 @@ class PreflightReport:
 
 
 def preflight(cp: CompiledProfile, files: list[str], indexes: Optional[dict] = None,
-              combine: bool = True) -> PreflightReport:
+              combine: bool = True, together: Optional[list] = None) -> PreflightReport:
     indexes = dict(indexes or {})
     for f in files:
         if f not in indexes:
             indexes[f] = index_file(f)
-    recordings = group_recordings(files, indexes, combine)
+    recordings = group_recordings(files, indexes, combine, together=together)
     report = PreflightReport(files=[r.name for r in recordings], indexes=indexes, coverage=[], recordings=recordings)
     report.warnings.extend(str(w) for w in cp.warnings)
     defs = cp.profile.signals
@@ -189,7 +189,8 @@ class RunService:
     def __init__(self, profile: Union[str, Path, Profile], files: list, output_root: Union[str, Path, None],
                  *, workers: int = 1, progress: Optional[ProgressFn] = None,
                  cancel: Optional[threading.Event] = None, base_dir: Optional[Path] = None,
-                 combine: bool = True, offsets: Optional[dict] = None, versions: Optional[dict] = None):
+                 combine: bool = True, offsets: Optional[dict] = None, versions: Optional[dict] = None,
+                 together: Optional[list] = None):
         self.profile_src = profile
         if isinstance(profile, (str, Path)):
             base_dir = base_dir or Path(profile).parent
@@ -203,6 +204,7 @@ class RunService:
         self.combine = combine
         self.offsets = {str(Path(f)): float(v) for f, v in (offsets or {}).items() if v}  # file -> time shift [s]
         self.versions = {str(Path(f)): str(v).strip() for f, v in (versions or {}).items() if str(v).strip()}
+        self.together = [[str(Path(f)) for f in g] for g in (together or [])]  # files read as one recording
         self.recordings: list[Recording] = []
 
     def preflight(self) -> PreflightReport:
@@ -211,7 +213,7 @@ class RunService:
             self.progress("index", i - 1, total, f"Reading header of {Path(f).name}")
             self.indexes[f] = index_file(f)
         self.progress("index", total, total, "Headers read")
-        report = preflight(self.cp, self.files, self.indexes, self.combine)
+        report = preflight(self.cp, self.files, self.indexes, self.combine, self.together)
         self.recordings = report.recordings
         self._attach_offsets()
         return report
@@ -222,7 +224,7 @@ class RunService:
 
     def _process_all(self) -> list[FileOutcome]:
         if not self.recordings:
-            self.recordings = group_recordings(self.files, self.indexes, self.combine)
+            self.recordings = group_recordings(self.files, self.indexes, self.combine, together=self.together)
             self._attach_offsets()
         recs = self.recordings
         total = len(recs)

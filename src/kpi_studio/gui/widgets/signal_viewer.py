@@ -1127,6 +1127,11 @@ class SignalViewer(QWidget):
             self._message("Tick signals on the left to plot them")
             return
         available = [n for n in names if any(n in d["values"] for _, d in loaded)]
+        absent = [n for n in names if n not in available]
+        # a ticked signal no ticked recording has would just be missing from the plot: say so
+        self.status.setText(f"Not in the ticked recording(s): {', '.join(absent)}. To plot it with signals of "
+                            "another file, select both files in Files, right-click > Read together as one "
+                            "recording." if absent else "")
         groups = self._groups(available)
         shown = groups
         if not shown:

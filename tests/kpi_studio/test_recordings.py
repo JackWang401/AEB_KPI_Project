@@ -134,3 +134,16 @@ def test_text_enum_channel_reads_raw_values_and_labels(tmp_path):
     v = frame.values["srvAvl"]
     assert not np.isnan(v).any() and set(np.unique(v)) == {1.0, 3.0}
     assert not [i for i in align_issues if i.severity == "warning"]
+
+
+def test_files_chosen_to_be_read_together_make_one_recording():
+    from src.kpi_studio.io.mf4 import group_recordings
+
+    files = ["/d/AADT-1_002_MOTION_1__20260826T151158.mf4", "/d/AADT-1_002_ABD_Robot__20260826T151159.mf4",
+             "/d/dw_vehicle_roadcast.mf4", "/d/other.mf4"]
+    auto = group_recordings(files)
+    assert [len(r.files) for r in auto] == [2, 1, 1]
+    recs = group_recordings(files, together=[[files[2], files[0]]], offsets={files[0]: 1.5})
+    assert [r.files for r in recs] == [[files[2], files[0]], [files[1]], [files[3]]]
+    assert recs[0].name.endswith("dw_vehicle_roadcast + 1") and recs[0].offsets == {files[0]: 1.5}
+    assert group_recordings(files, together=[[files[3]]]) == auto  # one file alone changes nothing
