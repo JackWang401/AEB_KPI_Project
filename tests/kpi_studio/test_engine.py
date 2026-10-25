@@ -395,3 +395,24 @@ def test_then_needs_a_value_or_reducer():
     with pytest.raises(Exception) as exc:
         compile_profile(prof)
     assert "works on a whole signal" in str(exc.value) and "no unit to convert from" in str(exc.value)
+
+
+def test_an_unused_unfinished_event_does_not_block_the_run():
+    from src.kpi_studio.core.validate import ProfileError, compile_profile
+    from src.kpi_studio.io.profile_store import parse_profile
+
+    data = {"name": "p", "signals": {"v": {"channels": ["v"]}},
+            "events": {"go": {"start": "v > 1"}, "fcw": {"window": {"pre": 2.0}},
+                       "bad": {"start": "nope > 1"}},
+            "kpis": [{"name": "k", "event": "go", "value": "v", "at": "start"}]}
+    cp = compile_profile(parse_profile(data))
+    assert list(cp.events) == ["go"]  # fcw (no trigger) and bad (unknown signal) are left out
+    warned = {i.where: i.message for i in cp.warnings}
+    assert "no trigger yet" in warned["events.fcw"] and "left out of the run" in warned["events.fcw"]
+    assert "left out of the run" in warned["events.bad.start"]
+    data["kpis"].append({"name": "k2", "event": "fcw", "value": "v", "at": "start"})  # now it is used
+    try:
+        compile_profile(parse_profile(data))
+        raise AssertionError("expected an error")
+    except ProfileError as exc:
+        assert any(i.where == "events.fcw" and i.severity == "error" for i in exc.issues)

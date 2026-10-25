@@ -325,6 +325,8 @@ def test_user_tools_button_loads_folder(window, tmp_path, monkeypatch):
 def test_signal_viewer_works_while_an_event_is_incomplete(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     window.state.data["events"]["unfinished"] = {"window": {"pre": 1, "post": 1}}  # no start yet
+    window.state.data["kpis"].append({"name": "on_unfinished", "event": "unfinished", "value": "egoSpeed",
+                                      "at": "start"})  # used, so its error blocks the run
     window.state.edited(structure=True)
     window.state.validate_now()
     assert window.state.compiled is None
@@ -392,7 +394,10 @@ def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
 def test_new_signals_reach_tab3_while_an_event_is_unfinished(qtbot, window, mf4_dir):
     _load(qtbot, window, mf4_dir)
     page = window.kpi_page
-    page.new_event()  # no trigger yet -> profile has an error
+    page.new_event()  # no trigger yet, and a KPI uses it -> the profile has an error
+    new = list(window.state.data["events"])[-1]
+    window.state.data["kpis"].append({"name": "on_new", "event": new, "value": "egoSpeed", "at": "start"})
+    window.state.edited(structure=True)
     window.state.validate_now()
     assert window.state.compiled is None
     window.state.data["signals"]["myNewSignal"] = {"channels": ["speedESC"]}

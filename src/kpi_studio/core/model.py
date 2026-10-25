@@ -212,8 +212,7 @@ class EventDef(_Strict):
 
     @model_validator(mode="after")
     def _start_or_preset(self):
-        if not self.start and not self.preset:
-            raise ValueError("no trigger yet: fill in 'Start when' (a condition) or choose a preset")
+        # no trigger at all is checked when compiling: an event no KPI or plot uses may stay unfinished
         if self.start and self.preset:
             raise ValueError("an event needs exactly one of 'start' (a condition) or 'preset'")
         if self.preset and self.end:

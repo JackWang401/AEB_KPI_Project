@@ -262,6 +262,8 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
     for ename, edef in profile.events.items():
         ce = CompiledEvent(name=ename, defn=edef)
         where = f"events.{ename}"
+        if not edef.start and not edef.preset:
+            err(where, "no trigger yet: fill in 'Start when' (a condition) or choose a preset")
         if edef.start:
             ce.start = cexpr(f"{where}.start", edef.start)
         if edef.end:
@@ -489,6 +491,16 @@ def compile_profile(profile: Profile, enum_tables: Optional[Mapping[str, Mapping
             warn(f"signals.{name}", "defined but not used")
     if not profile.events:
         warn("events", "no events defined; nothing will be extracted")
+
+    # an event no KPI or plot uses cannot spoil the run: its errors become warnings and it is left out
+    in_use = {k.event for k in profile.kpis if k.event} | {p.event for p in profile.plots if p.event}
+    for i, issue in enumerate(issues):
+        ename = next((e for e in profile.events if issue.where == f"events.{e}" or
+                      issue.where.startswith(f"events.{e}.")), None)
+        if issue.severity == "error" and ename is not None and ename not in in_use:
+            issues[i] = Issue("warning", issue.where, f"{issue.message} (no KPI or plot uses event "
+                                                      f"'{ename}', so it is left out of the run)")
+            events.pop(ename, None)
 
     if any(i.severity == "error" for i in issues):
         raise ProfileError(issues)

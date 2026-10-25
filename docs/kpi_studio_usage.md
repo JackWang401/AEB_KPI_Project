@@ -43,7 +43,8 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    event preset, and its domain-specific tools such as `vehicle_stop` or `ttc`, still run), its moments (e.g. `first`, `argmin`,
    `crossing`), its *Ranges* (named spans from one moment to another, e.g. `braking`: `aeb_braking` to
    `veh_stopped`; `event` = start to end and `window` = window_start to window_end are built in), then
-   KPIs (the KPI list shows the selected event's KPIs; a new KPI belongs to that event). A KPI is one *Expression*, signal first: `<signal>.<reducer>(<range>)` or `<signal> @ <moment>`,
+   KPIs (the KPI list shows the selected event's KPIs; a new KPI belongs to that event; an event no KPI or plot
+   uses may stay unfinished: its problems show as warnings and it is left out of the run). A KPI is one *Expression*, signal first: `<signal>.<reducer>(<range>)` or `<signal> @ <moment>`,
    e.g. `gap_dist.change(braking).abs()`, `change(gap_dist, braking).abs()` (the same),
    `gap_dist @ veh_stopped` (its value at that moment; `(gap_dist @ veh_stopped).to_cm()`), `ego_speed_kph.distance(braking)` (in m, converted
    from the speed's own unit), `(fb_state == 1).any(event)`, `duration(braking)`. A reducer takes the signal
