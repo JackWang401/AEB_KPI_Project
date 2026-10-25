@@ -367,6 +367,8 @@ class SignalViewer(QWidget):
         self._legend: dict = {}              # axes -> [(label, color, linestyle, unit)] for the side list
         self.preview: dict | None = None      # {"rec": name, "outcome": FileOutcome}: the recording shown
         self.previews: dict = {}              # recording -> FileOutcome of the last Run preview (all recordings)
+        self._pv_frames: dict = {}            # recording -> (frame read, its read issues and channels)
+        self._pv_key = None                   # the profile parts the preview was evaluated with
         self._pv_queue: list = []             # recordings still to preview
         self.preview_worker = None
 
@@ -482,6 +484,7 @@ class SignalViewer(QWidget):
         state.validated.connect(self.refresh_names)
         state.validated.connect(self._drop_stale_cache)
         state.validated.connect(self.refresh_events)
+        state.validated.connect(self._reevaluate_preview)
         state.profile_changed.connect(self._clear_preview)
         state.profile_changed.connect(self.load_axes)
         self.pv_run.clicked.connect(self.run_preview)
@@ -1244,6 +1247,7 @@ class SignalViewer(QWidget):
     def _clear_preview(self):
         self.preview = None
         self.previews = {}
+        self._pv_frames = {}
         self.pv_status.setText("")
         self._update_occ_range()
         self.draw()
@@ -1317,7 +1321,8 @@ class SignalViewer(QWidget):
         first = self.current_file()  # the recording shown is previewed first
         if first is not None:
             recs = [r for r in recs if r.name == first.name] + [r for r in recs if r.name != first.name]
-        self.preview, self.previews = None, {}
+        self.preview, self.previews, self._pv_frames = None, {}, {}
+        self._pv_key = self._profile_key()
         self.pv_status.setText("")
         self._pv_queue = list(recs)
         self._pv_total = len(recs)
@@ -1350,6 +1355,8 @@ class SignalViewer(QWidget):
             self.pv_status.setText("Time offset changed while running: press Run preview again")
             return
         out = data["outcome"]
+        if data.get("frame") is not None:
+            self._pv_frames[rec.name] = (data["frame"], *data.get("read", ([], [])))
         old = self.cache.get(rec.name, {})
         self.cache[rec.name] = {
             "file": rec.name, "time": data["time"],
@@ -1381,6 +1388,50 @@ class SignalViewer(QWidget):
         self.pv_occ.blockSignals(False)
         issues = [i.message for i in out.issues if i.severity != "info"]
         self._issues_tip = "\n".join(issues)
+        self.draw()
+
+    def _profile_key(self):
+        """What the preview's numbers depend on: (signal definitions, events + derived + KPIs)."""
+        cp = self.state.compiled
+        if cp is None:
+            return None
+        d = cp.profile.model_dump(mode="json")
+        return repr(d.get("signals")) + repr(d.get("timebase")), repr([d.get(k) for k in ("derived", "events",
+                                                                                           "kpis")])
+
+    def _reevaluate_preview(self):
+        """After an edit, the preview's moments and KPIs follow at once: they are worked out again from the
+        signals already read (an edit of the signals themselves needs Run preview, which reads the files)."""
+        key = self._profile_key()
+        if not self.previews or key is None or self._pv_key is None or key == self._pv_key \
+                or self.preview_worker is not None:
+            return
+        if key[0] != self._pv_key[0] or set(self._pv_frames) != set(self.previews):
+            self.pv_status.setText("The signals changed: press Run preview to update the moments and KPIs")
+            return
+        cp, out = self.state.compiled, {}
+        try:
+            for name, (frame, issues, channels) in self._pv_frames.items():
+                outcome = FileOutcome(file=name)
+                outcome.issues.extend(issues)
+                outcome.channels.extend(channels)
+                ev = FileEvaluator(cp, frame, name)
+                ev.run(outcome)
+                out[name] = outcome
+                if name in self.cache:
+                    self.cache[name] = {**self.cache[name], "time": ev.time,
+                                        "values": {k: v for k, v in ev.env.values.items() if k != "time"},
+                                        "units": signal_units(cp.profile)}
+        except Exception as exc:  # noqa: BLE001
+            self.pv_status.setText(f"Preview not updated ({type(exc).__name__}: {exc}): press Run preview")
+            return
+        self._pv_key = key
+        self.previews = out
+        if self.preview is not None and self.preview["rec"] in out:
+            self.preview = {"rec": self.preview["rec"], "outcome": out[self.preview["rec"]]}
+            self.data = self.cache.get(self.preview["rec"], self.data)
+        self.pv_status.setText("")
+        self._update_occ_range()
         self.draw()
 
     def _decorate_preview(self, axes, loaded):

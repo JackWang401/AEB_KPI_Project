@@ -61,7 +61,8 @@ class PreviewWorker(QThread):
             outcome.channels.extend(uses)
             ev = FileEvaluator(self.cp, frame, outcome.file)
             ev.run(outcome)
-            self.done.emit({"outcome": outcome, "time": ev.time, "values": dict(ev.env.values)})
+            self.done.emit({"outcome": outcome, "time": ev.time, "values": dict(ev.env.values), "frame": frame,
+                            "read": (list(outcome.issues), list(outcome.channels))})
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 

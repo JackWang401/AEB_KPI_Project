@@ -2741,3 +2741,28 @@ def test_each_event_keeps_its_own_ticked_signals(qtbot, window, mf4_dir):
     assert viewer.checked() == ["egoSpeedKph"]
     state.validate_now()
     assert not [i for i in state.issues if "shown_signals" in str(i)]
+
+
+def test_preview_kpis_follow_an_edit_without_running_again(qtbot, window, mf4_dir):
+    _load(qtbot, window, mf4_dir)
+    state, viewer = window.state, window.viewer
+    state.data["kpis"].append({"name": "neg_speed", "event": "aeb", "value": "0 - egoSpeed", "at": "start"})
+    state.edited(structure=True)
+    state.validate_now()
+    viewer.set_event("aeb")
+    viewer.run_preview()
+    qtbot.waitUntil(lambda: bool(len(viewer.previews) == 2 and viewer.preview_worker is None
+                                 and viewer.worker is None), timeout=30000)
+
+    def values():
+        return [r.value for out in viewer.previews.values() for r in out.results if r.kpi == "neg_speed"]
+
+    assert values() and all(v < 0 for v in values())
+    state.data["kpis"][-1]["then"] = ["abs"]  # typed .abs() in the expression
+    state.edited()
+    state.validate_now()
+    assert values() and all(v > 0 for v in values())  # no Run preview needed
+    state.data["signals"]["egoSpeed"]["channels"] = ["speedESC", "other"]  # the signals changed
+    state.edited()
+    state.validate_now()
+    assert "Run preview" in viewer.pv_status.text()
