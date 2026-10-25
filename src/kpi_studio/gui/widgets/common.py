@@ -915,6 +915,10 @@ class ConditionBuilder(QDialog):
         val.setMinimumWidth(120)
         row = QHBoxLayout()
         for w in (join, opening, sig, op, val, closing):
+            # right-click anywhere on the row: Delete row / Add row (text boxes keep Copy, Paste, …)
+            target = w.lineEdit() if isinstance(w, QComboBox) and w.isEditable() else w
+            target.setContextMenuPolicy(Qt.CustomContextMenu)
+            target.customContextMenuRequested.connect(lambda p, t=target, cell=w: self._row_menu(t, cell, p))
             row.addWidget(w, 1 if w is val else 0)
             if hasattr(w, "currentTextChanged"):
                 w.currentTextChanged.connect(self.update_preview)
@@ -985,6 +989,18 @@ class ConditionBuilder(QDialog):
 
     def contextMenuEvent(self, e):
         self.menu_at(e.pos()).exec(e.globalPos())
+
+    def _row_menu(self, target, cell, pos):
+        """The right-click menu of a row's box: Delete row / Add row, after a text box's own entries."""
+        i = next((k for k, (r, ln) in enumerate(zip(self.rows, self.links)) if cell in r + ln), -1)
+        menu = target.createStandardContextMenu() if isinstance(target, QLineEdit) else QMenu(self)
+        if menu.actions():
+            menu.addSeparator()
+        if i >= 0:
+            menu.addAction("Delete row").triggered.connect(lambda: self.delete_row(i))
+        menu.addAction("Add row").triggered.connect(self.add_row)
+        self._last_menu = menu  # kept alive while it is open (and for tests)
+        menu.popup(target.mapToGlobal(pos))
 
     @staticmethod
     def _is(s: str, v: str) -> str:

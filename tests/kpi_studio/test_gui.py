@@ -1110,6 +1110,18 @@ def test_enum_and_condition_dialogs_right_click(qtbot):
     assert _texts(menu) == ["Delete row", "", "Add row"]
     menu.actions()[0].trigger()
     assert len(cb.rows) == 1
+    # right-click on a row's own boxes (operator list, value text, signal text) works there too
+    cb.add_row()
+    sig, op, val = cb.rows[1]
+    val.customContextMenuRequested.emit(QPoint(2, 2))
+    texts = _texts(cb._last_menu)
+    assert texts[-2:] == ["Delete row", "Add row"] and any("Paste" in t for t in texts)
+    sig.lineEdit().customContextMenuRequested.emit(QPoint(2, 2))
+    assert _texts(cb._last_menu)[-2:] == ["Delete row", "Add row"]
+    op.customContextMenuRequested.emit(QPoint(2, 2))
+    assert _texts(cb._last_menu) == ["Delete row", "Add row"]
+    cb._last_menu.actions()[0].trigger()
+    assert len(cb.rows) == 1
 
 
 def test_moment_right_click_menus(qtbot, window, mf4_dir, monkeypatch):
