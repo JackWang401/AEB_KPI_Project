@@ -160,6 +160,9 @@ class SignalList(QListWidget):
             it.setSelected(True)
         self.blockSignals(False)
         self.reordered.emit()
+# cursor A and B: cyan and deep magenta, apart from every series colour and from each other, also for colour-blind eyes
+CURSOR_COLORS = {"A": "#06b6d4", "B": "#a21caf"}
+CURSOR_INK = {"A": "#08313a", "B": "#ffffff"}  # text on the cursor's tag
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 KINDS = ["continuous", "discrete", "boolean", "enum"]
 KIND_TIPS = {
@@ -1827,14 +1830,15 @@ class SignalViewer(QWidget):
             for ax, lines in self.readouts().items():
                 for t, style, name in ((a, "-", "A"), (b, "--", "B")):
                     if t is not None:
-                        self._artists.append(ax.axvline(t, color="#1f1f1e", lw=0.9, ls=style, zorder=5))
-                        if ax is self._axes[0]:  # the cursor's name at the top, beside its line (outer side)
+                        color = CURSOR_COLORS[name]
+                        self._artists.append(ax.axvline(t, color=color, lw=1.3, ls=style, zorder=5))
+                        if ax is self._axes[0]:  # the cursor's name in a tag at the top, beside its line (outer side)
                             left = (name == "A") == (b is None or a is None or a <= b)
                             self._artists.append(ax.annotate(
-                                name, (t, 1), xycoords=ax.get_xaxis_transform(), xytext=(-3 if left else 3, -3),
-                                textcoords="offset points", fontsize=8, fontweight="semibold", color="#1f1f1e",
+                                name, (t, 1), xycoords=ax.get_xaxis_transform(), xytext=(-4 if left else 4, -4),
+                                textcoords="offset points", fontsize=8, fontweight="bold", color=CURSOR_INK[name],
                                 va="top", ha="right" if left else "left", zorder=6,
-                                bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none", alpha=0.8)))
+                                bbox=dict(boxstyle="round,pad=0.25,rounding_size=0.3", fc=color, ec="none")))
             self._draw_side_lists()
         info = []
         if a is not None:
@@ -1899,8 +1903,8 @@ class SignalViewer(QWidget):
                 if cols:  # the A / B / Δ header right above the values
                     for k, h in enumerate(cols):
                         self._artists.append(ax.text(1, 1, h, transform=at(0.28 + k * col_w, row), fontsize=7,
-                                                     va="top", ha="left", family="monospace", color="#6b6b66",
-                                                     clip_on=False))
+                                                     va="top", ha="left", family="monospace", fontweight="bold",
+                                                     color=CURSOR_COLORS.get(h, "#6b6b66"), clip_on=False))
                     row += 0.9
                     for k, v in enumerate(vals):
                         self._artists.append(ax.text(1, 1, v, transform=at(0.28 + k * col_w, row), fontsize=8,

@@ -476,6 +476,8 @@ def test_viewer_time_offset_shifts_one_recording(qtbot, window, mf4_dir):
 def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     from types import SimpleNamespace
 
+    from src.kpi_studio.gui.widgets import signal_viewer as sv
+
     import numpy as np
 
     _load(qtbot, window, mf4_dir)
@@ -498,6 +500,7 @@ def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     assert shown[:2] == ["A", "B"]  # the cursors' names beside their lines
     i = shown.index("Δ")
     assert shown[i - 2:i + 1] == ["A", "B", "Δ"]  # the header right above the values
+    assert [ln.get_color() for ln in ax.get_lines()[1:]] == [sv.CURSOR_COLORS["A"], sv.CURSOR_COLORS["B"]]
     assert f"{y[10]:.4g}" in shown and f"{y[50]:.4g}" in shown
     assert len(ax.get_lines()) == 3  # signal + two cursor lines
     # cursors survive a redraw, and right-click clears them
