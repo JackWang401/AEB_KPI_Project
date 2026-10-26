@@ -1288,13 +1288,25 @@ class SignalViewer(QWidget):
         self.pv_occ.setMaximum(max(n, 1))
         self.pv_occ.setSuffix(f" / {n}" if n else "")
         self.pv_occ.blockSignals(False)
+        self._show_source(None if n else False)
+
+    def _show_source(self, hit):
+        """Next to the occurrence box: where the shown occurrence comes from, or that the previewed
+        recordings have none of the chosen event (hit False)."""
+        ev = self.current_event()
+        if hit is False and self.previews and ev is not None:
+            self.pv_source.setText(f"No {ev} events found")
+            self.pv_source.setStyleSheet("color: #b45309;")
+            return
+        self.pv_source.setStyleSheet("")
+        self.pv_source.setText(f"{Path(hit[0]).name} #{hit[1].index}" if hit else "")
 
     def current_occurrence(self):
         """(recording, occurrence) chosen in the occurrence box, or None."""
         occs = self.all_occurrences()
         k = self.pv_occ.value() - 1
         hit = occs[k] if 0 <= k < len(occs) else None
-        self.pv_source.setText(f"{Path(hit[0]).name} #{hit[1].index}" if hit is not None else "")
+        self._show_source(hit if occs else False)
         return hit
 
     def goto_occurrence(self):

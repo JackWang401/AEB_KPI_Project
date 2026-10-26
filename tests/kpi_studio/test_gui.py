@@ -373,6 +373,9 @@ def test_preview_shows_whole_file_when_event_never_fires(qtbot, window, mf4_dir)
     qtbot.waitUntil(lambda: bool(viewer.preview is not None and viewer.preview_worker is None
                                  and viewer.worker is None), timeout=20000)
     assert viewer.fig.axes and "Whole file" in viewer.fig.axes[0].get_title()
+    assert viewer.pv_source.text() == "No never events found"  # said next to the occurrence box
+    viewer.set_event("aeb")
+    assert viewer.pv_source.text() != "No never events found"
 
 
 def test_files_of_one_recording_are_combined(qtbot, window, tmp_path):
