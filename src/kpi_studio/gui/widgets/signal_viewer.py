@@ -1860,27 +1860,36 @@ class SignalViewer(QWidget):
                 return base + ScaledTranslation(dx_in, -rows * line_h - 2 / 72, self.fig.dpi_scale_trans)
 
             names = self._names.get(ax, [])
-            for i, ((label, t, y, enum), (_, color, ls, unit)) in enumerate(
-                    zip(self._series.get(ax, []), self._legend.get(ax, []))):
+            series = list(zip(self._series.get(ax, []), self._legend.get(ax, [])))
+            # the cursor values of every signal, laid out in A / B / Δ columns under one header row
+            cols = [h for h, on in (("A", a is not None), ("B", b is not None), ("Δ", a is not None and b is not None))
+                    if on]
+            cells = []
+            for (label, t, y, enum), _ in series:
+                va, vb = self.value_at(t, y, a), self.value_at(t, y, b)
+                row_cells = {"A": _fmt(va, enum), "B": _fmt(vb, enum)}
+                row_cells["Δ"] = _fmt(vb - va) if va is not None and vb is not None and not enum else ""
+                cells.append([row_cells[h] for h in cols])
+            width = max([len(c) for r in cells for c in r] + [6]) + 2
+            col_w = width * 8 * 0.6 / 72  # monospace 8 pt is about 0.6 em per character
+            if cols and series:
+                for k, h in enumerate(cols):
+                    self._artists.append(ax.text(1, 1, h, transform=at(0.28 + k * col_w, row), fontsize=8, va="top",
+                                                 ha="left", family="monospace", color="#6b6b66",
+                                                 fontweight="semibold", clip_on=False))
+                row += 1.2
+            for i, (((label, t, y, enum), (_, color, ls, unit)), vals) in enumerate(zip(series, cells)):
                 self._artists.append(ax.text(1, 1, "━━" if ls == "-" else "╍╍", transform=at(0.06, row),
                                              fontsize=8, va="top", ha="left", color=color, clip_on=False))
                 self._artists.append(ax.text(1, 1, label + (f" [{pretty_unit(unit)}]" if unit else ""), transform=at(0.28, row),
                                              fontsize=8, va="top", ha="left", color="#1f1f1e", clip_on=False,
                                              fontweight="semibold"))
                 row += 1
-                values = []
-                if a is not None:
-                    values.append(f"A {_fmt(self.value_at(t, y, a), enum)}")
-                if b is not None:
-                    vb = self.value_at(t, y, b)
-                    values.append(f"B {_fmt(vb, enum)}")
-                    va = self.value_at(t, y, a) if a is not None else None
-                    if va is not None and vb is not None and not enum:
-                        values.append(f"Δ {_fmt(vb - va)}")
-                if values:
-                    self._artists.append(ax.text(1, 1, "   ".join(values), transform=at(0.28, row), fontsize=8,
-                                                 va="top", ha="left", family="monospace", color=color,
-                                                 clip_on=False))
+                if cols:
+                    for k, v in enumerate(vals):
+                        self._artists.append(ax.text(1, 1, v, transform=at(0.28 + k * col_w, row), fontsize=8,
+                                                     va="top", ha="left", family="monospace", color=color,
+                                                     clip_on=False))
                     row += 1
                 if i < len(names):
                     kpi_rows(names[i], color)  # the preview KPIs that read this signal

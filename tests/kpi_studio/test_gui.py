@@ -494,6 +494,9 @@ def test_viewer_cursors_read_signal_values(qtbot, window, mf4_dir):
     text = viewer.readouts()[ax][0]
     assert f"A {y[10]:.4g}" in text and f"B {y[50]:.4g}" in text and "Δ" in text
     assert "Δt" in viewer.cursor_info.text()
+    shown = [t.get_text() for t in ax.texts]
+    assert shown[:3] == ["A", "B", "Δ"]  # one header row, values in columns under it
+    assert f"{y[10]:.4g}" in shown and f"{y[50]:.4g}" in shown
     assert len(ax.get_lines()) == 3  # signal + two cursor lines
     # cursors survive a redraw, and right-click clears them
     viewer.draw()
