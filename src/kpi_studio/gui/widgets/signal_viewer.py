@@ -1825,9 +1825,16 @@ class SignalViewer(QWidget):
         a, b = self.cursors
         if self._axes:
             for ax, lines in self.readouts().items():
-                for t, style in ((a, "-"), (b, "--")):
+                for t, style, name in ((a, "-", "A"), (b, "--", "B")):
                     if t is not None:
                         self._artists.append(ax.axvline(t, color="#1f1f1e", lw=0.9, ls=style, zorder=5))
+                        if ax is self._axes[0]:  # the cursor's name at the top, beside its line (outer side)
+                            left = (name == "A") == (b is None or a is None or a <= b)
+                            self._artists.append(ax.annotate(
+                                name, (t, 1), xycoords=ax.get_xaxis_transform(), xytext=(-3 if left else 3, -3),
+                                textcoords="offset points", fontsize=8, fontweight="semibold", color="#1f1f1e",
+                                va="top", ha="right" if left else "left", zorder=6,
+                                bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none", alpha=0.8)))
             self._draw_side_lists()
         info = []
         if a is not None:
@@ -1882,12 +1889,6 @@ class SignalViewer(QWidget):
                 cells.append([row_cells[h] for h in cols])
             width = max([len(c) for r in cells for c in r] + [6]) + 2
             col_w = width * 8 * 0.6 / 72  # monospace 8 pt is about 0.6 em per character
-            if cols and series:
-                for k, h in enumerate(cols):
-                    self._artists.append(ax.text(1, 1, h, transform=at(0.28 + k * col_w, row), fontsize=8, va="top",
-                                                 ha="left", family="monospace", color="#6b6b66",
-                                                 fontweight="semibold", clip_on=False))
-                row += 1.2
             for i, (((label, t, y, enum), (_, color, ls, unit)), vals) in enumerate(zip(series, cells)):
                 self._artists.append(ax.text(1, 1, "━━" if ls == "-" else "╍╍", transform=at(0.06, row),
                                              fontsize=8, va="top", ha="left", color=color, clip_on=False))
@@ -1895,7 +1896,12 @@ class SignalViewer(QWidget):
                                              fontsize=8, va="top", ha="left", color="#1f1f1e", clip_on=False,
                                              fontweight="semibold"))
                 row += 1
-                if cols:
+                if cols:  # the A / B / Δ header right above the values
+                    for k, h in enumerate(cols):
+                        self._artists.append(ax.text(1, 1, h, transform=at(0.28 + k * col_w, row), fontsize=7,
+                                                     va="top", ha="left", family="monospace", color="#6b6b66",
+                                                     clip_on=False))
+                    row += 0.9
                     for k, v in enumerate(vals):
                         self._artists.append(ax.text(1, 1, v, transform=at(0.28 + k * col_w, row), fontsize=8,
                                                      va="top", ha="left", family="monospace", color=color,
