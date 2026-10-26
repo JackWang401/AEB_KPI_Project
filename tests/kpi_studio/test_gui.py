@@ -2282,7 +2282,7 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     assert viewer.list.header_at(rect.topLeft() + QPoint(30, 5)) == "axis 1"
     assert viewer.list.header_at(rect.bottomLeft() + QPoint(30, -3)) is None
     menu = viewer.axis_menu("axis 1")
-    assert [a.text() for a in menu.actions() if a.text()] == ["Range…", "Rename…", "Select its signals",
+    assert [a.text() for a in menu.actions() if a.text()] == ["Edit name and range…", "Select its signals",
                                                                "Remove common axis"]
 
     # an axis exists: a signal joins it, or starts a new one
@@ -2296,21 +2296,21 @@ def test_common_axis_from_the_right_click_menu(qtbot, window, mf4_dir, monkeypat
     assert set(viewer.common.values()) == {"axis 1"}
 
     # the range of a common axis
-    monkeypatch.setattr(viewer, "ask_axis_range", lambda label: (-12.0, 30.0))
+    monkeypatch.setattr(viewer, "ask_edit_axis", lambda label: (label, (-12.0, 30.0)))
     menu = viewer.signal_menu(["egoSpeed"])
-    action(menu, "Range of common axis…").trigger()
+    action(menu, "Edit common axis…").trigger()
     assert viewer._axes[0].get_ylim() == (-12.0, 30.0)
     viewer.draw()  # kept when drawn again
     assert viewer._axes[0].get_ylim() == (-12.0, 30.0)
-    monkeypatch.setattr(viewer, "ask_axis_range", lambda label: None)  # automatic again
+    monkeypatch.setattr(viewer, "ask_edit_axis", lambda label: (label, None))  # automatic again
     menu = viewer.signal_menu(["egoSpeed"])
-    action(menu, "Range of common axis…").trigger()
+    action(menu, "Edit common axis…").trigger()
     assert "axis 1" not in viewer.axis_range and viewer._axes[0].get_ylim() != (-12.0, 30.0)
 
     # rename
-    monkeypatch.setattr(sv.QInputDialog, "getText", staticmethod(lambda *a, **k: ("accel", True)))
+    monkeypatch.setattr(viewer, "ask_edit_axis", lambda label: ("accel", viewer.axis_range.get(label)))
     menu = viewer.signal_menu(["egoSpeed"])
-    action(menu, "Rename common axis…").trigger()
+    action(menu, "Edit common axis…").trigger()
     assert set(viewer.common.values()) == {"accel"}
 
     rng_tag = next(viewer.list.item(i).data(sv.AXIS_ROLE) for i in range(viewer.list.count())
@@ -2430,18 +2430,22 @@ def test_ctrl_click_selects_on_macos(qtbot, window, monkeypatch):
     assert shown == [["a", "c"]]
 
 
-def test_common_axis_range_dialog(qtbot, window):
+def test_common_axis_edit_dialog(qtbot, window):
     from PySide6.QtCore import QTimer
 
     viewer = window.viewer
     seen = {}
 
     def fill():
-        dlg = viewer._range_dialog
+        dlg = viewer._axis_dialog
         from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLineEdit
-        dlg.findChild(QCheckBox).setChecked(False)
-        lo, hi = dlg.findChildren(QLineEdit)
+        name, lo, hi = dlg.findChildren(QLineEdit)
+        auto = dlg.findChild(QCheckBox)
+        seen["auto"] = auto.isChecked() and lo.isEnabled()  # automatic by default, limits still editable
+        name.setText("speeds")
         lo.setText("5")
+        lo.textEdited.emit("5")  # typing a limit switches automatic off
+        seen["off"] = not auto.isChecked()
         hi.setText("1")
         dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
         seen["error"] = dlg.isVisible()
@@ -2449,8 +2453,8 @@ def test_common_axis_range_dialog(qtbot, window):
         dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
 
     QTimer.singleShot(0, fill)
-    assert viewer.ask_axis_range("axis 1") == (5.0, 9.0)
-    assert seen["error"]  # min above max is refused
+    assert viewer.ask_edit_axis("axis 1") == ("speeds", (5.0, 9.0))
+    assert seen == {"auto": True, "off": True, "error": True}  # min above max is refused
 
 
 def test_software_version_column_in_files(qtbot, window, mf4_dir):

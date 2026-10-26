@@ -431,7 +431,7 @@ class SignalViewer(QWidget):
         self.step_choice: dict[str, bool] = {}  # right-click choices; otherwise discrete signals are stepped
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._list_menu)
-        self.list.header_activated.connect(self.ask_rename_axis)
+        self.list.header_activated.connect(self.edit_axis)
         ll.addWidget(self.list, 1)
         check_row = QHBoxLayout()
         check_all = QPushButton("Check all")
@@ -772,12 +772,6 @@ class SignalViewer(QWidget):
         self._tag_axes()
         self.draw()
 
-    def ask_rename_axis(self, label: str):
-        text, ok = QInputDialog.getText(self, "Rename common axis", "New name (an existing name merges the "
-                                        "two axes):", text=label)
-        if ok:
-            self.rename_axis(label, text)
-
     def set_axis_range(self, label: str, rng):
         """Fix the value range of common axis `label` to (min, max); None: fit to the data again."""
         if rng is None:
@@ -793,35 +787,49 @@ class SignalViewer(QWidget):
     def _axis_of(self, label: str):
         return next((ax for ax, g in self._ax_groups.items() if any(self.common.get(n) == label for n in g)), None)
 
-    def ask_axis_range(self, label: str):
-        """Dialog for the range of common axis `label`: (min, max), None for automatic, or False if cancelled."""
+    def ask_edit_axis(self, label: str):
+        """Dialog for the name and range of common axis `label`: (name, (min, max) or None for automatic),
+        or False if cancelled. Typing a minimum or maximum switches automatic off by itself."""
         from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit
 
         cur = self.axis_range.get(label)
         ax = self._axis_of(label)
-        shown = cur or (ax.get_ylim() if ax is not None else (0.0, 1.0))
+        fitted = ax.get_ylim() if ax is not None else (0.0, 1.0)
+        shown = cur or fitted
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Range of {label}")
+        dlg.setWindowTitle(f"Common axis {label}")
         form = QFormLayout(dlg)
-        auto = QCheckBox("Automatic (fit to the signals)")
+        name = QLineEdit(label)
+        name.setToolTip("An existing name merges the two axes")
+        form.addRow("Name", name)
+        auto = QCheckBox("Automatic range (fit to the signals)")
         auto.setChecked(cur is None)
         lo, hi = QLineEdit(f"{shown[0]:.6g}"), QLineEdit(f"{shown[1]:.6g}")
         form.addRow(auto)
         form.addRow("Minimum", lo)
         form.addRow("Maximum", hi)
+        for w in (lo, hi):
+            w.textEdited.connect(lambda _t: auto.setChecked(False))  # typing a limit means a fixed range
+
+        def to_auto(on):
+            if on:  # back to automatic: show the fitted range again
+                lo.setText(f"{fitted[0]:.6g}")
+                hi.setText(f"{fitted[1]:.6g}")
+
+        auto.toggled.connect(to_auto)
         err = QLabel("")
         err.setStyleSheet("color: #c0392b;")
         form.addRow(err)
-        for w in (lo, hi):
-            w.setEnabled(cur is not None)
-        auto.toggled.connect(lambda on: [w.setEnabled(not on) for w in (lo, hi)])
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         form.addRow(buttons)
         result = []
 
         def accept():
+            new = name.text().strip()
+            if not new:
+                return err.setText("Type a name")
             if auto.isChecked():
-                result.append(None)
+                result.append((new, None))
                 return dlg.accept()
             try:
                 a, b = float(lo.text()), float(hi.text())
@@ -829,20 +837,25 @@ class SignalViewer(QWidget):
                 return err.setText("Type a number in both boxes")
             if not a < b:
                 return err.setText("The minimum must be below the maximum")
-            result.append((a, b))
+            result.append((new, (a, b)))
             dlg.accept()
 
         buttons.accepted.connect(accept)
         buttons.rejected.connect(dlg.reject)
-        self._range_dialog = dlg  # for tests
+        self._axis_dialog = dlg  # for tests
         if dlg.exec() != QDialog.Accepted or not result:
             return False
         return result[0]
 
-    def range_axis(self, label: str):
-        rng = self.ask_axis_range(label)
-        if rng is not False:
+    def edit_axis(self, label: str):
+        """Right-click → Edit: change the name and/or the range of common axis `label`."""
+        got = self.ask_edit_axis(label)
+        if got is False:
+            return
+        new, rng = got
+        if rng != self.axis_range.get(label):
             self.set_axis_range(label, rng)
+        self.rename_axis(label, new)
 
     def set_common_axis(self, names: list[str], label: str):
         """Draw `names` in one subplot named `label`, together with any signals already on that axis."""
@@ -1567,12 +1580,10 @@ class SignalViewer(QWidget):
         own = list(dict.fromkeys(self.common[n] for n in names if n in self.common))
         for a in own:
             suffix = f" ({a})" if len(own) > 1 else ""
-            act = menu.addAction(f"Range of common axis{suffix}…")
+            act = menu.addAction(f"Edit common axis{suffix}…")
             rng = self.axis_range.get(a)
-            act.setToolTip(f"Now {rng[0]:g} to {rng[1]:g}" if rng else "Now fitted to the signals")
-            act.triggered.connect(lambda _on, a=a: self.range_axis(a))
-            act = menu.addAction(f"Rename common axis{suffix}…")
-            act.triggered.connect(lambda _on, a=a: self.ask_rename_axis(a))
+            act.setToolTip("Its name and range; range now " + (f"{rng[0]:g} to {rng[1]:g}" if rng else "automatic"))
+            act.triggered.connect(lambda _on, a=a: self.edit_axis(a))
         on = [n for n in names if n in self.common]
         if on:
             act = menu.addAction("Remove from common axis")
@@ -1583,11 +1594,10 @@ class SignalViewer(QWidget):
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
         members = [n for n, a in self.common.items() if a == label]
-        act = menu.addAction("Range…")
+        act = menu.addAction("Edit name and range…")
         rng = self.axis_range.get(label)
-        act.setToolTip(f"Now {rng[0]:g} to {rng[1]:g}" if rng else "Now fitted to the signals")
-        act.triggered.connect(lambda _on: self.range_axis(label))
-        menu.addAction("Rename…").triggered.connect(lambda _on: self.ask_rename_axis(label))
+        act.setToolTip("Range now " + (f"{rng[0]:g} to {rng[1]:g}" if rng else "automatic"))
+        act.triggered.connect(lambda _on: self.edit_axis(label))
         menu.addAction("Select its signals").triggered.connect(lambda _on: self._select(members))
         menu.addSeparator()
         act = menu.addAction("Remove common axis")

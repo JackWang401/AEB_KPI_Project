@@ -21,10 +21,10 @@ python run_kpi_studio.py        # or: python -m src.kpi_studio.gui.app
    On the command line: `--offset FILE=SECONDS` (repeatable).
    In the signal viewer, select 2 or more signals, right-click and choose *Common axis*: they are
    drawn in one subplot on one value axis (*axis 1*, *axis 2*, …). Once an axis exists, *Common axis*
-   offers *Join axis N* or *New common axis*. *Range of common axis…* fixes its minimum and maximum
-   (or back to automatic), *Rename common axis…* names it, *Remove from common axis* undoes it.
+   offers *Join axis N* or *New common axis*. *Edit common axis…* sets its name and its
+   range (automatic, or a minimum and maximum), *Remove from common axis* undoes it.
    The list shows each common axis as a name row with its signals indented under it; right-click the
-   name row for *Range…*, *Rename…*, *Select its signals* and *Remove common axis* (double-click renames).
+   name row for *Edit name and range…*, *Select its signals* and *Remove common axis* (double-click edits too; typing a minimum or maximum switches the automatic range off).
    On macOS, Ctrl+click (as well as ⌘+click) adds a signal to the selection.
    Common axes are saved in the profile (`common_axes:` with each axis' `name`, `signals` and optional
    `range: [min, max]`), so they come back when the profile is opened again. So are the ticked
