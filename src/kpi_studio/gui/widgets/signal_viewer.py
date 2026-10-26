@@ -160,9 +160,10 @@ class SignalList(QListWidget):
             it.setSelected(True)
         self.blockSignals(False)
         self.reordered.emit()
-# cursor A and B: cyan and deep magenta, apart from every series colour and from each other, also for colour-blind eyes
-CURSOR_COLORS = {"A": "#06b6d4", "B": "#a21caf"}
-CURSOR_INK = {"A": "#08313a", "B": "#ffffff"}  # text on the cursor's tag
+# cursor A and B: dark gold and deep magenta, apart from every series colour and from each other (also for
+# colour-blind eyes), and dark enough to stand out on the shaded occurrence
+CURSOR_COLORS = {"A": "#a16207", "B": "#a21caf"}
+CURSOR_INK = {"A": "#ffffff", "B": "#ffffff"}  # text on the cursor's tag
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 KINDS = ["continuous", "discrete", "boolean", "enum"]
 KIND_TIPS = {
@@ -1840,7 +1841,7 @@ class SignalViewer(QWidget):
         a, b = self.cursors
         if self._axes:
             for ax, lines in self.readouts().items():
-                for t, style, name in ((a, "-", "A"), (b, "--", "B")):
+                for t, style, name in ((a, (0, (5, 3)), "A"), (b, (0, (5, 3)), "B")):  # both dashed
                     if t is not None:
                         color = CURSOR_COLORS[name]
                         self._artists.append(ax.axvline(t, color=color, lw=1.3, ls=style, zorder=5))
